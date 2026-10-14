@@ -190,3 +190,42 @@ def test_json_reports_a_finding_as_a_finding(tmp_path):
                                    "metrics": {"accuracy": {"name": "accuracy", "value": 0.5}}}]}}
     _, text = _run(["--json", str(_write(tmp_path, "bad.json", bad))])
     assert json.loads(text)[0]["verdict"] == "finding"
+
+
+# ── the paths through `main` that the renderer tests cannot reach ─────────────────────────────
+
+def test_the_min_applied_floor_fails_a_thin_file_and_says_why(tmp_path):
+    code, text = _run(["--min-applied", "10", str(_write(tmp_path, "ok.json", GOOD))])
+    flat = _flat(text)
+    assert code == 1
+    assert "FEWER THAN 10 CHECKS APPLIED" in flat
+
+
+def test_the_min_applied_floor_with_json_fails_and_prints_only_the_json(tmp_path):
+    code, text = _run(["--json", "--min-applied", "10", str(_write(tmp_path, "ok.json", GOOD))])
+    assert code == 1
+    entries = json.loads(text)
+    assert entries[0]["verdict"] == "inconclusive"
+    assert "FEWER THAN" not in text, "a machine reader must get JSON and nothing else"
+
+
+def test_quiet_through_main_prints_nothing_for_a_file_every_applicable_check_examined(
+        tmp_path, monkeypatch):
+    """The clean path through `main`, which the renderer test cannot reach on its own.
+
+    No shipped artefact is clean under the floor, so the reader is stubbed to report a file that
+    every single-file check examined and none fired. What is under test is `main`'s decision to
+    stay silent in quiet mode for a clean verdict, not the reader.
+    """
+    monkeypatch.setattr(cli, "inspect_file", lambda path, checks, row_select=None: ([], [], None))
+    code, text = _run(["--quiet", str(_write(tmp_path, "clean.json", GOOD))])
+    assert code == 0
+    assert text == "", f"a clean file in quiet mode must print nothing, got: {text!r}"
+
+
+def test_a_clean_file_through_main_is_ticked_with_its_count(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "inspect_file", lambda path, checks, row_select=None: ([], [], None))
+    code, text = _run([str(_write(tmp_path, "clean.json", GOOD))])
+    assert code == 0
+    assert "✓" in text
+    assert f"{len(SINGLE_FILE)} of {len(SINGLE_FILE)} single-file checks applied" in _flat(text)

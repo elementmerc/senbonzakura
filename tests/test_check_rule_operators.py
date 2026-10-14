@@ -278,3 +278,60 @@ def test_a_tolerance_of_zero_is_allowed_and_means_exact_agreement():
                     {"a": 0.5, "b": 0.5}) is False
     assert evaluate({"op": "differs_by_more_than", "paths": ["a", "b"], "value": 0},
                     {"a": 0.5, "b": 0.5000001}) is True
+
+
+# ── totality over shapes the operators did not expect ─────────────────────────────────────────
+#
+# Found by the coverage measurement of 2026-10-14: these were the operator branches no test
+# reached, and they are exactly where an unfamiliar artefact would go. Each expectation below was
+# read from the operator's stated contract, then checked against the code, not taken from it.
+
+def test_any_missing_answers_false_when_the_mapping_is_not_a_mapping():
+    assert evaluate({"op": "any_missing", "path": "p", "field": "f"}, {"p": "x"}) is False
+
+
+def test_any_missing_counts_a_non_object_entry_as_missing_the_field():
+    """An entry that is not an object cannot carry the field, so it is missing it."""
+    assert evaluate({"op": "any_missing", "path": "p", "field": "f"}, {"p": {"a": 3}}) is True
+
+
+def test_any_missing_is_false_when_every_entry_carries_the_field():
+    assert evaluate({"op": "any_missing", "path": "p", "field": "f"},
+                    {"p": {"a": {"f": 1}}}) is False
+
+
+def test_any_outside_answers_false_when_the_mapping_is_not_a_mapping():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0}
+    assert evaluate(rule, {"p": "x"}) is False
+
+
+def test_any_outside_skips_entries_the_when_clause_does_not_select():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0,
+            "when": {"field": "k", "equals": "z"}}
+    assert evaluate(rule, {"p": {"a": {"k": "y", "v": -1}}}) is False
+    assert evaluate(rule, {"p": {"a": {"k": "z", "v": -1}}}) is True
+
+
+def test_any_outside_never_reads_a_boolean_as_a_number():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0}
+    assert evaluate(rule, {"p": {"a": {"v": True}}}) is False
+
+
+def test_any_outside_skips_a_non_object_entry_rather_than_reading_it():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0}
+    assert evaluate(rule, {"p": {"a": 5}}) is False
+
+
+def test_any_outside_with_only_a_maximum_fires_above_it_and_not_below():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "max": 1}
+    assert evaluate(rule, {"p": {"a": {"v": 2}}}) is True
+    assert evaluate(rule, {"p": {"a": {"v": 0.5}}}) is False
+
+
+def test_intersects_answers_false_for_a_scalar_side_rather_than_comparing_it():
+    """A scalar is not a collection, so it has no members to share with the other side."""
+    assert evaluate({"op": "intersects", "paths": ["s", "t"]}, {"s": 3, "t": [3]}) is False
+
+
+def test_intersects_is_true_when_both_sides_are_collections_that_share_a_member():
+    assert evaluate({"op": "intersects", "paths": ["s", "t"]}, {"s": [3], "t": [3]}) is True

@@ -236,7 +236,11 @@ class TestNotebooks:
 class TestDenyFirst:
     """A kind nobody recorded is refused, which is the property the old filter never had."""
 
-    @pytest.mark.parametrize("name", ["dump.parquet", "rows.feather", "weights.safetensors",
+    # `.safetensors` was on this list until 2026-10-14 and has been removed because it is now a
+    # RECORDED kind with a real reading: its header is JSON and this project writes provenance
+    # into it, so it is parsed rather than refused. The property this test states is unchanged,
+    # and it needs a kind nobody has decided about to state it with.
+    @pytest.mark.parametrize("name", ["dump.parquet", "rows.feather", "weights.bin",
                                       "notes.rst", "capture.log", "table.xlsx"])
     def test_an_unrecorded_kind_is_refused(self, tmp_path, name):
         p = tmp_path / name

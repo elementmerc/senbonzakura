@@ -181,6 +181,67 @@ def repo_relative(path: Path) -> str | None:
         return None
 
 
+#: Tensor files. Given a real reading rather than an IGNORED_KINDS entry, because a safetensors
+#: file is NOT opaque: its header is JSON and this project writes provenance into it deliberately.
+#: Anything that can hold a string can hold a prompt, so "it is a weights file" is not an argument
+#: for clearing it unread.
+#:
+#: Added 2026-10-14, when the recipe conformance fixtures brought the first tensor files into the
+#: tracked tree and this gate refused them. That refusal was correct and is the behaviour to keep:
+#: an unrecognised kind is refused rather than cleared, because a filter that passes what it does
+#: not recognise reports clean for a tree it did not look at.
+TENSOR_SUFFIXES = frozenset({".safetensors"})
+TENSOR_FILE = "tensor-file"
+
+#: A header longer than this is not parsed, it is reported. The header of a legitimate direction
+#: set is a few kilobytes; a header of many megabytes is either a corpus hidden in the metadata or
+#: a file this gate should not be reading in one piece.
+MAX_TENSOR_HEADER_BYTES = 4 * 1024 * 1024
+
+
+def tensor_file_findings(path: Path, raw: bytes) -> list[str]:
+    """Read a safetensors header as text, and treat the tensor bytes as opaque.
+
+    THE TENSOR DATA IS NOT SCANNED, and that is a deliberate limit rather than an oversight. It is
+    float arrays; scanning it for prose would report noise forever. What IS scanned is the header,
+    because the header is JSON, it is where this project puts the model name, the mode and the
+    extraction's provenance, and a string field is a string field whoever wrote it.
+
+    The format: eight bytes of little-endian length, then that many bytes of UTF-8 JSON, then the
+    tensor data. A file that does not parse that way is reported rather than cleared, because this
+    gate cannot say a file is clean when it could not read it.
+    """
+    import json as _json
+    import struct as _struct
+
+    if len(raw) < 8:
+        return [f"{path}: is shorter than a safetensors header, so it cannot be read or cleared"]
+    (header_len,) = _struct.unpack("<Q", raw[:8])
+    if header_len > MAX_TENSOR_HEADER_BYTES:
+        return [(
+            f"{path}: declares a {header_len:,} byte metadata header, past the "
+            f"{MAX_TENSOR_HEADER_BYTES:,} byte limit this gate will parse. A header that large is "
+            f"either a corpus kept in the metadata or a damaged file; either way it is reported "
+            f"rather than cleared."
+        )]
+    if 8 + header_len > len(raw):
+        return [f"{path}: declares a header longer than the file, so it cannot be read or cleared"]
+    try:
+        header = _json.loads(raw[8:8 + header_len].decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        return [(f"{path}: has a metadata header that is not readable JSON ({exc}), so it "
+                 f"cannot be cleared")]
+    meta = header.get("__metadata__") if isinstance(header, dict) else None
+    if not isinstance(meta, dict) or not meta:
+        return []
+    # THE HEADER GETS EXACTLY THE READING A .json FILE GETS, through the same `findings_for` every
+    # other JSON artefact goes through. Not a separate prose scan: this gate's model is that a
+    # field NAME says what a field holds, and a second, looser reading applied only here would
+    # make a tensor header the one place where the rules are different. If `findings_for` should
+    # catch more, it should catch more everywhere.
+    return findings_for(meta, f"{path}:__metadata__")
+
+
 def binary_dataset_findings(path: Path, raw: bytes) -> list[str]:
     """A binary dataset file is cleared only by being one this gate already knows."""
     import hashlib
@@ -534,6 +595,8 @@ def handler_for(path: Path) -> str:
         return JSONL_KEYS if kind == ".jsonl" else JSON_KEYS
     if kind in BINARY_DATASET_SUFFIXES:
         return BINARY_DATASET
+    if kind in TENSOR_SUFFIXES:
+        return TENSOR_FILE
     if kind in NOTEBOOK_SUFFIXES:
         return NOTEBOOK
     if kind in TEXT_CORPUS_SUFFIXES:
@@ -657,6 +720,8 @@ def scan_bytes(path: Path, raw: bytes, *, kind: str | None = None) -> list[str]:
         return unrecorded_finding(path)
     if kind == BINARY_DATASET:
         return binary_dataset_findings(path, raw)
+    if kind == TENSOR_FILE:
+        return tensor_file_findings(path, raw)
     if kind == TEXT_CORPUS:
         return text_corpus_findings(path)
     if kind == NOTEBOOK:

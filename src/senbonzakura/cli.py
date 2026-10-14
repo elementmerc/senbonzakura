@@ -2325,13 +2325,19 @@ def _unfetched_lfs_files(model_dir):
 def _looks_like_a_local_path(model_id):
     """Whether this string names the filesystem in a way a hub model id cannot.
 
-    A hub id is `org/model`: one slash, no leading dot or tilde, no trailing separator. So an
-    absolute path, an explicitly relative one, a `~` path, a trailing separator and three or more
-    segments are all shapes an id cannot take, and anything else is left ambiguous on purpose.
+    A hub id is `org/model`: one slash, no leading dot or tilde, no trailing separator, no backslash
+    and no colon. So an absolute path, an explicitly relative one, a `~` path, a trailing separator,
+    a Windows path and three or more segments are all shapes an id cannot take, and anything else is
+    left ambiguous on purpose.
     """
     text = str(model_id or "").strip()
     if not text:
         return False
+    # A backslash is the Windows separator and no hub id has one, so a backslash anywhere names the
+    # filesystem. A drive letter (`C:` or `C:/models`) does too. Without these, a Windows reader who
+    # mistyped a folder was told to run `hf auth login`, and the path check only ever saw `/`.
+    if "\\" in text or (text[:1].isalpha() and text[1:3] in (":/", ":\\")):
+        return True
     if text.startswith(("/", "./", "../", "~")) or text.endswith("/"):
         return True
     return text.count("/") >= 2

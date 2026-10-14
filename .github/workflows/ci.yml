@@ -1291,59 +1291,16 @@ jobs:
           cache: pip
 
       - name: Read the documented commands out of README.md and the guide
-        # Two substitutions, both of which MUST match or this refuses. The documented install
-        # points at `@dev` on GitHub, so running it verbatim would test the branch instead of
-        # this commit and a broken first run would stay green here until after it was merged.
-        # Everything else runs exactly as written.
+        # The install and quickstart blocks are chosen by the marker directly above each one, not by
+        # content, so a README that gains a second install route cannot quietly change which one runs.
+        # The refusals, and why a first match would be the silent failure, are in the module.
+        #
+        # One substitution, and it MUST match or this refuses. The documented install points at the
+        # package on the index, so running it verbatim would test a published release instead of
+        # this commit. Everything else runs exactly as written.
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/firstrun"
-          python - <<'PY'
-          import os, pathlib, re
-
-          def blocks(path):
-              text = pathlib.Path(path).read_text(encoding="utf-8")
-              return re.findall(r"```sh\n(.*?)```", text, re.DOTALL)
-
-          def only(path, needle):
-              found = [b for b in blocks(path) if needle in b]
-              if len(found) != 1:
-                  raise SystemExit(
-                      f"expected exactly one ```sh block in {path} containing {needle!r}, "
-                      f"found {len(found)}. This job runs the documented commands rather than a "
-                      f"copy of them, so it stops rather than running something else.")
-              return found[0]
-
-          install = only("README.md", "pip install senbonzakura")
-          quickstart = only("docs/guide/quickstart.md", "track build")
-
-          # POINT THE DOCUMENTED COMMAND AT THIS CHECKOUT, which is the whole trick of this job:
-          # it runs what the README says, against the branch under test rather than against
-          # whatever PyPI is serving. `pip install senbonzakura` would otherwise resolve to the
-          # last release and this job would report on a tree nobody changed.
-          #
-          # The checker is named first and separately because the abliterator depends on it: given
-          # only `.`, pip goes to the index for `senbonzakura-check` and installs the published one
-          # beside a local build of its dependent.
-          #
-          # The README said `pip install "git+...@dev"` until 2026-09-26, and this job swapped the
-          # two URLs for paths. That swap is gone with the URLs; the refusal below is what caught
-          # the change, which is the behaviour it was written for.
-          old, new = "pip install senbonzakura", "pip install ./checker ."
-          if old not in install:
-              raise SystemExit(
-                  f"the README install command no longer contains {old!r}, so it cannot be "
-                  f"pointed at this checkout. Update this job together with the README.")
-          install = install.replace(old, new, 1)
-
-          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "firstrun"
-          (out / "install.sh").write_text(install, encoding="utf-8")
-          # The guide's block ends at the command that needs a GPU and a 5 GB download; every
-          # line before it runs on a runner.
-          (out / "quickstart.sh").write_text(quickstart, encoding="utf-8")
-          print("--- install ---");    print(install)
-          print("--- quickstart ---"); print(quickstart)
-          PY
+          python tools/ci/first_run_commands.py --out "${RUNNER_TEMP}/firstrun"
 
       - name: A clean virtual environment, with nothing in it
         # A virtual environment rather than the runner's interpreter, because the defect being

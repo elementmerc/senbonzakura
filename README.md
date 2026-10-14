@@ -71,6 +71,7 @@ sounds.
 
 ## Install
 
+<!-- documented-first-run: install -->
 ```sh
 pip install senbonzakura
 senbonzakura setup

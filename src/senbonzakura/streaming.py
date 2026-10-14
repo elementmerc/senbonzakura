@@ -139,6 +139,17 @@ def _element_count(shape):
 MAX_HEADER_BYTES = 100 * 1024 * 1024
 
 
+def _too_deep(path):
+    # ONE SENTENCE FOR BOTH WAYS OF BEING TOO DEEP, and it doesn't name the interpreter. Whether a
+    # parse reaches the recursion limit depends on the stack the process has: the same 100,001-bracket
+    # header raises RecursionError on an 8 MB stack and parses on a 64 MB one. A wording that names
+    # the branch would make one hostile file read differently from one machine to the next.
+    from senbonzakura_check.registry import MAX_ARTEFACT_DEPTH
+    return (f"{path}: header nests deeper than this reads, which is more than {MAX_ARTEFACT_DEPTH} "
+            f"levels. A safetensors header is a flat object of tensor entries, so nesting this deep "
+            f"is damage or a crafted file rather than an unusual checkpoint.")
+
+
 def read_header(path):
     """The header of a safetensors shard, and the offset its tensor data starts at.
 
@@ -197,19 +208,14 @@ def read_header(path):
     except ValueError as exc:
         raise ShardError(f"{path}: header is not valid JSON: {exc}") from exc
     except RecursionError as exc:
-        raise ShardError(
-            f"{path}: header nests deeper than this reads. A safetensors header is a flat object "
-            f"of tensor entries, so nesting that reaches the interpreter's own limit is damage or "
-            f"a crafted file rather than an unusual checkpoint.") from exc
+        raise ShardError(_too_deep(path)) from exc
     if not isinstance(header, dict):
         raise ShardError(f"{path}: header is not a JSON object")
     # AND THE CASE THAT PARSES. A document can nest far enough to be hostile while staying inside
     # the recursion limit, and every consumer below walks it. Asked after the parse rather than
     # before, because asking before would mean writing a second parser to look at the text.
     if too_deep(header, MAX_ARTEFACT_DEPTH):
-        raise ShardError(
-            f"{path}: header nests past {MAX_ARTEFACT_DEPTH} levels. See the sentence above: this "
-            f"is damage or a crafted file rather than an unusual checkpoint.")
+        raise ShardError(_too_deep(path))
     return header, 8 + length
 
 

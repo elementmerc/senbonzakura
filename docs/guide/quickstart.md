@@ -37,6 +37,7 @@ ships in no wheel, so it is reachable from a clone and not from a `pip install g
 prize. This box said "build them" without saying which of the two you get, which sent a reader
 who followed it exactly back to the failure it was written to prevent.
 
+<!-- documented-first-run: quickstart -->
 ```sh
 senbonzakura corpora                   # the refusal corpora
 senbonzakura track build --out corpus  # prompts, from public sources

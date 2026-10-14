@@ -137,6 +137,24 @@ def test_a_name_that_can_only_be_a_path_is_not_treated_as_an_id(tmp_path):
     assert "no such thing" in message, "the useful half of the refusal is still there"
 
 
+#: Paths as a Windows reader types or pastes them. Literal strings, so this runs on every platform:
+#: the defect was in the string's shape, and a Windows runner only ever found it by accident.
+@pytest.mark.parametrize("typed", [
+    r"C:\models\nothing-here",
+    r"d:\work\qwen\nothing-here",
+    "D:/nothing-here",
+    r"\\server\share\nothing-here",
+    r"models\nothing-here",
+    r".\nothing-here",
+    r"..\nothing-here",
+])
+def test_a_windows_path_that_is_not_there_is_not_treated_as_an_id(typed):
+    message = _could_not_load(typed, OSError("no such thing"))
+    assert "--hf-token" not in message, f"told to authenticate about a path: {message}"
+    assert "hf auth login" not in message
+    assert "Nothing exists at that path" in message
+
+
 def test_an_unusable_path_does_not_raise_from_inside_the_refusal():
     """A null byte makes `Path.exists` raise, and a traceback here replaces a usable refusal."""
     message = _could_not_load("some/model\x00name", OSError("boom"))

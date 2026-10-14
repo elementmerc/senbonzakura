@@ -92,6 +92,11 @@ def model_specific_limits(arms):
 
 
 RENDER_VERSION = 1
+LOWER_EDGE_CAVEAT = (
+    "A declared test also found no position independent lower edge. With the direction fitted at "
+    "an earlier position, removing it from blocks 0 to 9 alone lowered generated refusals on "
+    "requests nothing else used by more than the declared ceiling, so the whole window of blocks "
+    "that write the direction moves with the fitting position, at both ends.")
 POSITION_CAVEAT = (
     "The largest block effect follows the position the direction was fitted at: refitting at "
     "other positions moved the peak with it, to the block just before each. This is partly "
@@ -226,6 +231,15 @@ def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
         notes.append({"added": "where_it_starts", "when": when,
                       "by": "attribution_followups start, declared before it ran",
                       "declaration_sha256": doc["where_it_starts"]["declaration_sha256"]})
+        if doc["where_it_starts"]["judgement"]["verdict"] == "falsified":
+            render = doc["render"]
+            render["position_dependent"] = True
+            render["caveats"] = [*dict.fromkeys([*render.get("caveats", []), LOWER_EDGE_CAVEAT])]
+            render["permitted"] = permitted(render)
+            doc["limits"] = [*dict.fromkeys([*doc.get("limits", []), LOWER_EDGE_CAVEAT])]
+            notes.append({"added": "render.caveats and a limit", "when": when,
+                          "by": "the declared where-it-starts test was falsified",
+                          "derived_from": "where_it_starts.judgement.verdict"})
     write_json(path, doc)
     return doc
 

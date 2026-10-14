@@ -355,3 +355,19 @@ def test_amending_an_older_artefact_adds_the_model_id_to_what_it_is_comparable_w
     doc = R.amend(path)
     assert doc["comparable_with"]["model_id"] == "org/m"
     assert any(n["added"] == "comparable_with.model_id" for n in doc["amendments"])
+
+
+def test_a_falsified_lower_edge_adds_its_caveat_once_and_keeps_the_render_block_cautious(tmp_path):
+    base = {"status": A.DIFFUSE, "tint_allowed": False, "model": {"id": "m", "revision": "r"},
+            "arms": {"disjoint": _res([1.0, 1.0])}, "limits": []}
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(base))
+    start = tmp_path / "s.json"
+    start.write_text(json.dumps({"declaration_sha256": "z", "judgement": {"verdict": "falsified"}}))
+    doc = R.amend(path, start_path=start)
+    assert doc["render"]["caveats"] == [R.LOWER_EDGE_CAVEAT] and doc["render"]["position_dependent"]
+    assert doc["limits"].count(R.LOWER_EDGE_CAVEAT) == 1
+    assert "render.caveats" in doc["render"]["permitted"]["must_show"]
+    start.write_text(json.dumps({"declaration_sha256": "z", "judgement": {"verdict": "supported"}}))
+    path.write_text(json.dumps(base))
+    assert "caveats" not in R.amend(path, start_path=start)["render"]

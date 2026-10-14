@@ -64,6 +64,7 @@ from .adapters import UnknownArtefactError, normalise
 from .loaders import LoaderError, load_document
 from .registry import (
     ArtefactTooLargeError,
+    CheckError,
     load_checks,
     run_checks,
     run_pair_checks,
@@ -773,7 +774,15 @@ def _render_family(result, out):
 def main(argv=None, out=None, clock=None):
     args = build_parser().parse_args(argv)
     out = out or sys.stdout
-    checks = load_checks()
+    try:
+        checks = load_checks()
+    except CheckError as e:
+        # A BROKEN CHECK IS A CONFIGURATION FAULT, reported as one, before any file is read. Exit 2
+        # is the status for "could not check", so a CI step never reads a broken install as a clean
+        # run, and the message names the check and the rule that cannot run.
+        print(f"The checks in this installation cannot be loaded, so nothing was checked.\n"
+              f"{e}", file=out)
+        return 2
 
     # A PATTERN CHOSE THESE PATHS, NOT A PERSON. pre-commit hands the hook whatever matched its
     # `files` regex, so the paths arrive named on the command line while carrying none of the

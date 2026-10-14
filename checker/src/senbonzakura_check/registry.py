@@ -602,6 +602,95 @@ def evaluate(rule: dict, doc: Any) -> bool:
         f"it.")
 
 
+#: Every operator `evaluate` knows, read as data so the load-time validator and the evaluator cannot
+#: disagree about what exists. An operator in neither table is refused at load.
+_SINGLE_PATH_OPS = frozenset({"absent", "present", "truthy", "falsy", "equals", "not_equals",
+                              "in", "not_in"})
+_TWO_PATH_OPS = frozenset({"disagrees", "differs_in_more_than", "differs_by_more_than",
+                           "intersects"})
+_COMPOSITE_OPS = frozenset({"all_of", "any_of"})
+_BARE_OPS = frozenset({"always", "never"})
+_KNOWN_OPS = _SINGLE_PATH_OPS | _TWO_PATH_OPS | _COMPOSITE_OPS | _BARE_OPS | frozenset({
+    "not", "any_missing", "any_outside", "any_entry", "less_than"})
+
+
+def _validate_rule(rule, where: str) -> None:
+    """Refuse a rule that `evaluate` would raise on, before any artefact is read.
+
+    WHY THIS EXISTS. A check is data, and the contribution format is the one thing a stranger is
+    meant to use. `evaluate` raises `CheckError` on a malformed rule, but only when an artefact
+    reaches that rule, so a broken `any_missing` in a check file did not fail at load: it aborted
+    the whole sweep with an uncaught traceback, partway through a directory, after reporting nothing
+    the reader could act on. Measured 2026-10-14 against the real CLI. The rule is validated at
+    load, in the same shape `evaluate` reads it, so a broken check is named and refused before the
+    first file is opened.
+
+    Mirrors the requirements `evaluate` enforces. It does not judge whether a rule is a GOOD check,
+    only whether the engine can run it at all.
+    """
+    if not isinstance(rule, dict) or not isinstance(rule.get("op"), str):
+        raise CheckError(f"{where}: a rule must be an object with a string `op`, got {rule!r}")
+    op = rule["op"]
+    if op not in _KNOWN_OPS:
+        raise CheckError(f"{where}: unknown rule operator {op!r}")
+    if op in _BARE_OPS:
+        return
+    if op in _COMPOSITE_OPS:
+        subs = rule.get("rules")
+        if not isinstance(subs, list) or not subs:
+            raise CheckError(f"{where}: `{op}` needs a non-empty `rules` list")
+        for sub in subs:
+            _validate_rule(sub, where)
+        return
+    if op == "not":
+        if not isinstance(rule.get("rule"), dict):
+            raise CheckError(f"{where}: `not` needs a `rule` object")
+        _validate_rule(rule["rule"], where)
+        return
+    if op in ("any_missing", "any_outside"):
+        if not isinstance(rule.get("field"), str):
+            raise CheckError(f"{where}: `{op}` needs a string `field`")
+        if op == "any_outside" and rule.get("min") is None and rule.get("max") is None:
+            raise CheckError(f"{where}: `any_outside` needs at least one of `min` or `max`")
+        return
+    if op == "any_entry":
+        conditions = rule.get("all")
+        if not isinstance(conditions, list) or not conditions:
+            raise CheckError(f"{where}: `any_entry` needs a non-empty `all` list of conditions")
+        for cond in conditions:
+            if not isinstance(cond, dict) or not isinstance(cond.get("field"), str):
+                raise CheckError(f"{where}: an `any_entry` condition needs a string `field`")
+            if "equals" not in cond and cond.get("is") not in _ENTRY_PREDICATES:
+                raise CheckError(f"{where}: an `any_entry` condition needs `equals` or an `is` "
+                                 f"from {', '.join(sorted(_ENTRY_PREDICATES))}")
+        return
+    if op == "less_than":
+        if not isinstance(rule.get("path"), str):
+            raise CheckError(f"{where}: `less_than` needs a string `path`")
+        limit = rule.get("value")
+        if not _is_finite_number(limit):
+            raise CheckError(f"{where}: `less_than` needs a numeric `value`")
+        return
+    if op in _TWO_PATH_OPS:
+        paths = rule.get("paths")
+        if not isinstance(paths, list) or len(paths) != 2:
+            raise CheckError(f"{where}: `{op}` needs exactly two `paths`")
+        if op == "differs_in_more_than":
+            limit = rule.get("value")
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+                raise CheckError(f"{where}: `{op}` needs a non-negative integer `value`")
+        if op == "differs_by_more_than":
+            tolerance = rule.get("value")
+            if not _is_finite_number(tolerance) or tolerance < 0:
+                raise CheckError(f"{where}: `{op}` needs a non-negative numeric `value`")
+        return
+    # THE REMAINING OPERATORS ARE SINGLE-PATH: they read one dotted path and nothing else is required.
+    if not isinstance(rule.get("path"), str):
+        raise CheckError(f"{where}: `{op}` needs a string `path`")
+    if op in ("in", "not_in") and not isinstance(rule.get("values"), list):
+        raise CheckError(f"{where}: `{op}` needs a `values` list")
+
+
 def _validate(raw: dict, source: Path | None) -> Check:
     where = f" in {source}" if source else ""
     missing = [f for f in REQUIRED_FIELDS if f not in raw]
@@ -653,6 +742,10 @@ def _validate(raw: dict, source: Path | None) -> Check:
                         f"check {raw['id']!r}{where}: `control.{key}[{i}]` must be a two-element "
                         f"list, because this check compares two artefacts and a control that is "
                         f"not a pair proves nothing about it.")
+
+    where_rule = f"check {raw['id']!r}{where}"
+    _validate_rule(raw["applies_to"], f"{where_rule}, `applies_to`")
+    _validate_rule(raw["rule"], f"{where_rule}, `rule`")
 
     return Check(**{f: raw[f] for f in REQUIRED_FIELDS},
                  severity=severity, arity=arity, source=source)

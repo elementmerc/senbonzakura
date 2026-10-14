@@ -53,6 +53,56 @@ TERMS_FILE = _ROOT / "private" / "infrastructure-terms.txt"
 #: and the honest fix turned out to be untracking that tooling rather than teaching the
 #: check to look away from it. If any of it comes back, this should fail.
 
+#: THE HALF THAT NEEDS NO PRIVATE DATA, added 2026-10-14 after the operator asked that this
+#: class of leak be made impossible rather than merely caught here.
+#:
+#: WHY IT WAS NEEDED. The project-specific half reads its terms from a file in `private/`,
+#: which is correct: a public list of the names we are hiding would be the leak itself. But
+#: `private/` is a symlink into an unversioned tree, so it is ABSENT from every worktree and
+#: every fresh clone, and the check skipped there. A skip reads exactly like a pass in a tail
+#: of output, so the guard was dead in most of the places it ran. Two agents reported it
+#: skipping on the same day, and a home-directory path reached this repository's public
+#: history in July under the same conditions.
+#:
+#: A home directory is structurally recognisable WITHOUT knowing whose it is, which is what
+#: makes this half shippable in a public file: the pattern names no account, it describes a
+#: shape. So this half always runs, everywhere, and the private list only ever ADDS to it.
+HOME_PATHS = (
+    (re.compile(r"/home/[A-Za-z0-9._-]+/"), "a Linux home directory, which names an account"),
+    (re.compile(r"/Users/[A-Za-z0-9._-]+/"), "a macOS home directory, which names an account"),
+    (re.compile(r"[A-Za-z]:\\\\Users\\\\[A-Za-z0-9._-]+"), "a Windows profile, which names an account"),
+    (re.compile(r"\bssh://[A-Za-z0-9._-]+@"), "an ssh URL carrying a username"),
+)
+
+#: Account names that name NOBODY. The property this guard protects is "no tracked file names a
+#: real account", and documentation has to be able to show the shape of a path without inventing
+#: a person. Exempting by ACCOUNT rather than by FILE is deliberate: a file allowlist would hide
+#: every future finding in that file, which is where a real leak goes to live. This list stays
+#: short, and a name is added to it only when it obviously belongs to no one.
+PLACEHOLDER_ACCOUNTS = frozenset({
+    "someone", "somebody", "user", "username", "builduser", "youruser", "me", "you", "example",
+})
+
+#: Paths that legitimately contain one of the shapes above. Kept tiny and exact, because an
+#: allowlist is where a real finding goes to hide. Each entry says why it is here.
+HOME_PATH_ALLOWED = {
+    # The guard's own patterns and the prose explaining them.
+    "tests/test_no_private_infrastructure_is_named.py": "this file defines the patterns",
+}
+
+
+def _account_in(text):
+    """The account component of the first home-ish path in `text`, or None."""
+    for rx, _why in HOME_PATHS:
+        m = rx.search(text)
+        if not m:
+            continue
+        # The account is the last non-empty path or userinfo component of the match.
+        parts = [p for p in re.split(r"[/\\@:]", m.group(0)) if p]
+        if parts:
+            return parts[-1]
+    return None
+
 
 def _load_terms():
     if not TERMS_FILE.is_file():
@@ -151,3 +201,68 @@ def test_the_committed_ignore_file_does_not_advertise_the_private_trees(terms):
     ]
     assert not named, (
         "the committed ignore file names a private tree: " + "; ".join(named))
+
+
+def test_no_tracked_file_names_a_home_directory():
+    """The half that cannot skip, because it needs nothing from `private/`.
+
+    THIS IS THE ONE THAT WOULD HAVE CAUGHT THE JULY LEAK. Two evidence files recorded the
+    absolute path of the dataset they scored, which named an account, and they reached the
+    public remote. The project-specific guard beside this one could have caught it and did
+    not run, because its term list lives in a tree that a worktree and a fresh clone do not
+    have, and an absent list made it skip.
+
+    So this asserts the property that does not depend on knowing any of our names. A reader
+    gains nothing from an account name in a path, and a stranger gains a little, which is the
+    whole of the argument for removing it.
+    """
+    files = list(_tracked_text_files())
+    if not files:
+        pytest.skip("not a git checkout, so there is nothing tracked to inspect")
+
+    hits = []
+    # The helper already yields (name, text) and has done the reading, the decoding and the
+    # binary filtering. Re-opening each path here would have duplicated all three, and the
+    # first draft of this test did exactly that and failed on the tuple.
+    for rel, body in files:
+        if rel in HOME_PATH_ALLOWED:
+            continue
+        for number, line in enumerate(body.splitlines(), start=1):
+            for rx, why in HOME_PATHS:
+                if not rx.search(line):
+                    continue
+                account = _account_in(line)
+                if account and account.lower() in PLACEHOLDER_ACCOUNTS:
+                    break  # a documented shape, naming nobody
+                hits.append(f"{rel}:{number}: {why}: {line.strip()[:110]}")
+                break
+
+    assert not hits, (
+        f"{len(hits)} tracked line(s) name a home directory, and this repository is public. "
+        f"Describe the location by what it holds, not by whose account it is under:\n    "
+        + "\n    ".join(sorted(hits)[:25]))
+
+
+def test_the_home_directory_patterns_actually_match():
+    """The patterns are checked against examples, so an empty result means absence not blindness.
+
+    A regex that matches nothing passes the test above on every repository in the world. This
+    is what tells the two apart, and it is the reason that test can be trusted when it is quiet.
+    """
+    should_match = (
+        "/home/someone/models/x",
+        "  model: /Users/someone/Downloads/ckpt",
+        r"C:\\Users\\someone\\models",
+        "ssh://someone@example.invalid:2222/repo.git",
+    )
+    for sample in should_match:
+        assert any(rx.search(sample) for rx, _ in HOME_PATHS), f"no pattern matched {sample!r}"
+
+    should_not_match = (
+        "/home/",                      # no account after it
+        "/usr/share/doc/thing",
+        "the home directory of the process",
+        "https://example.invalid/a/b",
+    )
+    for sample in should_not_match:
+        assert not any(rx.search(sample) for rx, _ in HOME_PATHS), f"a pattern matched {sample!r}"

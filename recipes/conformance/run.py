@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Measure which conformance level a tool reaches for the abliteration recipe format, profile core/1.
 
 A conformance level is a claim the fixture can check, not a badge anybody can assert. This harness

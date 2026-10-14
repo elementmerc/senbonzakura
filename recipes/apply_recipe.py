@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """Apply an abliteration recipe to a safetensors checkpoint, and write the edited weights.
 
 This is the reference applier for the abliteration recipe format, profile `core/1`. It is small

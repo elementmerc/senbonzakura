@@ -298,6 +298,42 @@ def fit_direction(fit_h, fit_l, search_h, search_l):
     return dirs[best].float(), best, aucs
 
 
+def fit_direction_at(fit_h, fit_l, search_h, search_l, position):
+    """The mean difference direction at a position chosen by the CALLER, and its held-out AUC.
+
+    For asking what a result looks like if the direction had been taken somewhere else. The
+    position is an input here and not a search, so nothing about it was selected on the data.
+    """
+    if not 0 <= position < fit_h.shape[0]:
+        raise AttributionError(f"position {position} does not exist: this model has positions 0 "
+                               f"to {fit_h.shape[0] - 1}.")
+    diff = fit_h[position].double().mean(0) - fit_l[position].double().mean(0)
+    norm = float(diff.norm())
+    if not math.isfinite(norm) or norm <= 0.0:
+        raise AttributionError(f"the two fit arms have identical mean residuals at position "
+                               f"{position}, so there is no direction to extract there.")
+    unit = diff / norm
+    held_out = auc(search_h[position].double() @ unit, search_l[position].double() @ unit)
+    return unit.float(), held_out
+
+
+def profile_with_intervals(subject, measure, direction, n_blocks, conv=DEFAULT, seed=0):
+    """Total and single block effects with intervals, for one direction, and nothing else.
+
+    No nulls and no status: this is for comparing profiles under different directions, where the
+    question is whether the shape moved.
+    """
+    conds = {"none": (), "all": tuple(range(n_blocks)),
+             **{f"single:{k}": (k,) for k in range(n_blocks)}}
+    dh, dl, _, _ = _effects_for(subject, measure, direction, conds)
+    point, boot = bootstrap_effects(dh, dl, measure["harmful"].groups, measure["harmless"].groups,
+                                    conv.resamples, torch.Generator().manual_seed(seed))
+    lo, hi = interval(boot, conv.alpha)
+    return {"total": float(point[1]), "total_ci": [float(lo[1]), float(hi[1])],
+            "effects": [float(point[2 + k]) for k in range(n_blocks)],
+            "effects_ci": [[float(lo[2 + k]), float(hi[2 + k])] for k in range(n_blocks)]}
+
+
 # ------------------------------------------------------------------------------------- the run
 
 def _conditions(n_blocks):

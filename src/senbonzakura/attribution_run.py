@@ -91,6 +91,82 @@ def model_specific_limits(arms):
     return out
 
 
+RENDER_VERSION = 1
+
+
+def render_block(status, tint, arms):
+    """What a renderer needs to draw this result honestly, and what it may not read out of it.
+
+    A card draws one of three things. `blocks`: a localisation claim, only when tinting is allowed.
+    `spread`: the effect drawn across blocks in proportion, with an explicit statement that no
+    block cleared the bar, so nobody can read a localisation out of it. `none`: no per block
+    picture exists for this status and the renderer draws the model as a whole, or nothing.
+
+    Derived only from the per block effects and the status already in the artefact. A share is the
+    positive part of a block's effect over the sum of positive parts, averaged over the arms.
+    """
+    shares = {}
+    for name, result in arms.items():
+        blocks = result.get("blocks")
+        if not blocks:
+            continue
+        positive = [max(b["effect"], 0.0) for b in blocks]
+        total = sum(positive)
+        shares[name] = [p / total if total > 0 else None for p in positive]
+    if tint:
+        mode, claim = "blocks", True
+        sentence = "These blocks cleared the bar and were confirmed on generated replies."
+    elif status == A.DIFFUSE and shares:
+        mode, claim = "spread", False
+        sentence = ("No block cleared the bar. The effect is shared across blocks in the "
+                    "proportions shown; this is not a claim that any one block holds it.")
+    else:
+        mode, claim, shares = "none", False, {}
+        sentence = (f"There is no per block picture for this result (status: {status}); draw the "
+                    f"model as a whole or not at all.")
+    count = len(next(iter(shares.values()))) if shares else 0
+    rows = []
+    for k in range(count):
+        per_arm = {n: s[k] for n, s in shares.items()}
+        usable = [v for v in per_arm.values() if v is not None]
+        cleared = [bool(arms[n]["blocks"][k]["exceeds_null"]) for n in shares]
+        rows.append({"index": k, "share": sum(usable) / len(usable) if usable else None,
+                     "per_arm": per_arm, "cleared_the_bar": all(cleared)})
+    return {
+        "version": RENDER_VERSION, "mode": mode, "localisation_claim": claim,
+        "statement": sentence, "blocks": rows,
+        "bar": {"blocks_clearing_it": [r["index"] for r in rows if r["cleared_the_bar"]],
+                "family_wise_threshold": {
+                    n: (a.get("controls") or {}).get("family_wise_threshold")
+                    for n, a in arms.items()}},
+        "derived_from": ("arms.*.blocks[].effect and arms.*.blocks[].exceeds_null, with the "
+                         "status and tint_allowed above; no other input"),
+    }
+
+
+def amend(artefact_path, followups_path=None, *, now=None):
+    """Add what was derived or measured after the run, and say so inside the file.
+
+    Nothing the run wrote is changed. A `render` block is derived from fields already present, and
+    follow-up results (which have their own file and their own predeclaration) are embedded whole.
+    Each addition is listed under `amendments` with what it was derived from.
+    """
+    path = Path(artefact_path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    when = (now or _dt.datetime.now(_dt.timezone.utc)).isoformat(timespec="seconds")
+    notes = doc.setdefault("amendments", [])
+    doc["render"] = render_block(doc["status"], doc["tint_allowed"], doc["arms"])
+    notes.append({"added": "render", "when": when, "by": f"render_block v{RENDER_VERSION}",
+                  "derived_from": doc["render"]["derived_from"]})
+    if followups_path:
+        doc["followups"] = json.loads(Path(followups_path).read_text(encoding="utf-8"))
+        notes.append({"added": "followups", "when": when,
+                      "by": "attribution_followups, predeclared before it ran",
+                      "predeclaration_sha256": doc["followups"]["predeclaration_sha256"]})
+    write_json(path, doc)
+    return doc
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="senbonzakura attribute",
@@ -174,7 +250,7 @@ def run(args, *, log=print):
                                                                     conv=conv))
         result["readout_arm"] = {"name": arm_name, **H.ARM_DECLARATIONS[arm_name]}
         arms[arm_name] = result
-        _write(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
+        write_json(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
     if shared is not None:
         log(f"shared forward passes: {shared.misses} computed, {shared.hits} reused by the other arm")
 
@@ -199,6 +275,7 @@ def run(args, *, log=print):
         "sampling": {"seed": args.seed, "n_measure": args.n_measure, "n_confirm": args.n_confirm,
                      "batch": args.batch, "torch": torch.__version__},
         "status": status, "status_reason": reason, "tint_allowed": tint,
+        "render": render_block(status, tint, arms),
         "arms_agree": status != ARMS_DISAGREE,
         "arms": arms,
         "controls": {"selftest": selftest, "behaviour_removed_standin": removed},
@@ -207,12 +284,12 @@ def run(args, *, log=print):
                             "estimator": A.ESTIMATOR, "precision": identity["precision"],
                             "model_revision": identity["revision"]},
     }
-    _write(out / "attribution.json", artefact)
+    write_json(out / "attribution.json", artefact)
     log(f"status: {status}  tint_allowed: {tint}\n  {reason}\n  written to {out / 'attribution.json'}")
     return artefact
 
 
-def _write(path, doc):
+def write_json(path, doc):
     from .crashsafe import atomic_write
     with atomic_write(str(path)) as handle:
         handle.write(json.dumps(doc, indent=1, sort_keys=True, default=_jsonable))

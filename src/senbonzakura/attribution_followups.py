@@ -123,3 +123,124 @@ def judge_band(check):
                         "held-out test" if low > 0.0 else
                         "the band did not beat random blocks of the same number on held-out "
                         "requests; the negative result is kept")}
+
+
+# ------------------------------------------------------------------------------ the follow-up run
+
+SCHEMA = "senbonzakura-attribution-followups/1"
+
+
+def build_parser():
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="python -m senbonzakura.attribution_followups",
+        description="Run the two declared follow-ups against a finished attribution run.")
+    p.add_argument("model")
+    p.add_argument("--track", required=True)
+    p.add_argument("--artefact", required=True, help="the attribution.json the run produced")
+    p.add_argument("--out", required=True, help="directory to write followups.json into")
+    p.add_argument("--n-measure", type=int, default=400)
+    p.add_argument("--n-confirm", type=int, default=150)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--batch", type=int, default=16)
+    p.add_argument("--device", default="cuda")
+    return p
+
+
+def run(args, *, log=print):
+    import json
+    import time
+    from pathlib import Path
+
+    from . import attribution as A
+    from . import attribution_hf as H
+    from . import attribution_run as R
+
+    original = json.loads(Path(args.artefact).read_text(encoding="utf-8"))
+    t0 = time.monotonic()
+    model, tok, identity = H.load(args.model, device=args.device,
+                                  revision=original["model"]["revision"])
+    parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
+                                        n_confirm=args.n_confirm, seed=args.seed)
+    wanted = original["behaviour"]["partitions"]
+    got = json.loads(json.dumps(digests))
+    mismatched = [k for k in wanted if wanted[k] != got.get(k)]
+    if mismatched or identity["revision"] != original["model"]["revision"]:
+        differing = mismatched or "model revision"
+        raise A.AttributionError(
+            f"these are not the inputs the original run used (differing: {differing}), so a "
+            f"follow-up on them would answer a different question.")
+
+    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log)
+                for n in (H.ARM_DISJOINT, H.ARM_PURITY)}
+    for s in subjects.values():
+        s.prepare(parts)
+    H.share_readouts(subjects.values())
+    first = subjects[H.ARM_DISJOINT]
+    nb = first.n_blocks
+
+    res = {k: {s: first.residuals(list(parts[k][s].prompts)) for s in ("harmful", "harmless")}
+           for k in ("fit", "search")}
+    direction, position, aucs = A.fit_direction(
+        res["fit"]["harmful"], res["fit"]["harmless"], res["search"]["harmful"],
+        res["search"]["harmless"])
+    orig_dir = original["arms"][H.ARM_DISJOINT]["direction"]
+    if position != orig_dir["position"] or abs(aucs[position] - orig_dir["held_out_auc"]) > 1e-9:
+        raise A.AttributionError(
+            f"the direction refitted here (position {position}, held out AUC {aucs[position]:.6f}) "
+            f"is not the one the original run used ({orig_dir}), so the run is not reproducing it.")
+    log(f"direction reproduced: position {position}, held out AUC {aucs[position]:.6f}")
+
+    out = {"schema": SCHEMA, "predeclaration": PREDECLARATION,
+           "predeclaration_sha256": PREDECLARATION_SHA256,
+           "inputs": {"artefact": Path(args.artefact).name, "model": identity,
+                      "partitions": digests, "seed": args.seed, "batch": args.batch},
+           "exploratory": True, "arms": {}}
+
+    log("[band] generation check on the fresh requests")
+    ranking = list(range(nb))
+    band_check = H.predictive_check(first, parts, list(BAND), direction, ranking, seed=args.seed)
+    out["band"] = {"blocks": list(BAND), "check": band_check, "judgement": judge_band(band_check)}
+
+    for arm_name, subject in subjects.items():
+        log(f"[positions] {arm_name} arm")
+        profiles, details = {}, {}
+        for p in (REFERENCE_POSITION, *POSITIONS):
+            d_p, held_out = A.fit_direction_at(res["fit"]["harmful"], res["fit"]["harmless"],
+                                               res["search"]["harmful"], res["search"]["harmless"],
+                                               p)
+            prof = A.profile_with_intervals(subject, parts["measure"], d_p, nb, seed=args.seed)
+            profiles[p] = prof["effects"]
+            details[str(p)] = {"held_out_auc": held_out, **prof}
+        stored = [b["effect"] for b in original["arms"][arm_name]["blocks"]]
+        drift = max(abs(a - b) for a, b in zip(profiles[REFERENCE_POSITION], stored, strict=True))
+        out["arms"][arm_name] = {
+            "positions": details,
+            "judgement": judge_positions({p: profiles[p] for p in POSITIONS},
+                                         profiles[REFERENCE_POSITION]),
+            "reference_reproduces_original_to": drift}
+    verdicts = {n: a["judgement"]["verdict"] for n, a in out["arms"].items()}
+    out["position_verdict_by_arm"] = verdicts
+    out["position_arms_agree"] = len(set(verdicts.values())) == 1
+    out["seconds"] = round(time.monotonic() - t0)
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    R.write_json(Path(args.out) / "followups.json", out)
+    log(f"band: {out['band']['judgement']['verdict']}  positions: {verdicts}")
+    return out
+
+
+def main(argv=None):
+    import sys
+
+    from . import attribution as A
+    args = build_parser().parse_args(argv)
+    try:
+        run(args)
+    except A.AttributionError as e:
+        print(f"follow-up stopped: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":      # pragma: no cover
+    raise SystemExit(main())

@@ -180,3 +180,77 @@ def test_the_stub_runs_leave_no_partial_files_beside_the_artefact(monkeypatch, t
     R.run(_stub_run(monkeypatch, tmp_path), log=lambda *_: None)
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         "arm-disjoint.json", "arm-purity.json", "attribution.json"]
+
+
+# ------------------------------------------------------------------------------ the render block
+
+def _blocks(effects, cleared=()):
+    return [{"index": i, "effect": e, "exceeds_null": i in cleared} for i, e in enumerate(effects)]
+
+
+def _res(effects, cleared=(), tau=1.0):
+    return {"blocks": _blocks(effects, cleared), "controls": {"family_wise_threshold": tau}}
+
+
+def test_a_diffuse_result_is_drawn_as_a_spread_that_says_no_block_cleared_the_bar():
+    arms = {"disjoint": _res([1.0, 3.0, 0.0, -2.0]), "purity": _res([1.0, 1.0, 2.0, 0.0])}
+    out = R.render_block(A.DIFFUSE, False, arms)
+    assert out["mode"] == "spread" and out["localisation_claim"] is False
+    assert "No block cleared the bar" in out["statement"] and "not a claim" in out["statement"]
+    shares = [b["share"] for b in out["blocks"]]
+    assert shares == pytest.approx([(0.25 + 0.25) / 2, (0.75 + 0.25) / 2, (0.0 + 0.5) / 2, 0.0])
+    assert sum(shares) == pytest.approx(1.0)
+    assert out["bar"]["blocks_clearing_it"] == []
+
+
+def test_a_localised_and_confirmed_result_is_drawn_as_blocks_with_the_claim_set():
+    arms = {"disjoint": _res([0.1, 5.0], cleared=(1,)), "purity": _res([0.1, 4.0], cleared=(1,))}
+    out = R.render_block(A.LOCALISED, True, arms)
+    assert out["mode"] == "blocks" and out["localisation_claim"] is True
+    assert out["bar"]["blocks_clearing_it"] == [1]
+
+
+def test_a_localised_result_nobody_confirmed_is_not_drawn_as_a_localisation():
+    arms = {"disjoint": _res([0.1, 5.0], cleared=(1,))}
+    out = R.render_block(A.LOCALISED, False, arms)
+    assert out["mode"] == "none" and out["localisation_claim"] is False and out["blocks"] == []
+
+
+@pytest.mark.parametrize("status", [A.ABSENT, A.READOUT_INVALID, A.REDUNDANT, A.UNRESOLVED,
+                                    A.DIRECTION_INERT, R.ARMS_DISAGREE, R.SELFTEST_FAILED])
+def test_every_other_status_has_no_per_block_picture(status):
+    out = R.render_block(status, False, {"disjoint": _res([1.0, 2.0])})
+    assert out["mode"] == "none" and out["blocks"] == [] and status in out["statement"]
+
+
+def test_a_diffuse_result_with_no_effect_at_all_has_no_shares_to_invent():
+    out = R.render_block(A.DIFFUSE, False, {"disjoint": _res([-1.0, 0.0])})
+    assert [b["share"] for b in out["blocks"]] == [None, None]
+
+
+def test_an_arm_with_no_blocks_is_left_out_of_the_picture():
+    out = R.render_block(A.DIFFUSE, False, {"disjoint": _res([1.0, 1.0]), "purity": {"blocks": None}})
+    assert out["mode"] == "spread" and set(out["blocks"][0]["per_arm"]) == {"disjoint"}
+
+
+def test_the_whole_command_writes_a_render_block_that_matches_the_status(monkeypatch, tmp_path):
+    artefact = R.run(_stub_run(monkeypatch, tmp_path), log=lambda *_: None)
+    render = json.loads((tmp_path / "attribution.json").read_text())["render"]
+    assert render["localisation_claim"] is artefact["tint_allowed"]
+    assert render["mode"] in {"blocks", "spread", "none"}
+
+
+def test_amending_adds_a_render_block_and_the_followups_without_touching_the_rest(tmp_path):
+    base = {"status": A.DIFFUSE, "tint_allowed": False, "arms": {"disjoint": _res([1.0, 1.0])},
+            "marker": "kept"}
+    path = tmp_path / "attribution.json"
+    path.write_text(json.dumps(base))
+    follow = tmp_path / "followups.json"
+    follow.write_text(json.dumps({"predeclaration_sha256": "abc", "band": {}}))
+    doc = R.amend(path, follow)
+    assert doc["marker"] == "kept" and doc["render"]["mode"] == "spread"
+    assert doc["followups"]["predeclaration_sha256"] == "abc"
+    assert [n["added"] for n in doc["amendments"]] == ["render", "followups"]
+    assert json.loads(path.read_text())["amendments"][0]["by"] == "render_block v1"
+    again = R.amend(path)
+    assert [n["added"] for n in again["amendments"]] == ["render", "followups", "render"]

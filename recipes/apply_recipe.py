@@ -94,7 +94,7 @@ DIRECTION_EPSILON = 1e-6
 ORTHONORMAL_TOL = 1e-4
 NORM_FLOOR = 1e-8
 MAX_HEADER_BYTES = 100 * 1024 * 1024
-RESIDUAL_METRIC = "max_abs_projection"
+RESIDUAL_METRIC = "max_abs_projection/1"
 RESIDUAL_REL_TOL = 1e-3
 RESIDUAL_ABS_TOL = 1e-6
 
@@ -474,7 +474,11 @@ def check_residual_field(residual):
             raise RecipeError("residual-invalid", "a `not_measured` residual must say why.")
         return None
     if residual.get("metric") != RESIDUAL_METRIC:
-        raise RecipeError("residual-invalid", f"`metric` must be {RESIDUAL_METRIC!r}.")
+        raise RecipeError(
+            "residual-invalid",
+            f"`metric` is {residual.get('metric')!r}. This applier implements only {RESIDUAL_METRIC!r}. "
+            "A different version is a different number, so it is refused rather than compared.",
+        )
     for key in ("before", "after", "fraction_remaining"):
         value = residual.get(key)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:

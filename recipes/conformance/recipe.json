@@ -10,7 +10,7 @@
       "before": 2.4747314973221197,
       "definition": "max over the edited tensors, over output rows, of |R_layer W| in float64, where R_layer is the layer's non-empty direction rows and W is the tensor before the edit (before) or after it (after)",
       "fraction_remaining": 0.3686684752493488,
-      "metric": "max_abs_projection",
+      "metric": "max_abs_projection/1",
       "rounds": 0,
       "status": "measured"
     },
@@ -23,7 +23,7 @@
       ],
       "encoding": "safetensors",
       "file": "directions.safetensors",
-      "sha256": "fa2e0129afcc679b280baed5661b7c8d66176443d4915d34eaccb064ecc6160b",
+      "sha256": "55dd39736fca94626377c2966a6550dcb114ca1fd138279a2d19b56153d20584",
       "shape": [
         3,
         2,

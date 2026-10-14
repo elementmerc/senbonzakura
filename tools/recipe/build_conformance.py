@@ -234,6 +234,12 @@ def write_cases(valid, work):
         patch=[set_(["edit", "direction_residual", "after"], recorded["after"] * 0.5)],
     )
     add(
+        "residual-metric-unknown-version",
+        expect="refused",
+        code="residual-invalid",
+        patch=[set_(["edit", "direction_residual", "metric"], "max_abs_projection/2")],
+    )
+    add(
         "base-hash-mismatch", expect="refused", code="base-mismatch", patch=[set_(["base", "weights_sha256"], "0" * 64)]
     )
     add(

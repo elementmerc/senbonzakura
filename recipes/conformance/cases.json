@@ -184,6 +184,22 @@
       "code": "residual-mismatch"
     },
     {
+      "id": "residual-metric-unknown-version",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "direction_residual",
+            "metric"
+          ],
+          "value": "max_abs_projection/2"
+        }
+      ],
+      "code": "residual-invalid"
+    },
+    {
       "id": "base-hash-mismatch",
       "expect": "refused",
       "patch": [
@@ -244,7 +260,7 @@
             "directions",
             "sha256"
           ],
-          "value": "a02462d122ad56c7903219d82efae537221d20888e62f65d19d26a7915b0e9a6"
+          "value": "c086a8626ecdbff2e23b639c3467f6e0d4bcb132910ce9104ee767c2bdc9b90a"
         }
       ],
       "code": "directions-not-orthonormal",

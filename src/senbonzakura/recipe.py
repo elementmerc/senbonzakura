@@ -41,7 +41,7 @@ MLP_TARGET = "model.layers.*.mlp.down_proj.weight"
 
 #: The residual metric and its definition. An applier and a writer must not disagree about which
 #: figure this is, so the definition is written out in every recipe that records one.
-RESIDUAL_METRIC = "max_abs_projection"
+RESIDUAL_METRIC = "max_abs_projection/1"
 RESIDUAL_DEFINITION = (
     "max over the edited tensors, over output rows, of |R_layer W| in float64, where R_layer is "
     "the layer's non-empty direction rows and W is the tensor before the edit (before) or after it "
@@ -87,13 +87,25 @@ def _layer_of(name, targets):
     return None
 
 
-def _max_abs_projection(tensor, R):
+def _max_abs_projection(W, R):
+    """Maximum |R W| in float64. `W` is a float64 array of the tensor's shape, `R` the non-empty rows."""
     import numpy as np
 
     if R.shape[0] == 0:
         return 0.0
-    W = tensor.detach().to("cpu").float().numpy().astype(np.float64)
     return float(np.abs(R @ W).max())
+
+
+def _float64_of(raw, tensor):
+    """One tensor's raw bytes as a float64 array. Decoded here so the bytes are read exactly once."""
+    import numpy as np
+    import torch
+
+    from . import streaming
+
+    dtype = streaming.torch_dtype(tensor.dtype)
+    values = torch.frombuffer(bytearray(raw), dtype=dtype).reshape(tensor.shape)
+    return values.float().numpy().astype(np.float64)
 
 
 def measure_residual(source_dir, baked_dir, directions_path, *, layer_count, targets):
@@ -105,28 +117,34 @@ def measure_residual(source_dir, baked_dir, directions_path, *, layer_count, tar
     trusted alone.
     """
     import numpy as np
-    from safetensors.torch import load_file
+
+    from . import streaming
 
     arr, _meta = streambake.load_directions(directions_path)
     before_max = after_max = 0.0
     edited = 0
+    # STREAMED, ONE TENSOR AT A TIME. Loading a shard whole would hold a 200 GB checkpoint in memory
+    # to measure one number. The residual is the cheapest pass this tool makes: one read of the
+    # source and one of the baked copy, each tensor decoded and discarded before the next.
     for shard in sorted(pathlib.Path(source_dir).glob("*.safetensors")):
-        before_tensors = load_file(str(shard))
-        after_tensors = load_file(str(pathlib.Path(baked_dir) / shard.name))
-        for name, source in before_tensors.items():
-            layer = _layer_of(name, targets)
+        baked_shard = pathlib.Path(baked_dir) / shard.name
+        baked_by_name = {t.name: t for t in streaming.tensors(baked_shard)}
+        for tensor in streaming.tensors(shard):
+            layer = _layer_of(tensor.name, targets)
             if layer is None or not 0 <= layer < layer_count:
                 continue
             R = np.asarray(arr[layer + 1], dtype=np.float64)
             R = R[np.linalg.norm(R, axis=1) > streambake.DIRECTION_EPSILON]
-            if source.shape[0] != arr.shape[2]:
+            if len(tensor.shape) != 2 or tensor.shape[0] != arr.shape[2]:
                 raise RecipeError(
-                    f"{name!r} has output width {source.shape[0]}, but the direction is "
-                    f"{arr.shape[2]} wide. This target does not write to the residual stream, so "
-                    f"the direction does not act on it and no residual can be measured for it."
+                    f"{tensor.name!r} has shape {tensor.shape}, but the direction is "
+                    f"{arr.shape[2]} wide and must sit on the first axis. This target does not "
+                    f"write to the residual stream, so no residual can be measured for it."
                 )
-            before_max = max(before_max, _max_abs_projection(source, R))
-            after_max = max(after_max, _max_abs_projection(after_tensors[name], R))
+            before = _float64_of(streaming.read_tensor(shard, tensor), tensor)
+            after = _float64_of(streaming.read_tensor(baked_shard, baked_by_name[tensor.name]), tensor)
+            before_max = max(before_max, _max_abs_projection(before, R))
+            after_max = max(after_max, _max_abs_projection(after, R))
             edited += 1
     if edited == 0 or before_max <= 0:
         raise RecipeError("no edited tensor carries the direction, so there is no residual to measure")
@@ -256,3 +274,106 @@ def write(path, recipe):
     with crashsafe.atomic_write(path, binary=False) as fh:
         fh.write(text)
     return pathlib.Path(path)
+
+
+#: The reason recorded when the operator skips the residual measurement. Named so a reader of the
+#: recipe can tell a choice from an omission.
+SKIPPED_REASON = "the operator skipped the residual measurement with --skip-residual"
+
+
+def _require_expressible(index, plan, layer_count, targets):
+    """The bake must edit exactly the tensors the recipe's targets name, and no others.
+
+    The check is by set equality, both ways. A tensor the bake edits and the targets do not name
+    would be an edit the recipe omits. A tensor the targets name and the bake does not edit would be
+    an edit the recipe invents. Either would make the recipe describe a different model.
+    """
+    named = set()
+    for layer_names in index.layers:
+        for name in layer_names:
+            layer = _layer_of(name, targets)
+            if layer is not None and 0 <= layer < layer_count:
+                named.add(name)
+    planned = set(plan)
+    if planned != named:
+        differing = sorted(planned ^ named)
+        raise RecipeError(
+            f"this bake and the recipe's targets disagree about which tensors are edited (for "
+            f"example {differing[0]!r}), so a recipe would describe a different model. Only the "
+            f"attention output and MLP down projections are expressible in {PROFILE} today."
+        )
+
+
+def _require_plain_bake(mode, K, arr):
+    """A shared-direction bake, or one that used a subset of the directions, is not the core edit."""
+    if mode != "per_layer":
+        raise RecipeError(
+            f"this bake used the {mode!r} direction mode, where one direction set is shared across "
+            f"every layer. {PROFILE} applies each layer's own set, so a recipe would describe a "
+            f"different edit."
+        )
+    if K is not None and int(K) < arr.shape[1]:
+        raise RecipeError(
+            f"this bake used the first {K} of {arr.shape[1]} directions per layer. The recipe "
+            f"carries the whole set, so it would describe directions the bake did not use."
+        )
+
+
+def write_for_bake(
+    *,
+    model,
+    out,
+    directions,
+    strength,
+    restore_norms,
+    sparsity,
+    rounds,
+    K,
+    mode,
+    ablate_conv,
+    prediction_head,
+    skip_residual,
+    command,
+    log=print,
+):
+    """Write `recipe.json` beside a finished bake, measuring the residual unless told not to.
+
+    A recipe is the better artefact, so this runs by default. It never fails the bake: a bake the
+    profile cannot express is still a bake, and the reason no recipe was written is printed plainly.
+    Returns the recipe path, or None.
+    """
+    from . import streaming
+
+    try:
+        index = streaming.index_layers(model)
+        layer_count = index.count
+        plan = streambake.plan_edits(index, ablate_conv=ablate_conv, prediction_head=prediction_head)
+        targets = [ATTN_TARGET, MLP_TARGET]
+        _require_expressible(index, plan, layer_count, targets)
+        arr, _meta = streambake.load_directions(directions)
+        _require_plain_bake(mode, K, arr)
+        if skip_residual:
+            residual = {"status": "not_measured", "why": SKIPPED_REASON}
+        else:
+            residual = measure_residual(model, out, directions, layer_count=layer_count, targets=targets)
+        doc = build(
+            name=pathlib.Path(out).name,
+            model_dir=model,
+            model_id=pathlib.Path(model).name,
+            revision="local",
+            directions_path=directions,
+            layer_count=layer_count,
+            strength=strength,
+            restore_norms=restore_norms,
+            measured=None,
+            command=command,
+            sparsity=sparsity,
+            rounds=rounds,
+            residual=residual,
+        )
+    except (RecipeError, streaming.ShardError) as e:
+        log(f"  no recipe written: {e}")
+        return None
+    path = write(pathlib.Path(out) / "recipe.json", doc)
+    log(f"  recipe written to {path}")
+    return path

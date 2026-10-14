@@ -71,15 +71,22 @@ def test_a_recursion_error_becomes_a_refusal_not_a_traceback(tmp_path):
 
 def test_the_cli_reports_an_over_large_file_as_a_refusal(tmp_path, monkeypatch):
     """End to end through the CLI's own reader, which must answer (None, why) rather than raise."""
-    from senbonzakura_check import cli, registry
+    import functools
 
-    monkeypatch.setattr(registry, "MAX_ARTEFACT_BYTES", 10)
+    from senbonzakura_check import cli, loaders, registry
+
+    # THE CAP IS PATCHED WHERE THE LOADER CALLS IT, not on the module constant. `read_json_bounded`
+    # binds its default at definition time, so patching `MAX_ARTEFACT_BYTES` leaves the real 64 MB
+    # cap in force and the file is refused for being unrecognised: the assertion below would pass
+    # on the wrong reason. Asserting on the size refusal's own wording is what makes this a test.
+    monkeypatch.setattr(loaders, "read_json_bounded",
+                        functools.partial(registry.read_json_bounded, max_bytes=10))
     p = tmp_path / "big.json"
     p.write_text(json.dumps({"metric": "x", "value": 1}), encoding="utf-8")
-    doc, why = cli._read_one(p) if hasattr(cli, "_read_one") else (None, None)
-    if why is None and doc is None:
-        pytest.skip("the CLI's single-file reader is not named _read_one in this version")
+    doc, why = cli.read_artefact(p)
     assert doc is None and why, "an over-large file must come back as a refusal with a reason"
+    assert why.startswith("this tool declines to read it") and "at most 10" in why, (
+        f"refused, but not by the size cap: {why}")
 
 
 def test_the_declared_limits_are_sane():

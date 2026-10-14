@@ -361,9 +361,12 @@ def _drive(monkeypatch, argv, *, attack=None, benign=None, prompts=30, rows=None
     `rows` is `(attack prompts, benign prompts)` when a test needs the prompts to be known exactly,
     for the overlap check. Otherwise each set is generated, which is enough for everything else.
     """
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli, score
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     if rows is None:
         monkeypatch.setattr(jailbreak, "prompts_for",
                             lambda key, limit, what: [f"{key} {i}" for i in range(limit or prompts)])
@@ -523,10 +526,13 @@ def test_a_baseline_scored_on_different_prompts_is_refused_end_to_end(monkeypatc
 
 def test_a_bad_baseline_path_is_refused_before_the_model_loads(monkeypatch, tmp_path):
     """On a rented machine a typo in a path must not cost a multi-gigabyte load first."""
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli
 
     loaded = []
-    monkeypatch.setattr(score, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: loaded.append(1) or (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for", lambda key, limit, what: ["p"] * 30)
     with pytest.raises(SystemExit, match="could not be read"):
@@ -594,9 +600,9 @@ def _every_key(value):
 
 
 def _drive_multiturn(monkeypatch, tmp_path):
-    from senbonzakura import multiturn, score
+    from senbonzakura import cli, multiturn
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"p{i}" for i in range(40)])
     monkeypatch.setattr(multiturn, "generate_turn",
@@ -607,9 +613,9 @@ def _drive_multiturn(monkeypatch, tmp_path):
 
 
 def _drive_tamper(monkeypatch, tmp_path):
-    from senbonzakura import score, tamper
+    from senbonzakura import cli, score, tamper
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"p{i}" for i in range(80)])
     monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
@@ -680,9 +686,12 @@ def test_the_command_runs_against_the_real_bundled_corpora(monkeypatch, tmp_path
     Everything above replaces `_prompts`, so without this nothing exercises the path a real run
     takes to its prompts.
     """
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli, score
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(score, "generate",
                         lambda model, tok, given, device, batch=16, max_new=64:
                         [ANSWER] * len(given))
@@ -832,10 +841,13 @@ def _edit_track(monkeypatch, *, harmful_fit=(), harmful_search=(), harmless_fit=
 
 def test_an_attack_row_the_edit_was_fitted_on_is_refused_before_the_model_loads(
         monkeypatch, tmp_path):
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli
 
     loaded = []
-    monkeypatch.setattr(score, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: loaded.append(1) or (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: ATTACK_ROWS if what == "attack set" else BENIGN_ROWS)
@@ -850,10 +862,13 @@ def test_an_attack_row_the_edit_was_fitted_on_is_refused_before_the_model_loads(
 
 
 def test_a_benign_row_the_edit_was_fitted_on_is_refused(monkeypatch, tmp_path):
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli
 
     loaded = []
-    monkeypatch.setattr(score, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: loaded.append(1) or (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: ATTACK_ROWS if what == "attack set" else BENIGN_ROWS)

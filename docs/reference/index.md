@@ -12,6 +12,7 @@ the ground is the map's fault.
 | [Flags worth knowing](/reference/flags) | The handful that change what a number means, out of the full set |
 | [Which models it can open](/reference/models) | Architectures, and how to find out before anything downloads |
 | [Tuned presets](/reference/presets) | What a preset is, how a pack supplies one, and what the tool does with none installed |
+| [Writing a plugin](/reference/plugins) | The contract an instrument keeps, the two transports, and the limits both are held to |
 
 ## If you are looking for
 

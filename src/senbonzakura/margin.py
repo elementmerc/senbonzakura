@@ -34,17 +34,27 @@ from pathlib import Path
 import torch
 
 from . import argresolve, say, stamps
-from .cli import (
-    accelerator_name,
-    last_token_logits,
-    load_model_and_tokenizer,
-    loader_parser,
-    render_chat,
-)
 from .crashsafe import atomic_write, provenance
 from .resources import ResourceGovernor
 from .score import JUDGE_TEMPLATE
 from .track import read_manifest, revision_entry
+
+# `.cli` IS NOT IMPORTED HERE, AND THE REASON IS MEASURED. It pulls transformers (0.79s) and optuna
+# (0.19s) on top of torch, so `senbonzakura compass --help` took 3.14 seconds to print a page of
+# text. `capability.py` and `jailbreak.py` already reach `loader_parser` through `.parser` for
+# exactly this reason, with the reasoning written out at `capability.build_parser`. Measured after:
+# 2.13s, and the rest is torch itself.
+#
+# TORCH STAYS AT MODULE SCOPE HERE, unlike in `score`, `coherence` and `drift`, and the blocker is
+# worth naming rather than discovering twice: two functions below are decorated `@torch.no_grad()`,
+# and a decorator is evaluated when the module is imported. Moving the import into the functions
+# would leave the decorator reaching a name that does not exist yet. Getting this module to the
+# 0.06s the other three reach means either a deferring `no_grad` decorator in a shared home or
+# restructuring both bodies into `with` blocks, which is a shared decision rather than a local fix.
+# Recorded in DEFERRED.md.
+#
+# `tests/test_a_help_page_costs_nothing.py` pins the figure for every command, so the half of this
+# that is fixed cannot quietly come back.
 
 #: What to skip when there is no manifest to read the boundary out of. These are the values this
 #: command carried as hard defaults until 2026-08-17, kept only so an invocation with a bare pair
@@ -137,6 +147,9 @@ def resolve_skips(track, skip_harmful, skip_harmless, log=None):
 
 
 def build_parser():
+    # FROM `.parser`, NOT FROM `.cli`, which re-exports it. See the note at the top of this file.
+    from .parser import loader_parser
+
     ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura compass",
@@ -270,6 +283,8 @@ def margins(model, tok, prompts, harmful_ids, benign_ids, device, batch=16, gov=
     pair (`canonical`, from `canonical_token_id`), and the prompt's real token count. Both
     come off the forward pass that already happened, so the controls cost no extra compute.
     """
+    from .cli import last_token_logits, render_chat  # local: see the note at the top
+
     def _do(chunk):
         # The shared renderer, not a local copy: it turns thinking off where the model supports
         # it, which is what puts the read-out position where the verdict actually goes rather
@@ -364,6 +379,8 @@ def margins_past_preamble(model, tok, prompts, harmful_ids, benign_ids, device, 
     within a chunk after generation, because each sequence closes its block at its own length and
     a batched gather would need the positions anyway.
     """
+    from .cli import render_chat  # local: see the note at the top
+
     out = []
     for i in range(0, len(prompts), batch):
         chunk = list(prompts[i:i + batch])
@@ -1119,6 +1136,14 @@ def in_words(res, score):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+
+    # BELOW THE PARSE, NOT ABOVE IT, and that line is the whole of why this works.
+    # `--help` and every argument error exit from inside `parse_args`, so an import above it
+    # is paid by the help page and the deferral buys nothing. Measured: with this import one
+    # line higher, `--help` still cost the full 3.2 seconds and the only way to tell was to
+    # ask which modules were loaded when it exited.
+    from .cli import accelerator_name, load_model_and_tokenizer
+
     # BEFORE THE MODEL LOADS, for the reason the next comment gives about a different check. This
     # one was written after `margins_path` was resolved, which is a hundred lines and one
     # multi-gigabyte model load too late: both orders reported "could not load the model" and never

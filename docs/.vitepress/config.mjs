@@ -153,6 +153,7 @@ export default {
             { text: 'Flags worth knowing', link: '/reference/flags' },
             { text: 'Which models it can open', link: '/reference/models' },
             { text: 'Tuned presets', link: '/reference/presets' },
+            { text: 'Writing a plugin', link: '/reference/plugins' },
           ],
         },
       ],

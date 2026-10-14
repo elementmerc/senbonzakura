@@ -230,6 +230,96 @@ def head_partition(n, total):
     return ALL_ROWS if n in (0, int(total)) else f"{HEAD_PREFIX}{n}-rows"
 
 
+#: What a document that INDEXES several measurements declares itself to be, rather than leaving a
+#: reader to infer it from a shape.
+#:
+#: Q-116, taking option E of Q-54. Before this, the only way to tell a summary from a measurement
+#: was "it has a stages dict and no metrics block", which is a guess about intent read off a shape:
+#: a future artefact carrying both would be misread, and a reader had no field to check.
+#:
+#: HOISTED HERE FROM `measure.py` ON 2026-10-10, because the aggregate question has two askers.
+#: Q-54 was raised precisely because `measure` and the head-to-head reporter reach it independently,
+#: and the plan's own note says answering it twice differently is the defect. `measure` re-exports
+#: these names, so nothing that already reads them had to move.
+SUMMARY_KIND = "summary"
+
+#: Why a summary carries no stamp of its own, in the words that go into the artefact.
+#:
+#: NAMED RATHER THAN OMITTED, which is the part of option E that does the work. An aggregate with
+#: no stamp invites the reading "nobody stamped this"; one that says WHICH fields its measurements
+#: disagree on is making a claim a reader can check against the files sitting beside it.
+PINNED_MAY_DIFFER_DOC = (
+    "the pinned fields on which this document's measurements legitimately differ. A summary has no "
+    "stamp of its own BECAUSE of these: one value for a field several instruments measured "
+    "differently would be a claim about the others that is not true. Each measurement's own file "
+    "carries its own stamp, and the stamps recorded beside this hold them verbatim."
+)
+
+
+def pinned_blocks(doc, *, where):
+    """One artefact's pinned fields, per metric slot, verbatim, or a marker saying why not.
+
+    THE MARKER IS NOT A HOLE. An absent key and a key saying "this could not be read" are different
+    claims and the second is the true one: dropping the entry would make a summary over four
+    measurements describe three.
+    """
+    from . import baseline
+
+    if not isinstance(doc, dict):
+        return {"unstamped": f"{where} is not a document"}
+    metrics = doc.get("metrics")
+    if not isinstance(metrics, dict) or not metrics:
+        return {"unstamped": f"{where} carries no metrics block"}
+    return {
+        slot: {k: v for k, v in block.items() if k in baseline.PINNED}
+        for slot, block in sorted(metrics.items()) if isinstance(block, dict)
+    }
+
+
+def read_pinned_blocks(path):
+    """`pinned_blocks` for a file on disk, with an unreadable file reported rather than dropped.
+
+    THE MARKER NAMES THE FILE AND NOT THE PATH. This goes into an artefact, and an artefact that
+    carries an absolute path from whoever happened to run it is both a small disclosure and useless
+    to the next reader, whose copy is somewhere else. The file sits beside the summary by
+    construction, so its name is enough to find it.
+    """
+    import json
+    from pathlib import Path
+
+    target = Path(path)
+    try:
+        doc = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"unreadable": f"{type(e).__name__}: {e}"}
+    return pinned_blocks(doc, where=target.name)
+
+
+#: The two keys `pinned_blocks` uses to say it could not read a stamp, as opposed to a metric slot.
+#: Named so a consumer of these tables does not have to spell them, and so adding a third cannot
+#: leave one reader behind.
+MARKER_KEYS = ("unreadable", "unstamped")
+
+
+def pinned_fields_that_differ(stamps):
+    """Which pinned fields take more than one value across a table of pinned blocks, sorted.
+
+    Computed rather than typed, so a fifth measurement changes the answer without anybody having to
+    remember a tuple. Sorted so two runs over the same inputs produce byte-identical output, which
+    is the reproducibility rule: iteration order of a set must not reach a result file.
+    """
+    import json
+
+    seen = {}
+    for blocks in stamps.values():
+        for slot, block in blocks.items():
+            if slot in MARKER_KEYS:
+                continue
+            for field, value in block.items():
+                seen.setdefault(field, set()).add(json.dumps(value, sort_keys=True))
+    return sorted(field for field, values in seen.items() if len(values) > 1)
+
+
 def pinned(*, prompts, model=None, tok=None, load_in_4bit=False, skip=0, recorded_skip=None,
            verified=None, input_digest=None, partition=None, prompt_format=None, precision=None):
     """The five pinned fields a writer passes straight into `measurement.stamp`, plus the version.

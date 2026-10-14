@@ -1511,6 +1511,142 @@ class BudgetRefusedError(MemoryError):
     """
 
 
+#: What the ceiling is a ceiling UNDER, in the words that go beside the number.
+#:
+#: The policy is not decoration and it is why `ceilings` returns it rather than leaving a reader to
+#: find `BUDGET_HEADROOM` in this file. `resources` already documents that raw free video memory
+#: counts torch's own caching allocator as used, so a warm box reads as starved when it is not, and
+#: a bare "the largest model this box can do is 11 GB" is therefore a number whose meaning depends
+#: on what else was running when it was taken. Naming the policy turns it into a claim somebody can
+#: reproduce.
+CEILING_POLICY = (
+    "measured availability at the moment of the reading, times the "
+    f"{BUDGET_HEADROOM:.0%} this plans into, minus every other term of the same pool"
+)
+
+
+class Ceiling:
+    """How far one term of one pool could grow before the run stopped fitting.
+
+    WHY A TERM AND NOT A MODEL SIZE. "The largest model this box can do" sounds like one number and
+    is not one, because nothing in this arithmetic is a function of a parameter count. The card is
+    bound by the WIDEST LAYER, the disk by the whole checkpoint, and the host by the double
+    buffered layer store, so a single headline figure would have to assume a shape: how a family
+    divides parameters between layers, how many experts each block holds, whether attention is
+    shared across a group. Those differ by family, which is the whole reason `modelmap.py` exists,
+    and a ceiling that quietly assumed a dense decoder would be wrong in exactly the places this
+    project has already been wrong.
+
+    SO THIS IS AN EXACT INVERSION INSTEAD, and it invents nothing. Every pool's budget and every
+    one of its terms is already computed by `plan`; this solves the same sum for one term while
+    holding the rest at the values that run would use. The answer is then a bound a reader can
+    check against a candidate's safetensors headers, which cost a second to read, rather than a
+    projection they would have to trust.
+
+    `headroom` is negative when the run does not fit at all. Reported rather than clamped to zero:
+    "this term has 0 bytes left" and "this term is 2 GB over" are different facts, and a reader
+    deciding what to change needs the second one.
+    """
+
+    __slots__ = ("available", "budget", "label", "other_bytes", "pool", "term_bytes")
+
+    def __init__(self, *, pool, label, term_bytes, other_bytes, available, budget):
+        self.pool = pool
+        self.label = label
+        self.term_bytes = int(term_bytes)
+        self.other_bytes = int(other_bytes)
+        self.available = available
+        self.budget = budget
+
+    @property
+    def measured(self):
+        """Whether the machine said what it had. An unmeasured pool has no ceiling, not a big one."""
+        return self.budget is not None
+
+    @property
+    def ceiling_bytes(self):
+        """The largest this term could be and still fit, or None when nothing was measured."""
+        return None if self.budget is None else self.budget - self.other_bytes
+
+    @property
+    def headroom(self):
+        """How much room this term has left, negative when it is already over."""
+        return None if self.budget is None else self.ceiling_bytes - self.term_bytes
+
+    @property
+    def multiple(self):
+        """The ceiling as a multiple of this run's term, or None when the term or budget is absent.
+
+        The useful form for the question the row behind this was written for, which is whether a
+        bigger model of the same shape would fit: a widest layer that may be 2.4 times this one is
+        a sentence an operator can act on, where 11,274,289,152 bytes is not. None rather than
+        infinity for a zero term, because dividing by it would answer a question nobody asked.
+        """
+        if self.ceiling_bytes is None or self.term_bytes <= 0:
+            return None
+        return self.ceiling_bytes / self.term_bytes
+
+
+def ceilings(budget):
+    """Every pool's binding term, and how far it could grow. One `Ceiling` per pool, in pool order.
+
+    THE BINDING TERM IS THE LARGEST ONE, and it is picked rather than named here so that a pool
+    which grows a fifth term is covered without anybody editing this. Ties go to the first, which
+    keeps two runs over the same budget reporting the same term rather than whichever the
+    iteration happened to reach.
+
+    A pool with no terms is skipped rather than reported with a zero term, because "the widest
+    layer could be 11 GB" said about a pool that asks for nothing is a sentence with no subject.
+    """
+    out = []
+    for pool in budget.pools:
+        if not pool.needs:
+            continue
+        label, term = max(pool.needs, key=lambda n: int(n[1]))
+        out.append(Ceiling(pool=pool.name, label=label, term_bytes=term,
+                           other_bytes=pool.total - int(term),
+                           available=pool.available, budget=pool.budget))
+    return out
+
+
+def report_ceilings(budget, log=print):
+    """Print the ceilings with the policy named beside them, which is the point of printing them.
+
+    SEPARATE FROM `report`, which answers "does this run fit". This answers "what else would",
+    and they are different questions: the first is about the run in front of you and the second is
+    about a run you have not started. Printing both from one function would have made the second
+    arrive whether or not it was asked for, in a refusal that is already several paragraphs.
+    """
+    from . import say
+
+    def tell(text):
+        say.say(text, indent="  ", log=log)
+
+    tell(f"what else would fit, under this policy: {CEILING_POLICY}")
+    for ceiling in ceilings(budget):
+        if not ceiling.measured:
+            tell(f"{ceiling.pool}: this machine will not report what it has, so there is no "
+                 f"ceiling to give. That is not the same as a high one")
+            continue
+        room = ceiling.headroom
+        multiple = ceiling.multiple
+        # NO MULTIPLE ON A POOL THE RUN HAS ALREADY OVERFLOWED. The ceiling is negative there, so
+        # the multiple is too, and "-0.73 times this run's" is not a sentence about a size. Found
+        # by the test that asserts no negative figure reaches the printed form, which is why that
+        # test exists rather than only the arithmetic ones: the value was right and the rendering
+        # was not. The "already OVER" clause carries the same fact in a form that reads.
+        as_well = ("" if multiple is None or multiple <= 0
+                   else f", which is {multiple:.2f} times this run's")
+        over = ("" if room >= 0
+                else f". This run is already OVER it by {fmt_bytes(-room)}, so the figure above "
+                     f"is what would have had to be true")
+        tell(f"{ceiling.pool}: {ceiling.label} may be up to "
+             f"{fmt_bytes(max(0, ceiling.ceiling_bytes))}{as_well}{over}")
+    tell("Each figure holds everything else about this run fixed, so changing the prompt count "
+         "or the generated token count moves it. Read it against a candidate's safetensors "
+         "headers, which `senbonzakura budget` reads in about a second.")
+
+
 def report(budget, log=print):
     """Print the budget as a person reads it: what it needs, what is there, and the verdict.
 

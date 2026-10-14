@@ -328,9 +328,12 @@ class _Tok:
 
 def _drive(monkeypatch, argv, *, turn_one=None, later=None, overflow=(), prompts=40):
     """Run `main` with the model and the corpora replaced, so every branch runs on CPU."""
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"{key} {i}" for i in range(limit or prompts)])
     rounds = []
@@ -501,9 +504,12 @@ def test_the_command_runs_against_the_real_corpora_and_a_real_generation_loop(
     Everything above replaces `generate_turn`, so without this nothing exercises the rendering of
     a multi-turn conversation, the token count that guards it, or the batching.
     """
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     res = multiturn.main(["--model", "m", "--device", "cpu", "--attack-set", "advbench",
                           "--n", "3", "--batch", "2", "--max-new", "2",
                           "--out", str(tmp_path / "r.json")])

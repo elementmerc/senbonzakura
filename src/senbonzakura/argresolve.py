@@ -195,6 +195,42 @@ def explain_that_the_output_is_positional(ap, *, takes):
     return ap
 
 
+def shortest_invocation(parser):
+    """The smallest command line this parser accepts, as a string, or None if it needs nothing.
+
+    WHY A SUBCOMMAND OWES THIS AND argparse DOES NOT GIVE IT. argparse's refusal for the commonest
+    mistake there is reads `the following arguments are required: --baseline, --current`, which
+    names what is missing and nothing about what to type. Readers 3 and 5 both came to set
+    something up and stopped there, because the next move after that sentence is to go and read
+    `--help` and work out the shape for yourself.
+
+    Built from the parser's own required actions rather than written per command, so the twenty
+    delegated commands get it at once and a flag that becomes required later is included without
+    anybody remembering. The value shown is the `metavar` where a command declared one, which is
+    the word that command's own help uses, and the uppercased `dest` otherwise.
+
+    POSITIONALS COME FIRST, in declaration order, because that is the order they have to be typed
+    in. Flags are sorted, because their order does not matter and two runs should print one line.
+    """
+    positionals, flags = [], []
+    for action in parser._actions:  # noqa: SLF001
+        if isinstance(action, argparse._SubParsersAction):  # noqa: SLF001
+            continue
+        if not action.option_strings:
+            # A positional with `nargs="?"` is optional however `required` reads, and argparse
+            # does not set `required` on positionals at all.
+            if action.nargs not in ("?", "*"):
+                positionals.append(action.metavar or action.dest.upper())
+            continue
+        if action.required:
+            value = "" if action.nargs == 0 else f" {action.metavar or action.dest.upper()}"
+            flags.append(f"{action.option_strings[0]}{value}")
+    parts = positionals + sorted(flags)
+    if not parts:
+        return None
+    return f"{parser.prog} {' '.join(parts)}"
+
+
 def unknown_long_flags(parser, argv):
     """Every `--flag` in `argv` that this parser does not declare.
 
@@ -239,16 +275,34 @@ class ParserThatNamesUnknownFlags(argparse.ArgumentParser):
 
     def error(self, message):
         if "required" in message and not self._has_subcommands():
+            from . import say
+
             unknown = unknown_long_flags(self, getattr(self, "_argv_as_given", []))
             if unknown:
-                from . import say
-
                 named = ", ".join(unknown)
                 verb = "is not a flag" if len(unknown) == 1 else "are not flags"
                 message += "\n" + "\n".join(say.lines(
                     f"Also, {named} {verb} this command has, so adding the missing one above would "
                     f"leave it silently ignored. Check the spelling against --help.",
                     indent="  ", first="  "))
+            # AND WHAT TO TYPE, added 2026-10-10 for the ledger item behind readers 3 and 5. Naming
+            # what is missing is not the same as showing the shape, and the next move after
+            # argparse's own sentence is to go away and read `--help`. The shortest accepted
+            # invocation is four spaces in so it stays pasteable: `say.reflow` passes a four-space
+            # line through verbatim, which is the same rule `baseline`'s hand-written refusal uses.
+            #
+            # STRICTLY ADDITIVE, like the paragraph above it and for the same reason: this never
+            # refuses anything that parses today, it adds to a refusal that was already happening.
+            #
+            # It does NOT close with its own `--help` pointer. It used to, and `_refuse` below now
+            # ends every refusal with one, so keeping both printed the same sentence twice in a row.
+            shortest = shortest_invocation(self)
+            if shortest:
+                message += "\n" + "\n".join([
+                    *say.lines("The shortest command line this accepts:",
+                               indent="  ", first="  "),
+                    f"    {shortest}",
+                ])
         self._refuse(message)
 
     def _refuse(self, message):

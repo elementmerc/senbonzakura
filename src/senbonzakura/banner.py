@@ -259,19 +259,29 @@ def display_width(text):
     return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
 
 
-def _plain(line):
+def _uncoloured(line):
+    """One rendered line's text, with the roles dropped.
+
+    Named `_uncoloured` rather than `_plain` because `_plain` is already a DESIGN builder
+    forty lines up, and this definition used to shadow it. The dict happened to be built
+    before the rebinding, so `DESIGNS["plain"][0]` held the builder while the module global
+    held this helper, and the ASCII design worked only because of the order the two
+    definitions appear in. Moving either one would have made `render("plain", ...)` call
+    this with a version string.
+    """
     return "".join(text for _, text in line)
 
 
 def width(name, version="0.0.0"):
     """The widest rendered line of a design, in terminal columns, uncoloured."""
     builder = DESIGNS[name][0]
-    return max((display_width(_plain(line).rstrip()) for line in builder(version)), default=0)
+    return max((display_width(_uncoloured(line).rstrip()) for line in builder(version)),
+               default=0)
 
 
 def _paint(line, colour):
     if not colour:
-        return _plain(line).rstrip()
+        return _uncoloured(line).rstrip()
     out = []
     for role, text in line:
         out.append(f"\x1b[38;5;{PALETTE[role]}m{text}\x1b[0m")

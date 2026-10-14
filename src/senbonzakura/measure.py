@@ -45,7 +45,7 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from . import argresolve, baseline, bundled, say, stamps
+from . import argresolve, bundled, say, stamps
 from .crashsafe import atomic_write
 
 #: Stage name -> (module, output filename). The module is looked up through `entry.DELEGATED`
@@ -660,28 +660,21 @@ def format_table(rows):
             for r in rows]
 
 
-#: What `measure.json` declares itself to be, so a reader does not have to infer it from the shape.
+#: MOVED TO `stamps` ON 2026-10-10, and re-exported here rather than left as a second copy.
 #:
-#: Q-116, taking option E of Q-54. Before this, the only way to tell a summary from a measurement
-#: was "it has a stages dict and no metrics block", which is a guess about intent read off a
-#: shape: a future artefact that happened to carry both would be misread, and a reader had no
-#: field to check. The kind is now stated, and the shape check stays behind it for the files
-#: written before this existed.
-SUMMARY_KIND = "summary"
-
-#: The pinned fields that may legitimately differ between this command's instruments.
+#: Q-54 was raised because `measure` and the head-to-head reporter reach the aggregate-pinned-fields
+#: question independently, and the plan's own note on it says answering it twice differently is the
+#: defect. So when the reporter needed the same four answers, they went where `stamps` already
+#: keeps the pinned vocabulary rather than being imported sideways out of this module, which is the
+#: heavier of the two and would have pulled `baseline` and `bundled` into a reporter that needs
+#: neither.
 #:
-#: NAMED RATHER THAN OMITTED, which is the part of option E that does the work. An aggregate with
-#: no stamp of its own invites the reading "nobody stamped this"; an aggregate that says WHICH
-#: fields its instruments disagree on is making a claim a reader can check against the per-stage
-#: files sitting beside it. The list is computed from the stamps actually written, not typed here,
-#: because a fifth instrument must change the answer without anybody remembering to edit a tuple.
-PINNED_MAY_DIFFER_DOC = (
-    "the pinned fields on which this command's instruments legitimately differ. A summary has no "
-    "stamp of its own BECAUSE of these: one value for a field four instruments measured "
-    "differently would be a claim about three of them that is not true. Each instrument's own "
-    "file carries its own stamp, and `stage_stamps` below holds them verbatim."
-)
+#: Re-exported under the old names because `measure.SUMMARY_KIND` and `measure.stage_stamps` are
+#: what the tests and the existing callers spell, and the same idiom already appears in
+#: `coherence.py` for `stamps.model_precision`.
+SUMMARY_KIND = stamps.SUMMARY_KIND
+PINNED_MAY_DIFFER_DOC = stamps.PINNED_MAY_DIFFER_DOC
+pinned_fields_that_differ = stamps.pinned_fields_that_differ
 
 
 def stage_stamps(out_dir, stages):
@@ -692,45 +685,12 @@ def stage_stamps(out_dir, stages):
     those are not the same document. Reading the file back is also the only version that stays
     true when a stage is re-run by hand into the same directory.
 
-    A stage whose file cannot be read contributes `None` rather than being dropped. An absent key
+    A stage whose file cannot be read contributes a marker rather than being dropped. An absent key
     and a key whose value is "this could not be read" are different claims, and the second is the
     true one: dropping it would make the summary quietly describe three instruments as four.
     """
-    out = {}
-    for name, filename in stages.items():
-        path = Path(out_dir) / filename
-        try:
-            with open(path, encoding="utf-8") as fh:
-                doc = json.load(fh)
-        except (OSError, ValueError) as e:
-            out[name] = {"unreadable": f"{type(e).__name__}: {e}"}
-            continue
-        metrics = doc.get("metrics")
-        if not isinstance(metrics, dict) or not metrics:
-            out[name] = {"unstamped": f"{filename} carries no metrics block"}
-            continue
-        out[name] = {
-            slot: {k: v for k, v in block.items() if k in baseline.PINNED}
-            for slot, block in sorted(metrics.items()) if isinstance(block, dict)
-        }
-    return out
-
-
-def pinned_fields_that_differ(stamps):
-    """Which pinned fields take more than one value across the stages, sorted.
-
-    Computed rather than typed, so a fifth instrument changes the answer without anybody having to
-    remember a tuple. Sorted so two runs of the same command produce byte-identical output, which
-    is the reproducibility rule: iteration order of a set must not reach a result file.
-    """
-    seen = {}
-    for blocks in stamps.values():
-        for slot, block in blocks.items():
-            if slot in ("unreadable", "unstamped"):
-                continue
-            for field, value in block.items():
-                seen.setdefault(field, set()).add(json.dumps(value, sort_keys=True))
-    return sorted(field for field, values in seen.items() if len(values) > 1)
+    return {name: stamps.read_pinned_blocks(Path(out_dir) / filename)
+            for name, filename in stages.items()}
 
 
 def main(argv=None):

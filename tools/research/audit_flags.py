@@ -107,9 +107,20 @@ def dest_of(call):
 
 
 class _Walk(ast.NodeVisitor):
-    def __init__(self, module, declared, read, splat, imports, forwards):
+    def __init__(self, module, declared, read, splat, imports, forwards, switched_off=None):
         self.module, self.declared, self.read, self.splat = module, declared, read, splat
         self.imports, self.forwards = imports, forwards
+        # A SHARED PARENT PARSER CAN BE ASKED FOR LESS THAN ALL OF IT. `loader_parser` takes
+        # `chat_template=True` and `model_required=True`, and a caller passing False gets a parser
+        # that does not declare that flag at all. Without this, attributing the parent's whole
+        # surface to every importer reported a flag as dropped by a command that never offered it:
+        # `coherence` calls `loader_parser(chat_template=False)` precisely BECAUSE it measures a
+        # fixed passage and renders no chat prompt, and it was named as the offender.
+        #
+        # Keyed on the keyword NAME, which is the convention `loader_parser` already follows: the
+        # toggle is spelled like the dest it governs. A toggle that stops following it would show
+        # up as a flag reported dropped again rather than as a silent miss.
+        self.switched_off = switched_off if switched_off is not None else {}
         self._fn = []
 
     def visit_ImportFrom(self, node):
@@ -147,6 +158,13 @@ class _Walk(ast.NodeVisitor):
                 self.declared.setdefault(dest, []).append(
                     (self.module, node.lineno, self._here()))
         if isinstance(f, ast.Name):
+            # `loader_parser(chat_template=False)` asks for a parser WITHOUT that flag. Recorded
+            # per module so the attribution below can subtract it. Only a literal False counts: a
+            # value this cannot evaluate is not a reason to stop holding the module answerable.
+            for kw in node.keywords:
+                if (kw.arg and isinstance(kw.value, ast.Constant)
+                        and kw.value.value is False):
+                    self.switched_off.setdefault(self.module, set()).add((f.id, kw.arg))
             if f.id == "getattr" and len(node.args) >= 2 and is_namespace(node.args[0]):
                 key = node.args[1]
                 if isinstance(key, ast.Constant) and isinstance(key.value, str):
@@ -164,6 +182,7 @@ class _Walk(ast.NodeVisitor):
 def analyse(root):
     """Return (declared, read, splat, parsed_count) for every first-party module under `root`."""
     declared, read, splat, parsed, imports, forwards = {}, {}, [], 0, {}, set()
+    switched_off = {}
     for path in sorted(pathlib.Path(root).rglob("*.py")):
         if any(s in str(path) for s in SKIP_DIRS):
             continue
@@ -172,7 +191,7 @@ def analyse(root):
         except SyntaxError as exc:
             raise SystemExit(f"audit_flags: cannot parse {path}: {exc}") from exc
         parsed += 1
-        _Walk(path.name, declared, read, splat, imports, forwards).visit(tree)
+        _Walk(path.name, declared, read, splat, imports, forwards, switched_off).visit(tree)
 
     # Attribute a parser's declarations to the modules that IMPORT that specific parser.
     #
@@ -185,8 +204,13 @@ def analyse(root):
         for module, _lineno, fn in sites:
             parser_defs.setdefault((module, fn), set()).add(dest)
     for module, names in imports.items():
+        off = switched_off.get(module, set())
         for src_module, imported in names:
             for dest in parser_defs.get((f"{src_module}.py", imported), ()):
+                # The importer asked this parser for a version without that flag, so it never
+                # offered it and cannot have dropped it.
+                if (imported, dest) in off:
+                    continue
                 declared[dest].append((module, 0, imported))
 
     # A module that reads no flag at all cannot drop one. That is either a pure parser module

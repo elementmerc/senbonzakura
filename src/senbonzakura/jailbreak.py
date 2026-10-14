@@ -718,9 +718,15 @@ def main(argv=None):
         attack=(attack_corpus.key, attack_prompts),
         benign=None if benign_prompts is None else (benign_corpus.key, benign_prompts))
 
+    # `cli` FOR THE LOADER AND THE ACCELERATOR NAME, `score` FOR THE SCORING. Both used to come
+    # through `score`, which imported them from `.cli` at module scope and re-exported them by
+    # accident of the import. That import moved into the functions that need it so that
+    # `score --help` does not pay for torch, and a borrowed re-export is not an interface: a call
+    # through `score` also read as though the scorer owned the loader, which it never did.
+    from . import cli as _cli_mod
     from . import score as score_module
 
-    model, tok = score_module.load_model_and_tokenizer(
+    model, tok = _cli_mod.load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
 
@@ -746,7 +752,7 @@ def main(argv=None):
         "budget_warning": lengthsweep.budget_warning(a.max_new, flag="--max-new"),
         "edit_overlap": overlap,
         "provenance": provenance(device=a.device,
-                                 accelerator=score_module.accelerator_name(a.device),
+                                 accelerator=_cli_mod.accelerator_name(a.device),
                                  corpus=track.revision_entry(a.attack_set)),
     }
     # WHY THE PAIR IS INCOMPLETE, as one field with two causes. Both are a resistance claim with

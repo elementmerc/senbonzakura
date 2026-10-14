@@ -3,6 +3,48 @@
 All notable changes to Senbonzakura are recorded here, newest first, grouped by the part of the
 tool they touch. Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Not in any released version yet. Each entry describes behaviour that is in the tree, grouped by the
+surface it changed, and will carry a version heading when it ships.
+
+### Budget
+- Says what else would fit, not only whether this run does: for each resource it names the largest
+  single thing you could still add and how many times this run's own figure that is, so a machine
+  with room to spare tells you how much room rather than just "yes"
+
+### Checker
+- `--min-applied` refuses a negative count at the flag, like every other count on both commands,
+  rather than accepting one and comparing against it
+
+### Command line
+- `--help` on `drift`, `score`, `coherence`, `validate` and `stream-extract` answers in about a
+  sixteenth of a second instead of over three, because reading a help page no longer loads the
+  machine-learning libraries the command would only need once it had work to do
+- When a command is missing a required argument it now prints the shortest command line it will
+  accept, indented so you can copy it straight back out, on every subcommand rather than on the
+  few that had the example written by hand
+
+### Plugins
+- A plugin can add a measurement. The contract is one documented protocol with two transports, in
+  the same process for something installed beside us and in a subprocess for anything else, with a
+  deadline on every call, a cap on the reply and the plugin's own standard error quoted back when
+  it fails. Our own instruments are served across it too, so the first thing the contract is held
+  to is us
+
+### Report
+- `senbonzakura head-to-head report` takes `--out` and writes the comparison as a machine readable
+  summary. It declares itself a summary, stamps no figure of its own, carries each arm's own
+  recorded conditions word for word, and lists the conditions the arms differ on, so a reader can
+  see what a comparison between them is and isn't entitled to say
+
+### Documentation
+- A new reference page documents the plugin protocol: the manifest a plugin returns, the request
+  and reply shapes, the limits on each, and how to install one so the tool finds it
+
+### Other
+- Bug fixes and improvements.
+
 ## [0.5.1] "Kuchiki" — 2026-10-13
 
 A hotfix. No new features: security, and the defects that leave somebody worse off than before

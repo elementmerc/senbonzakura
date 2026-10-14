@@ -849,9 +849,12 @@ def test_a_gpt2_shaped_model_refuses_the_adapter_and_says_to_use_a_full_finetune
 # ── the whole command ─────────────────────────────────────────────────────────────────
 def _drive(monkeypatch, argv, *, before=None, after=None, loss=(2.0, 1.0), rows=80):
     """Run `main` with the model, the corpus and the finetune replaced, so every branch runs."""
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli, score
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"{key} {i}" for i in range(rows)])
     monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
@@ -900,9 +903,12 @@ def test_the_ceiling_arm_is_measured_against_the_base_models_own_starting_point(
 
     Driven with four distinct scoring passes so each reference is distinguishable in the result.
     """
-    from senbonzakura import score
+    # `cli` RATHER THAN `score`: the loader is reached through a function-local import so
+    # that `score --help` does not pay for torch, and a function-local import reads the
+    # attribute off `cli` on every call, which is where the fake has to go.
+    from senbonzakura import cli, score
 
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (object(), _Tok()))
     monkeypatch.setattr(jailbreak, "prompts_for",
                         lambda key, limit, what: [f"p{i}" for i in range(120)])
     monkeypatch.setattr(tamper, "prepare", lambda model, recipe, log=print: model)
@@ -1102,10 +1108,16 @@ def test_a_missing_lora_backend_is_refused_before_any_model_loads(monkeypatch, t
     # on a 392-row evaluation that is twenty-six minutes of a user's time spent to be told a
     # dependency is missing. A model loading at all is the failure this asserts against, so the
     # stand-in raises rather than returning something usable.
-    from senbonzakura import score as score_module
+    #
+    # THE STAND-IN GOES ON `cli`, which owns the loader, and it used to go on `score`. `score` only
+    # ever re-exported it by accident of its own module-scope import, and when that import became
+    # function-local the name stopped existing there, so this patch raised AttributeError instead of
+    # biting. Its two siblings above were moved at the same time and this one was not, because
+    # `needs_corpora` skips it unless the corpora are on the disk and a skip reads like a pass.
+    from senbonzakura import cli
 
     monkeypatch.setitem(sys.modules, "peft", None)
-    monkeypatch.setattr(score_module, "load_model_and_tokenizer", _never_loads)
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", _never_loads)
     with pytest.raises(SystemExit, match=r"senbonzakura\[finetune\]"):
         tamper.main(["--model", "unused-because-nothing-should-load", "--corpus", "advbench",
                      "--train-n", "8", "--method", "lora",

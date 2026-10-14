@@ -941,6 +941,11 @@ checkpoint could not be read.
 
 
 def _budget_json(budget):
+    # IMPORTED HERE, like `describe` does with `Checkpoint` and `main` does with the module. This
+    # file is reached by `senbonzakura budget`, which is one of the commands that must start on a
+    # machine with no torch, and the import discipline is the reason it can.
+    from . import resources
+
     return {
         "layers": budget.checkpoint.layers,
         "shards": budget.checkpoint.shards,
@@ -961,6 +966,17 @@ def _budget_json(budget):
                                                 for label, n in pool.needs],
                    "total_bytes": pool.total, "available_bytes": pool.available,
                    "fits": pool.fits} for pool in budget.pools],
+        # WHAT ELSE WOULD FIT, which is the other question somebody asks of a budget and the one
+        # it could not answer. The policy travels with the numbers rather than being left in a
+        # constant: raw free video memory counts torch's own allocator as used, so a ceiling taken
+        # on a warm box means something different from one taken on a cold one, and a reader who
+        # cannot tell which they have cannot reproduce either.
+        "ceiling_policy": resources.CEILING_POLICY,
+        "ceilings": [{"pool": c.pool, "term": c.label, "term_bytes": c.term_bytes,
+                      "other_bytes": c.other_bytes, "available_bytes": c.available,
+                      "budget_bytes": c.budget, "ceiling_bytes": c.ceiling_bytes,
+                      "headroom_bytes": c.headroom}
+                     for c in resources.ceilings(budget)],
     }
 
 
@@ -993,6 +1009,11 @@ def main(argv=None):
     # read to 81 columns on a test's temporary directory, which is shorter than most.
     say.say(f"budget for {a.model}")
     resources.report(budget)
+    # AND WHAT ELSE WOULD FIT. The report above answers "does this one fit", which is the question
+    # somebody asks before a run; this answers "what is the largest this box can do", which is the
+    # question they ask before choosing a model, and until now the tool could only answer it by
+    # being pointed at a candidate they had already downloaded.
+    resources.report_ceilings(budget)
     if a.out:
         # Written through a sibling and renamed, like every other artefact this tool emits, so a
         # crash mid write cannot leave a truncated budget that reads as a complete one. Through

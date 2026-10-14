@@ -354,3 +354,54 @@ def test_a_real_error_in_rendering_is_not_swallowed():
 
     with pytest.raises(ValueError):
         banner.emit("0.4", Odd(), env={})
+
+
+# ── the module cannot define one name twice ─────────────────────────────────────────────
+#
+# Found 2026-10-10. `_plain` was both a DESIGN builder and the role-stripping helper, and the
+# second definition rebound the module global. `DESIGNS` is built between the two, so the dict
+# held the builder while every other caller got the helper, and `render("plain", ...)` worked
+# only because of the order the two `def`s appear in. Moving either would have passed a version
+# string to a function that unpacks two-tuples. ruff's F811 is in this project's global ignore
+# list, so nothing was watching.
+#
+# Two tests rather than one: the first names the defect exactly, the second catches it through
+# behaviour even if a later rename makes the names differ while the shapes still disagree.
+
+def test_no_top_level_name_in_the_banner_module_is_defined_twice():
+    import ast
+    import pathlib
+
+    source = pathlib.Path(banner.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    seen, duplicates = set(), []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name in seen:
+                duplicates.append((node.name, node.lineno))
+            seen.add(node.name)
+    assert not duplicates, (
+        f"these top-level names are defined more than once, so the later definition shadows "
+        f"the earlier one and whichever callers ran in between got a different object: "
+        f"{duplicates}")
+
+
+@pytest.mark.parametrize("name", sorted(banner.DESIGNS))
+def test_a_design_builder_returns_role_and_text_segments(name):
+    """Every builder takes a version and returns lines of (role, text) pairs.
+
+    This is the behavioural half of the test above. A builder that is secretly the painting
+    helper fails here, because the helper iterates its argument expecting two-tuples and a
+    version string gives it single characters.
+    """
+    builder = banner.DESIGNS[name][0]
+    lines = builder("9.9.9")
+    assert isinstance(lines, list), f"{name} did not return a list of lines"
+    for line in lines:
+        assert isinstance(line, list), f"{name} has a line that is not a list of segments"
+        for segment in line:
+            assert isinstance(segment, tuple) and len(segment) == 2, (
+                f"{name} has a segment that is not a (role, text) pair: {segment!r}")
+            role, text = segment
+            assert role in banner.PALETTE, f"{name} uses role {role!r}, not in the palette"
+            assert isinstance(text, str), f"{name} has a non-string segment text"

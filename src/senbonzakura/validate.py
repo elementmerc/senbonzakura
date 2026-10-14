@@ -73,9 +73,21 @@ import contextlib
 import json
 import math
 
-import torch
+from . import argresolve
 
-from . import argresolve, cli
+# NOTHING HEAVY AT MODULE SCOPE, AND IT IS MEASURED RATHER THAN HOPED. `torch` costs 1.17s to
+# import on the development box and `.cli` pulls transformers (0.79s) and optuna (0.19s) on top of
+# it, so `senbonzakura validate --help` took 3.15 seconds to print a page of text. `capability.py`
+# and `jailbreak.py` already reach their parser helpers through `.parser` for exactly this reason,
+# with the reasoning written out at `capability.build_parser`; this is the same fix applied to the
+# commands that were left behind. Measured after: 0.06s.
+#
+# The import sits at the top of each function that needs it rather than at the top of the file.
+# After the first call it is a dictionary lookup, so nothing in a loop pays for it, and this module
+# already did it once by hand at `_describe_edit` (`from . import cli as _cli`).
+#
+# `tests/test_a_help_page_costs_nothing.py` asserts the cost rather than trusting this comment,
+# because a future edit that adds `import torch` here restores the defect silently.
 
 #: The page `--help` prints, which is NOT the module docstring above.
 #:
@@ -181,6 +193,17 @@ def build_args(argv=None):
                          "so two direction sources are scored with one measuring stick.")
     own = ap.parse_args(argv)
 
+    # BELOW THE `parse_args` ABOVE, NOT AT THE TOP OF THE FUNCTION, which is what keeps `--help`
+    # free: it exits from inside `parse_args` and never reaches this line.
+    #
+    # THROUGH `.cli` AND NOT THROUGH `.parser`, WHICH IS WHERE THIS LIVES, and that is deliberate
+    # rather than an oversight. `tools/research/audit_flags.py` pairs the module that DECLARES a
+    # flag with the modules that READ it, and the pairing is written against this call: reaching
+    # `build_parser` by any other spelling made the audit attribute all 66 of the abliterate
+    # parser's flags to this file and report every one of them as declared here and read nowhere.
+    # Measured, not guessed: 24 of `tests/test_dead_flags.py` failed on the first attempt.
+    from . import cli
+
     args = cli.build_parser().parse_args([
         "--model", own.model, "--track", own.track, "--device", own.device,
         "--max-directions", str(own.max_directions),
@@ -204,6 +227,10 @@ def experiment_1(a, log):
     direction orthogonal to the same basis is the honest floor: it shares every property of a
     fitted direction except having been fitted.
     """
+    import torch  # local: see the note at the top
+
+    from . import cli
+
     args = a.args
     bad = a.load(f"{args.track}/bad_ds", args.dir_prompts)
     good = a.load(args.good_ds or f"{args.track}/good_ds", args.dir_prompts)
@@ -380,6 +407,8 @@ def residual_ablation(a, K, P, wmax, wmin, D):
     Sharing `layer_weight` with the bake is what makes this a measurement of the OPERATION. Give
     the hook its own profile and the comparison measures the profile instead.
     """
+    from . import cli
+
     handles = []
 
     def make(idx):
@@ -444,6 +473,8 @@ def projection_magnitude(a, log, K):
     never measured their magnitude. Reported as a fraction of the primary direction's magnitude,
     because the absolute scale of a residual stream is not comparable across models or layers.
     """
+    from . import cli
+
     args = a.args
     bad = a.load(f"{args.track}/bad_ds", args.dir_prompts)
     Rb = a.collect_resid(bad)
@@ -869,6 +900,10 @@ def experiment_transfer(a, log, ks, strengths):
 # ── E2 / E3: bake and measure ─────────────────────────────────────────────────────────
 def _measure(a, label, K, log, randomise_extras=False, seed=0, strength=1.0):
     """Bake one window at K directions and one strength, and report what it cost and bought."""
+    import torch  # local: see the note at the top
+
+    from . import cli
+
     NL = a.NL
     saved = None
     if randomise_extras and K > 1:
@@ -1202,6 +1237,8 @@ def load_directions(a, path, log):
     orthonormal, would be scored under a geometry the bake does not implement and the comparison
     would be measuring the mistake instead of the method.
     """
+    import torch  # local: see the note at the top
+
     blob = torch.load(path, map_location="cpu", weights_only=False)
     dirs = blob["dirs_multi"] if isinstance(blob, dict) else blob
     if dirs.shape[0] != a.NL + 1 or dirs.shape[2] != a.H:
@@ -1247,6 +1284,8 @@ def _refuse_flags_past_the_track(args, log):
     One wording, shared with the abliterate path, so the two cannot drift into describing the
     same refusal differently.
     """
+    from . import cli
+
     manifest = cli.read_manifest(args.track)
     if not manifest:
         # Matches `cli.py:3567`'s `if manifest:` deliberately rather than being stricter. A
@@ -1347,6 +1386,14 @@ def unusable_reasons(record):
 
 def main(argv=None):
     own, args = build_args(argv)
+
+    # BELOW THE PARSE, NOT ABOVE IT, and that line is the whole of why the deferral works.
+    # `--help` and every argument error exit from inside `build_args`, so an import above it is
+    # paid by the help page and buys nothing. Measured: with this import one line higher, `--help`
+    # still cost the full 3.1 seconds and the only way to tell was to ask which modules were
+    # loaded when it exited.
+    from . import cli
+
     log = lambda m: print(m, flush=True)   # noqa: E731
     _refuse_flags_past_the_track(args, log)
     a = cli.Abliterator(args, log)

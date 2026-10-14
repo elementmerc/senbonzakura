@@ -16,7 +16,13 @@ import math
 import pytest
 import torch
 
-from senbonzakura import coherence
+# `cli` IS IMPORTED HERE TO BE PATCHED, not to be called. The command module below reads
+# its loader through a function-local `from .cli import ...`, so that its `--help` does not
+# pay for torch, transformers and optuna; a function-local import reads the attribute off
+# `cli` on every call, which is where the fake has to go. Patching the command module sets
+# an attribute nothing looks at, and the test then tries to load a real model, which is how
+# each of these was found.
+from senbonzakura import cli, coherence
 
 
 def test_parser_accepts_load_in_4bit():
@@ -88,7 +94,7 @@ def test_coherence_reports_perplexity_as_exp_of_the_loss():
 
 
 def test_coherence_main_writes_the_result(monkeypatch, tmp_path):
-    monkeypatch.setattr(coherence, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeLM(nll=2.0), _FakeTok(n_tokens=5)))
     out = str(tmp_path / "coh.json")
     res = coherence.main(["--model", "m", "--out", out, "--label", "post", "--device", "cpu"])
@@ -109,7 +115,7 @@ def test_coherence_main_writes_the_result(monkeypatch, tmp_path):
 # measurement, with no field saying otherwise.
 
 def _run_main(monkeypatch, tmp_path, nll=2.0, n_tokens=5):
-    monkeypatch.setattr(coherence, "load_model_and_tokenizer",
+    monkeypatch.setattr(cli, "load_model_and_tokenizer",
                         lambda *a, **k: (_FakeLM(nll=nll), _FakeTok(n_tokens=n_tokens)))
     out = tmp_path / "coh.json"
     res = coherence.main(["--model", "m", "--out", str(out), "--device", "cpu"])
@@ -318,7 +324,7 @@ def test_coherence_main_accepts_the_scorers_loader_flags(monkeypatch, tmp_path):
         seen.update(load_in_4bit=load_in_4bit, trust_remote_code=trust_remote_code)
         return _FakeLM(), _FakeTok()
 
-    monkeypatch.setattr(coherence, "load_model_and_tokenizer", _loader)
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", _loader)
     coherence.main(["--model", "m", "--out", str(tmp_path / "c.json"), "--device", "cpu",
                     "--load-in-4bit", "--trust-remote-code"])
     assert seen == {"load_in_4bit": True, "trust_remote_code": True}

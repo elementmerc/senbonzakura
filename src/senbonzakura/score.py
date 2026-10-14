@@ -14,8 +14,6 @@ is easy; the residual is usually soft refusal + evasion (noncompliance), the rea
 import hashlib
 import json
 
-import torch
-
 from . import argresolve, ggufrun, lengthsweep, metrics, stamps, track
 from .argresolve import whole_number
 
@@ -26,11 +24,23 @@ from .argresolve import whole_number
 # the same 10% as a bare literal. Two copies of one threshold is how two commands come to disagree
 # about one rule. The import costs nothing: that module pulls in nothing heavier than argparse.
 from .capability import MAX_INDETERMINATE
-from .cli import accelerator_name, load_model_and_tokenizer, loader_parser, render_chat
 from .crashsafe import atomic_write, provenance
+
+# NOTHING HEAVY AT MODULE SCOPE, AND IT IS MEASURED RATHER THAN HOPED. `torch` costs 1.17s to
+# import on the development box and `.cli` pulls transformers (0.79s) and optuna (0.19s) on top of
+# it, so `senbonzakura score --help` took 3.34 seconds to print a page of text. `capability.py` and
+# `jailbreak.py` already reach `loader_parser` through `.parser` for exactly this reason, with the
+# reasoning written out at `capability.build_parser`; this is the same fix applied to the four
+# commands that were left behind. Measured after: 0.06s.
+#
+# `tests/test_a_help_page_costs_nothing.py` asserts the cost rather than trusting this comment,
+# because a future edit that adds `import torch` here restores the defect silently.
 
 
 def build_parser():
+    # FROM `.parser`, NOT FROM `.cli`, which re-exports it. See the note at the top of this file.
+    from .parser import loader_parser
+
     ap = argresolve.ParserThatNamesUnknownFlags(
         allow_abbrev=False,
         prog="senbonzakura score",
@@ -126,6 +136,10 @@ JUDGE_TEMPLATE = (
 
 
 def generate(model, tok, prompts, device, batch=16, max_new=64):
+    import torch  # local: this module is import-light, see the note at the top
+
+    from .cli import render_chat
+
     gens = []
     for i in range(0, len(prompts), batch):
         chunk = prompts[i:i + batch]
@@ -161,7 +175,10 @@ def generate_prefixes(model, tok, prompts, device, batch=16, cuts=None):
     A reply that hit the end-of-sequence token early is the same text at every larger budget,
     which is correct rather than a special case: that IS what a longer budget would have produced.
     """
+    import torch  # local: this module is import-light, see the note at the top
+
     from . import lengthsweep
+    from .cli import render_chat
 
     cuts = sorted(cuts or lengthsweep.CUTS)
     longest = cuts[-1]
@@ -339,6 +356,7 @@ def _agreement_against_transformers(a, prompts, gguf_replies, rendered, lossless
     names the first character where they part company.
     """
     from . import chattemplate
+    from .cli import load_model_and_tokenizer, render_chat
 
     model, tok = load_model_and_tokenizer(
         a.agree_with, device=a.device, load_in_4bit=a.load_in_4bit,
@@ -433,6 +451,14 @@ def _score_a_gguf(a, prompts, boundary_verified):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+
+    # BELOW THE PARSE, NOT ABOVE IT, and that line is the whole of why this works.
+    # `--help` and every argument error exit from inside `parse_args`, so an import above it
+    # is paid by the help page and the deferral buys nothing. Measured: with this import one
+    # line higher, `--help` still cost the full 3.2 seconds and the only way to tell was to
+    # ask which modules were loaded when it exited.
+    from .cli import accelerator_name, load_model_and_tokenizer
+
     # Before a single prompt is sent. A ruler that misreads yields a confident wrong
     # number rather than an error, and this scorer is where those numbers come from.
     metrics.validate_ruler()

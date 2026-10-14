@@ -63,7 +63,7 @@ import os
 import re
 import sys
 
-from . import argresolve, panel
+from . import argresolve, panel, stamps
 from .metrics import min_achievable_p, permutation_p
 
 #: Recognises `senbon-seed42` / `heretic-seed42`, the pinned-budget arms of the multi-direction
@@ -595,6 +595,81 @@ def _num(v):
     return "-" if v is None else f"{v:.4f}"
 
 
+#: What a written report calls itself. Bumped when a consumer would have to change.
+SUMMARY_SCHEMA = "senbonzakura-headtohead-report/1"
+
+
+def arm_stamps(run_dir, arms):
+    """Each arm's own pinned block, read back from the scored file that arm's run wrote.
+
+    VERBATIM, like `measure.stage_stamps` and for the same reason: the reporter could carry what it
+    believes each arm was measured under, and what a reader needs is what the instrument actually
+    recorded. Those are not the same document, and the difference is the whole of what a provenance
+    block is for.
+
+    Keyed by the arm's own name rather than by tool, because a tool contributes several arms and a
+    table that collapsed them would hide a seed whose conditions differed from its siblings'.
+    """
+    return {arm["name"]: stamps.read_pinned_blocks(os.path.join(run_dir, f"{arm['name']}.json"))
+            for arm in sorted(arms, key=lambda a: a["name"])
+            if not arm.get("unreadable")}
+
+
+def summary_document(run_dir, arms):
+    """The machine-readable account of a finished head-to-head, as the one Q-116 settled.
+
+    ROW 8.13, AND IT IS SMALLER THAN IT LOOKS BECAUSE Q-116 ANSWERED THE HARD HALF. The row asked
+    that this reporter stamp the canonical metrics block, and the question underneath it, raised as
+    Q-54 because this reporter and `measure` reach it independently, is what `partition` means for
+    a document covering several measurements. The answer taken on 2026-10-08 is that it means
+    nothing: an aggregate is not a measurement of anything, so it declares itself a summary, stamps
+    no figure of its own, and carries each measurement's own stamp verbatim.
+
+    A report over ten arms is exactly that case and worse than `measure`'s, because the arms differ
+    in the ONE field a reader is most likely to assume constant: `model`. One `model` value over a
+    table comparing two tools' models would be false about every row but one.
+
+    NO FIGURE IS COPIED IN, only the conditions. The printed table is the figures, and two homes
+    for one number is how a stale copy gets quoted; the verdict is deliberately absent for the same
+    reason, because it is a reading of the figures rather than a fact about them, and the
+    tie rule that produces it belongs beside the prose that explains it.
+    """
+    pinned = arm_stamps(run_dir, arms)
+    return {
+        "schema": SUMMARY_SCHEMA,
+        # DECLARED, NOT INFERRED. See `stamps.SUMMARY_KIND`: this document indexes several
+        # measurements and is not itself a measurement, so it carries no `metrics` block and says
+        # so rather than leaving a reader to deduce it from an absence.
+        "kind": stamps.SUMMARY_KIND,
+        "run_dir": os.path.basename(os.path.normpath(run_dir)),
+        "arms": [{"name": a["name"], "tool": a["tool"], "seed": a["seed"],
+                  "variant": a["variant"], "unreadable": bool(a.get("unreadable")),
+                  # A CONTROL ARM IS MARKED HERE TOO. `render` pulls them out of every table
+                  # before one is built, and a machine reader that did not know which rows were
+                  # controls would put them straight back in.
+                  "partial_ablation": a.get("partial")}
+                 for a in sorted(arms, key=lambda a: a["name"])],
+        "arm_stamps": pinned,
+        "pinned_fields_that_differ": stamps.pinned_fields_that_differ(pinned),
+        "pinned_fields_that_differ_note": stamps.PINNED_MAY_DIFFER_DOC,
+    }
+
+
+def write_summary(path, document):
+    """Write the summary through a sibling and rename, like every other artefact here.
+
+    A kill partway through `write_text` leaves a file that exists, is not empty, and is not a
+    report, which is the one failure a consumer cannot detect.
+    """
+    target = os.fspath(path)
+    tmp = target + ".part"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(document, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, target)
+    return target
+
+
 def render(arms):
     lines = []
     unreadable = [a for a in arms if a["unreadable"]]
@@ -770,6 +845,11 @@ def main(argv=None):
                     help="report on the arms that could be read instead of failing. Off by "
                          "default: a table missing an arm nobody mentioned is how a partial run "
                          "gets published as a whole one.")
+    ap.add_argument("--out", default=None, metavar="PATH",
+                    help="also write a machine-readable summary of the run to PATH. It carries "
+                         "each arm's own measurement conditions verbatim and NO figure and NO "
+                         "verdict: the table above is the figures, and two homes for one number "
+                         "is how a stale copy gets quoted")
     a = ap.parse_args(argv)
 
     if not os.path.isdir(a.run_dir):
@@ -803,6 +883,20 @@ def main(argv=None):
 
     text, had_unreadable, n_readable = render(arms)
     print(text)
+    if a.out:
+        # WRITTEN BEFORE THE REFUSALS BELOW, deliberately. An unreadable arm is exactly the run
+        # whose conditions somebody will want to inspect, and withholding the provenance of the
+        # arms that DID read because one did not would make the failure harder to diagnose rather
+        # than safer. The document marks the unreadable arms, so it cannot be mistaken for a whole
+        # one.
+        try:
+            print(f"  summary written to {write_summary(a.out, summary_document(a.run_dir, arms))}")
+        except OSError as exc:
+            # A FAILURE TO WRITE DOES NOT CHANGE THE VERDICT, the same rule `gate._write_history`
+            # states: the report is about the models and whether this machine could write a file is
+            # about the machine. Said out loud, because a summary somebody asked for and did not
+            # get is a thing they have to know about.
+            print(f"  the summary could not be written to {a.out}: {exc}", file=sys.stderr)
     if had_unreadable and not a.allow_unreadable:
         print("\nFAILED: some arms produced nothing readable; pass --allow-unreadable to report "
               "on the rest anyway.", file=sys.stderr)

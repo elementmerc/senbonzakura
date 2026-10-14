@@ -95,6 +95,37 @@ def _invoked_as():
     return "senbonzakura-check" if name.startswith("senbonzakura-check") else "senbonzakura check"
 
 
+def whole_number(what, *, minimum=0):
+    """An argparse `type=` for a count: a whole number, never below `minimum`.
+
+    A COPY OF `senbonzakura.argresolve.whole_number` AND IT HAS TO BE. This distribution installs
+    without torch and that is its whole reason for existing (Q-29), so nothing here may import the
+    big package; a test walks this import graph to keep it true. The alternative to a copy would be
+    a third distribution holding two dozen lines, which costs more to carry than the duplication
+    does, and the shape of the refusal is held against the original by a test rather than by anyone
+    remembering.
+
+    `--min-applied 0` is the only numeric flag this command has, and zero is documented to mean "no
+    floor": `main` reads `args.min_applied and thin`, so zero switches the check off, which is the
+    default and a legitimate thing to ask for. A negative is not. It is falsy, so it switches the
+    check off exactly as zero does, with nothing saying that is what happened, and somebody who
+    typed `--min-applied -5` meant to ask for something.
+    """
+    def parse(value):
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise argparse.ArgumentTypeError(
+                f"{what} wants a whole number and got {value!r}.") from None
+        if number < minimum:
+            raise argparse.ArgumentTypeError(
+                f"{what} is {number}, and a count cannot be below {minimum}. A negative one is "
+                f"falsy, so it would switch this check off in the same way {minimum} does, and "
+                f"nothing in the output would say so. Pass {minimum} or more.")
+        return number
+    return parse
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
         prog=_invoked_as(),
@@ -120,7 +151,8 @@ def build_parser():
                          "holds no result artefacts otherwise exits 0, which in CI is a green "
                          "that means 'I found no files' and is indistinguishable from 'I found "
                          "files and they were fine'. Worth setting wherever a path could drift")
-    ap.add_argument("--min-applied", type=int, default=0, metavar="N",
+    ap.add_argument("--min-applied", type=whole_number("--min-applied", minimum=0),
+                    default=0, metavar="N",
                     help="exit non-zero when any artefact had FEWER THAN N checks apply to it. "
                          "--fail-on-empty catches a run that examined nothing; this catches a "
                          "run that examined almost nothing, which looks identical in the exit "

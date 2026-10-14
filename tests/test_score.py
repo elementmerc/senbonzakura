@@ -6,7 +6,13 @@
 import json
 import os
 
-from senbonzakura import score
+# `cli` IS IMPORTED HERE TO BE PATCHED, not to be called. The command module below reads
+# its loader through a function-local `from .cli import ...`, so that its `--help` does not
+# pay for torch, transformers and optuna; a function-local import reads the attribute off
+# `cli` on every call, which is where the fake has to go. Patching the command module sets
+# an attribute nothing looks at, and the test then tries to load a real model, which is how
+# each of these was found.
+from senbonzakura import cli, score
 
 
 def test_score_dict_helper():
@@ -22,7 +28,7 @@ def test_score_main_end_to_end(monkeypatch, tiny_model, tiny_tok, tmp_path):
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": ["do the bad thing", "what is the capital city"]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     out = str(tmp_path / "res.json")
     res = score.main(["--model", "x", "--eval", ev, "--out", out, "--max-new", "3", "--device", "cpu"])
     assert res["n"] == 2
@@ -35,7 +41,7 @@ def test_score_main_respects_n(monkeypatch, tiny_model, tiny_tok, tmp_path):
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": [f"prompt {i}" for i in range(6)]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     out = str(tmp_path / "res.json")
     res = score.main(["--model", "x", "--eval", ev, "--out", out, "--n", "3",
                       "--max-new", "2", "--device", "cpu"])
@@ -48,7 +54,7 @@ def test_harm_recognition_path_scores_verdicts_not_compliance(monkeypatch, tiny_
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": ["do the bad thing", "do the other bad thing"]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     # The tokeniser's decode is fixed, so the verdict is whatever we say it is.
     tiny_tok._decode_text = "HARMFUL"
     out = str(tmp_path / "res.json")
@@ -66,7 +72,7 @@ def test_harm_recognition_reports_unreadable_replies(monkeypatch, tiny_model, ti
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": [f"bad thing {i}" for i in range(4)]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     tiny_tok._decode_text = "let me think about this at length and never reach a conclusion"
     res = score.main(["--model", "x", "--eval", ev, "--out", str(tmp_path / "r.json"),
                       "--harm-recognition", "--max-new", "3", "--device", "cpu"])
@@ -82,7 +88,7 @@ def test_save_generations_keeps_every_prompt_and_reply(monkeypatch, tiny_model, 
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": ["alpha request", "beta request"]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     gens_path = str(tmp_path / "nested" / "gens.jsonl")   # also exercises directory creation
     score.main(["--model", "x", "--eval", ev, "--out", str(tmp_path / "r.json"),
                 "--save-generations", gens_path, "--max-new", "2", "--device", "cpu"])
@@ -104,7 +110,7 @@ def test_skip_beyond_the_set_fails_loudly(monkeypatch, tiny_model, tiny_tok, tmp
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": ["one", "two"]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     with pytest.raises(SystemExit, match="leaves nothing"):
         score.main(["--model", "x", "--eval", ev, "--out", str(tmp_path / "r.json"),
                     "--skip", "5", "--device", "cpu"])
@@ -115,7 +121,7 @@ def test_n_larger_than_the_set_fails_loudly(monkeypatch, tiny_model, tiny_tok, t
     from datasets import Dataset
     ev = str(tmp_path / "eval")
     Dataset.from_dict({"text": ["one", "two"]}).save_to_disk(ev)
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     with pytest.raises(SystemExit, match="exceeds"):
         score.main(["--model", "x", "--eval", ev, "--out", str(tmp_path / "r.json"),
                     "--n", "99", "--device", "cpu"])
@@ -132,7 +138,7 @@ def _eval_set(tmp_path, n=2):
 def test_the_sweep_writes_a_curve_rather_than_one_number(monkeypatch, tiny_model, tiny_tok,
                                                          tmp_path):
     """A refusal rate at one budget cannot say whether the budget was the measurement."""
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     out = str(tmp_path / "sweep.json")
     score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", out,
                 "--length-sweep", "--length-max", "32", "--device", "cpu"])
@@ -146,7 +152,7 @@ def test_the_sweep_writes_a_curve_rather_than_one_number(monkeypatch, tiny_model
 def test_the_sweep_exits_non_zero_when_the_curve_has_not_settled(monkeypatch, tiny_model,
                                                                  tiny_tok, tmp_path):
     """A pipeline must not be able to quote a lower bound as a result."""
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     from senbonzakura import lengthsweep
     monkeypatch.setattr(lengthsweep, "still_climbing", lambda *a, **k: True)
     rc = score.main(["--model", "x", "--eval", _eval_set(tmp_path),
@@ -161,7 +167,7 @@ def test_the_sweep_and_the_compass_cannot_run_together(monkeypatch, tiny_model, 
     and label the artefact with the one that was asked for.
     """
     import pytest
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     with pytest.raises(SystemExit, match="cannot run together"):
         score.main(["--model", "x", "--eval", _eval_set(tmp_path),
                     "--out", str(tmp_path / "s.json"), "--length-sweep",
@@ -171,7 +177,7 @@ def test_the_sweep_and_the_compass_cannot_run_together(monkeypatch, tiny_model, 
 def test_a_length_max_below_the_smallest_budget_is_refused(monkeypatch, tiny_model, tiny_tok,
                                                            tmp_path):
     import pytest
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     with pytest.raises(SystemExit, match="nothing to compare"):
         score.main(["--model", "x", "--eval", _eval_set(tmp_path),
                     "--out", str(tmp_path / "s.json"), "--length-sweep",
@@ -179,7 +185,7 @@ def test_a_length_max_below_the_smallest_budget_is_refused(monkeypatch, tiny_mod
 
 
 def test_the_sweep_can_save_the_longest_generation(monkeypatch, tiny_model, tiny_tok, tmp_path):
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     gens = str(tmp_path / "gens.jsonl")
     score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", str(tmp_path / "s.json"),
                 "--length-sweep", "--length-max", "32", "--save-generations", gens,
@@ -193,7 +199,7 @@ def test_a_short_budget_is_warned_about_in_the_log_and_the_artefact(monkeypatch,
     """The default this project has always used cuts a late refusal off before it is emitted,
     so a run at that budget has to say so where a reader will meet it later.
     """
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     out = str(tmp_path / "res.json")
     score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", out,
                 "--max-new", "48", "--device", "cpu"])
@@ -203,7 +209,7 @@ def test_a_short_budget_is_warned_about_in_the_log_and_the_artefact(monkeypatch,
 
 
 def test_a_long_budget_carries_no_warning(monkeypatch, tiny_model, tiny_tok, tmp_path):
-    monkeypatch.setattr(score, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
+    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
     out = str(tmp_path / "res.json")
     score.main(["--model", "x", "--eval", _eval_set(tmp_path), "--out", out,
                 "--max-new", "96", "--device", "cpu"])

@@ -640,7 +640,7 @@ jobs:
       - name: Check the layout's guarantees (no overlap by construction, determinism, streaming)
         # The layout runs in the browser, so its guarantees are checked with the same Node the bundle
         # is built with. Each check recomputes boxes from the positions the layout wrote.
-        run: node --test tools/workbench-ui/layout.test.mjs tools/workbench-ui/rail.test.mjs
+        run: node --test tools/workbench-ui/layout.test.mjs tools/workbench-ui/rail.test.mjs tools/workbench-ui/render.test.mjs
 
   pinned:
     # The counterpart to `test`. That job floats every version, which is how an

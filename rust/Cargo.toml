@@ -36,7 +36,7 @@ crate-type = ["cdylib", "rlib"]
 # covers 3.10 and everything after, which is the same cardinality the vendored binaries already
 # produce, so `setup.py`'s existing one-wheel-per-platform machinery keeps working unchanged.
 [dependencies]
-pyo3 = { version = "0.27.1", features = ["extension-module", "abi3-py310"] }
+pyo3 = { version = "0.29.0", features = ["extension-module", "abi3-py310"] }
 
 [profile.release]
 # A parser over attacker-controlled bytes must not wrap on overflow in release when it would have

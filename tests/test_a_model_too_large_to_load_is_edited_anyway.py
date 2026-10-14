@@ -91,9 +91,14 @@ def _checkpoint(root, *, layers=LAYERS, hidden=HIDDEN, seed=0):
 
 
 def _directions(layers=LAYERS, hidden=HIDDEN, k=2, seed=7):
+    # Orthonormal rows per position, as a real extraction produces. The bake refuses any other basis
+    # (it is a projection only for an orthonormal one), so random unit rows would be refused here.
     rng = np.random.default_rng(seed)
-    arr = rng.standard_normal((layers + 1, k, hidden)).astype(np.float32)
-    return arr / np.linalg.norm(arr, axis=-1, keepdims=True)
+    arr = np.zeros((layers + 1, k, hidden), dtype=np.float32)
+    for position in range(layers + 1):
+        q, _ = np.linalg.qr(rng.standard_normal((hidden, k)))
+        arr[position] = q.T
+    return arr
 
 
 def _read(path, name):

@@ -1,0 +1,74 @@
+{
+  "base": {
+    "id": "senbonzakura/conformance-tiny",
+    "revision": null,
+    "revision_reason": "conformance fixture: a fixed definition, not a hub checkpoint",
+    "weights_sha256": "8b319e9edb7e97c4280f6706fb0d3724ad570df3d7badb9dcf690cdcd5a57a75"
+  },
+  "edit": {
+    "direction_residual": {
+      "after": 0.9123554877692839,
+      "before": 2.4747314973221197,
+      "definition": "max over the edited tensors, over output rows, of |R_layer W| in float64, where R_layer is the layer's non-empty direction rows and W is the tensor before the edit (before) or after it (after)",
+      "fraction_remaining": 0.3686684752493488,
+      "metric": "max_abs_projection/1",
+      "rounds": 0,
+      "status": "measured"
+    },
+    "directions": {
+      "directions_found": 3,
+      "directions_found_per_position": [
+        0,
+        2,
+        1
+      ],
+      "encoding": "safetensors",
+      "file": "directions.safetensors",
+      "sha256": "a98b658f5de57b71f48eff4d746020e920c4039a8abf5b8e81e67654aeed1acb",
+      "shape": [
+        3,
+        2,
+        8
+      ]
+    },
+    "dtype": "float32",
+    "layers": {
+      "from": 0,
+      "to": 1
+    },
+    "method": "projection",
+    "projection_side": "output",
+    "restore_norms": true,
+    "sign_convention": "projection",
+    "strength": 1.0,
+    "targets": [
+      "model.layers.*.self_attn.o_proj.weight",
+      "model.layers.*.mlp.down_proj.weight"
+    ],
+    "tensor_naming": "huggingface"
+  },
+  "extensions": [],
+  "measured": {
+    "status": "not_measured",
+    "why": "conformance fixture: a weight check, not a behaviour measurement"
+  },
+  "name": "conformance-tiny",
+  "profile": "core/1",
+  "provenance": {
+    "source": {
+      "commit": null,
+      "dirty": null,
+      "reason": "conformance fixture: rebuilt from a fixed definition, so it does not record a checkout",
+      "via": null
+    },
+    "tool": {
+      "name": "senbonzakura",
+      "version": "0.5.1"
+    }
+  },
+  "reproduce": {
+    "command": "senbonzakura stream-bake --model MODEL --directions DIRS --out OUT",
+    "tool": "senbonzakura"
+  },
+  "schema": "abliteration-recipe/1"
+}

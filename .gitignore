@@ -202,3 +202,9 @@ Thumbs.db
 
 # The Rust crate builds here. Generated, large, and per-toolchain.
 rust/target/
+
+# WHY THIS EXCEPTION EXISTS: the recipe conformance fixture must be in the repository, because a
+# stranger can only check their implementation against it if it is here. It is a few kilobytes of
+# toy tensors, never weights. Do not remove this line as an oversight. Scope: this directory only;
+# every other safetensors file stays ignored, and any new exception needs the same justification.
+!recipes/conformance/**/*.safetensors

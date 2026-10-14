@@ -41,6 +41,7 @@ that is the source, an output inside the source, a source inside the output, and
 recognised model cache. The guard is a refusal rather than a copy, because a warning about this
 would be read after the fact.
 """
+
 import hashlib
 import json
 import os
@@ -68,8 +69,7 @@ PROGRESS_VERSION = 1
 #:
 #: `os.path.join("models--", "")` used to be here, which is the one marker somebody had made
 #: separator-aware, and it is now spelt the same way as the rest.
-CACHE_MARKERS = ("huggingface/hub", "huggingface_hub", "models--/", "models--",
-                 ".cache/torch", "modelscope/hub")
+CACHE_MARKERS = ("huggingface/hub", "huggingface_hub", "models--/", "models--", ".cache/torch", "modelscope/hub")
 
 
 class StreamBakeError(Exception):
@@ -77,6 +77,7 @@ class StreamBakeError(Exception):
 
 
 # ── the output directory, and the guard that keeps a source checkpoint intact ────────
+
 
 def _resolve(path):
     return pathlib.Path(path).expanduser().resolve()
@@ -116,20 +117,24 @@ def check_output_is_safe(source, out):
         raise StreamBakeError(
             f"--out is the model directory itself ({dst}). The bake rewrites shards in place, so "
             f"this would consume the checkpoint it is reading and leave no base model behind. "
-            f"Point --out at a new directory.")
+            f"Point --out at a new directory."
+        )
     if dst.is_relative_to(src):
         raise StreamBakeError(
             f"--out ({dst}) is inside the model directory ({src}). The bake would be writing into "
-            f"the tree it is reading. Point --out somewhere outside the model.")
+            f"the tree it is reading. Point --out somewhere outside the model."
+        )
     if src.is_relative_to(dst):
         raise StreamBakeError(
             f"the model directory ({src}) is inside --out ({dst}). Preparing the output would "
-            f"operate on a tree containing the source. Point --out somewhere outside the model.")
+            f"operate on a tree containing the source. Point --out somewhere outside the model."
+        )
     if looks_like_a_cache(dst):
         raise StreamBakeError(
             f"--out ({dst}) is inside a model cache. A cache entry edited in place is "
             f"indistinguishable from the base model it still claims to be, for every tool on this "
-            f"machine. Point --out at a working directory of your own.")
+            f"machine. Point --out at a working directory of your own."
+        )
 
 
 def prepare_output(source, out, *, log=print):
@@ -203,14 +208,15 @@ def plan_edits(index, *, ablate_conv=True, prediction_head="skip"):
     """
     if prediction_head not in PREDICTION_HEAD_POLICIES:
         raise StreamBakeError(
-            f"prediction_head is {prediction_head!r} and must be one of "
-            f"{list(PREDICTION_HEAD_POLICIES)}.")
+            f"prediction_head is {prediction_head!r} and must be one of {list(PREDICTION_HEAD_POLICIES)}."
+        )
     plan = {}
     for i in range(index.count):
         for name in index.writers(i, ablate_conv):
             plan[name] = i
     if prediction_head == "edit" and index.head:
         from .writers import is_writer_tensor
+
         # THE DEEPEST POSITION, and the choice is worth stating because there is no obviously
         # right answer. A prediction head reads the residual stream after the last decoder block,
         # so the position whose directions describe what it sees is the last one; the direction
@@ -254,17 +260,16 @@ def apply_direction(raw, tensor, directions, *, strength, sparsity, rounds, rest
     flat = torch.frombuffer(bytearray(raw), dtype=dtype)
     W = flat.reshape(tensor.shape)
     if W.ndim == 2:
-        orthogonalize_np_(W, directions, strength, sparsity, rounds,
-                          restore_norms=restore_norms)
+        orthogonalize_np_(W, directions, strength, sparsity, rounds, restore_norms=restore_norms)
     elif W.ndim == 3:
-        orthogonalize_np_3d_(W, directions, strength, sparsity, rounds,
-                             restore_norms=restore_norms)
+        orthogonalize_np_3d_(W, directions, strength, sparsity, rounds, restore_norms=restore_norms)
     else:
         raise StreamBakeError(
             f"{tensor.name!r} has shape {tensor.shape}, which is neither a 2-D residual writer nor "
             f"a 3-D stacked-expert one. The editor knows how to project those two and this is "
             f"refused rather than reshaped into something that would project cleanly and mean "
-            f"nothing.")
+            f"nothing."
+        )
     # THROUGH `view(torch.uint8)` AND NOT `.numpy()`. numpy has no bfloat16, so `.numpy()` raises
     # `Got unsupported ScalarType BFloat16` on the dtype most published checkpoints are stored in:
     # the bake worked on float32 and float16 and could not write a bf16 shard at all. Found by a
@@ -276,14 +281,15 @@ def apply_direction(raw, tensor, directions, *, strength, sparsity, rounds, rest
         raise StreamBakeError(
             f"{tensor.name!r} came back as {len(out)} bytes from {len(raw)}, so the edit changed "
             f"the dtype or the shape. The shard header is written back byte for byte and would "
-            f"then describe a tensor that is not there.")
+            f"then describe a tensor that is not there."
+        )
     return out
 
 
 # ── resumability, keyed so a different edit cannot resume somebody else's ────────────
 
-def directions_digest(directions, *, strength, sparsity, rounds, restore_norms, ablate_conv,
-                      prediction_head="skip"):
+
+def directions_digest(directions, *, strength, sparsity, rounds, restore_norms, ablate_conv, prediction_head="skip"):
     """A digest of the whole edit, not just the directions.
 
     THE KEY INCLUDES THE PARAMETERS ON PURPOSE. The failure this prevents is the quiet one:
@@ -295,14 +301,18 @@ def directions_digest(directions, *, strength, sparsity, rounds, restore_norms, 
     import numpy as np
 
     h = hashlib.sha256()
-    arr = np.asarray(directions if not hasattr(directions, "numpy") else directions.numpy(),
-                     dtype=np.float32)
+    arr = np.asarray(directions if not hasattr(directions, "numpy") else directions.numpy(), dtype=np.float32)
     h.update(b"senbonzakura-streambake\0")
     h.update(repr(arr.shape).encode())
     h.update(arr.tobytes())
-    for name, value in (("strength", strength), ("sparsity", sparsity), ("rounds", rounds),
-                        ("restore_norms", restore_norms), ("ablate_conv", ablate_conv),
-                        ("prediction_head", prediction_head)):
+    for name, value in (
+        ("strength", strength),
+        ("sparsity", sparsity),
+        ("rounds", rounds),
+        ("restore_norms", restore_norms),
+        ("ablate_conv", ablate_conv),
+        ("prediction_head", prediction_head),
+    ):
         h.update(f"\0{name}={value!r}".encode())
     return h.hexdigest()[:32]
 
@@ -324,12 +334,14 @@ def read_progress(out):
         raise StreamBakeError(
             f"{path} exists and could not be read ({e}). Some shards in {out} may already carry "
             f"the edit, so starting again would project them twice. Delete the output directory "
-            f"and re-run, or restore the file.") from e
+            f"and re-run, or restore the file."
+        ) from e
     if doc.get("version") != PROGRESS_VERSION:
         raise StreamBakeError(
             f"{path} was written by a different version of this tool (found "
             f"{doc.get('version')!r}, this is {PROGRESS_VERSION}). Refusing to guess which shards "
-            f"it means. Delete the output directory and re-run.")
+            f"it means. Delete the output directory and re-run."
+        )
     doc.setdefault("done", [])
     return doc
 
@@ -350,12 +362,14 @@ def shards_to_do(index, progress, digest):
             f"{PROGRESS_NAME} records a part-finished bake with edit digest {recorded} and this "
             f"run's edit is {digest}. Resuming would leave some shards edited one way and the "
             f"rest another, in one checkpoint, with nothing recording the difference. Delete the "
-            f"output directory to start this edit from scratch.")
+            f"output directory to start this edit from scratch."
+        )
     done = set(progress.get("done", []))
     return [s for s in index.shards() if pathlib.Path(s).name not in done]
 
 
 # ── the pre-flight, which runs before a single byte is written ───────────────────────
+
 
 def preflight(index, directions, *, out, plan, log=print):
     """Everything that can be checked without editing. Raises on anything fatal.
@@ -370,14 +384,16 @@ def preflight(index, directions, *, out, plan, log=print):
     if arr.ndim != 3:
         raise StreamBakeError(
             f"the direction set has shape {arr.shape}; it must be [positions, K, hidden]. One set "
-            f"per residual-stream position, which is one more than the layer count.")
+            f"per residual-stream position, which is one more than the layer count."
+        )
     positions, K, hidden = arr.shape
     if positions < index.count + 1:
         raise StreamBakeError(
             f"the direction set covers {positions} residual positions and this model has "
             f"{index.count} layers, which needs {index.count + 1}: position 0 is the embedding "
             f"output and layer i reads position i+1. A set this short would leave the deepest "
-            f"layers unedited while the run reported success.")
+            f"layers unedited while the run reported success."
+        )
     if K < 1:
         raise StreamBakeError("the direction set holds no directions, so there is nothing to ablate.")
 
@@ -390,28 +406,35 @@ def preflight(index, directions, *, out, plan, log=print):
         raise StreamBakeError(
             f"the direction set is {hidden}-dimensional and this checkpoint declares a hidden size "
             f"of {declared}. These are directions for a different model, and projecting with them "
-            f"would produce a checkpoint that loads and means nothing.")
+            f"would produce a checkpoint that loads and means nothing."
+        )
 
     if not plan:
         raise StreamBakeError(
             f"no tensor in this checkpoint was recognised as a residual writer, so there is "
             f"nothing to edit. {index!r}. Either the architecture is one `writers.py` has not met, "
-            f"or this is not a decoder checkpoint.")
+            f"or this is not a decoder checkpoint."
+        )
 
     missing = unreachable_layers(index, plan)
     if missing:
         shown = list(missing[:8]) + (["..."] if len(missing) > 8 else [])
-        log(f"  WARNING: {len(missing)} of {index.count} layers hold no recognised residual "
-            f"writer and will not be edited: {shown}")
-        log("           That is normal for some architectures and is also what an unrecognised "
-            "one looks like. Check one of those layers before trusting the result.")
+        log(
+            f"  WARNING: {len(missing)} of {index.count} layers hold no recognised residual "
+            f"writer and will not be edited: {shown}"
+        )
+        log(
+            "           That is normal for some architectures and is also what an unrecognised "
+            "one looks like. Check one of those layers before trusting the result."
+        )
 
     widest_at, widest_bytes = index.widest()
     biggest = max((t.nbytes for layer in index.layers for _s, t in layer.values()), default=0)
-    log(f"  {index.count} layers across {len(index.shards())} shard(s); "
-        f"{len(plan)} tensor(s) to edit")
-    log(f"  widest layer is {widest_at} at {widest_bytes / 1e9:.2f} GB, and the largest single "
-        f"tensor is {biggest / 1e6:.1f} MB, which is the peak memory this needs")
+    log(f"  {index.count} layers across {len(index.shards())} shard(s); {len(plan)} tensor(s) to edit")
+    log(
+        f"  widest layer is {widest_at} at {widest_bytes / 1e9:.2f} GB, and the largest single "
+        f"tensor is {biggest / 1e6:.1f} MB, which is the peak memory this needs"
+    )
 
     free = shutil.disk_usage(out).free
     # One shard is rewritten at a time, to a temporary file beside it, so the headroom needed is
@@ -422,16 +445,73 @@ def preflight(index, directions, *, out, plan, log=print):
             f"{out} has {free / 1e9:.2f} GB free and the largest shard is "
             f"{largest_shard / 1e9:.2f} GB. Each shard is rewritten to a temporary file beside "
             f"itself before replacing it, so the bake needs that much headroom and would fail "
-            f"part way through a shard.")
+            f"part way through a shard."
+        )
     log(f"  {free / 1e9:.2f} GB free, largest shard {largest_shard / 1e9:.2f} GB, so there is room")
-    return {"positions": positions, "K": K, "hidden": hidden, "to_edit": len(plan),
-            "layers": index.count, "unreachable": list(missing), "peak_tensor_bytes": biggest}
+    return {
+        "positions": positions,
+        "K": K,
+        "hidden": hidden,
+        "to_edit": len(plan),
+        "layers": index.count,
+        "unreachable": list(missing),
+        "peak_tensor_bytes": biggest,
+    }
+
+
+def check_orthonormal(directions, layers, K):
+    """Refuse a direction set whose used rows are not orthonormal, before any byte is written.
+
+    THE BAKE IS A PROJECTION ONLY FOR AN ORTHONORMAL BASIS. The edit computes `R^T (R W)`, and that
+    removes the span of R, and removes it exactly, only when the rows of R are orthonormal. A basis
+    with a row of squared norm 9 is baked without error and is a different edit: the stronger row is
+    removed three times over and the others are left alone. Nothing downstream can tell, because the
+    run completes and reports success. This was reproduced on 2026-10-14 with the conformance
+    fixture, which baked a layer whose Gram diagonal was `[9, 1]`.
+
+    Checked on the rows the bake actually uses (the first K of each layer's set), against the same
+    tolerance the reference applier enforces, so the two tools refuse the same files. Empty slots
+    are skipped, as they are everywhere in this module.
+    """
+    import numpy as np
+
+    from .cli import ORTHONORMAL_TOL
+
+    arr = np.asarray(directions, dtype=np.float64)
+    for layer in sorted(set(layers)):
+        rows = arr[layer + 1, :K, :]
+        live = rows[np.linalg.norm(rows, axis=-1) > DIRECTION_EPSILON]
+        if live.shape[0] == 0:
+            continue
+        gram = live @ live.T
+        deviation = float(np.abs(gram - np.eye(live.shape[0])).max())
+        if deviation > ORTHONORMAL_TOL:
+            raise StreamBakeError(
+                f"the direction set for layer {layer} is not orthonormal: its {live.shape[0]} "
+                f"non-empty row(s) have a worst Gram deviation of {deviation:.2e}, and the "
+                f"tolerance is {ORTHONORMAL_TOL:.0e}. The edit removes the span of these rows only "
+                f"when they are orthonormal, so baking would produce a different model and report "
+                f"success. Re-extract the directions, or orthonormalise them, before baking."
+            )
 
 
 # ── the bake ─────────────────────────────────────────────────────────────────────────
 
-def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, restore_norms=True,
-         ablate_conv=True, mode="per_layer", prediction_head="skip", log=print):
+
+def bake(
+    out,
+    directions,
+    *,
+    K=None,
+    strength=1.0,
+    sparsity=0.0,
+    rounds=0,
+    restore_norms=True,
+    ablate_conv=True,
+    mode="per_layer",
+    prediction_head="skip",
+    log=print,
+):
     """Edit every residual writer in the checkpoint at `out`, shard by shard, resumably.
 
     `out` is a WORKING COPY. This never takes a source path, so there is no argument order in
@@ -443,17 +523,26 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
     index = streaming.index_layers(out)
     plan = plan_edits(index, ablate_conv=ablate_conv, prediction_head=prediction_head)
     if index.head_indices:
-        log(f"  this stack holds a prediction head at block(s) {list(index.head_indices)}, which the"
-            f" config's layer count excludes; policy is {prediction_head!r}")
+        log(
+            f"  this stack holds a prediction head at block(s) {list(index.head_indices)}, which the"
+            f" config's layer count excludes; policy is {prediction_head!r}"
+        )
     stats = preflight(index, arr, out=out, plan=plan, log=log)
     K = stats["K"] if K is None else min(int(K), stats["K"])
+    check_orthonormal(arr, plan.values(), K)
 
     # The policy is part of the key, like every other edit parameter: resuming a skip-the-head
     # bake with edit-the-head would leave one checkpoint holding both answers to the question the
     # flag exists to ask.
-    digest = directions_digest(arr[:, :K, :], strength=strength, sparsity=sparsity, rounds=rounds,
-                               restore_norms=restore_norms, ablate_conv=ablate_conv,
-                               prediction_head=prediction_head)
+    digest = directions_digest(
+        arr[:, :K, :],
+        strength=strength,
+        sparsity=sparsity,
+        rounds=rounds,
+        restore_norms=restore_norms,
+        ablate_conv=ablate_conv,
+        prediction_head=prediction_head,
+    )
     progress = read_progress(out)
     # COMPARED BEFORE IT IS OVERWRITTEN. The first version set `progress["digest"]` here and then
     # handed the same dict to `shards_to_do`, which compares the recorded digest against this
@@ -486,11 +575,11 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
             layer = plan.get(tensor.name)
             if layer is None:
                 return None
-            R = single if single is not None else torch.from_numpy(
-                np.ascontiguousarray(arr[layer + 1, :K, :]))
+            R = single if single is not None else torch.from_numpy(np.ascontiguousarray(arr[layer + 1, :K, :]))
             _edited.append(tensor.name)
-            return apply_direction(raw, tensor, R, strength=strength, sparsity=sparsity,
-                                   rounds=rounds, restore_norms=restore_norms)
+            return apply_direction(
+                raw, tensor, R, strength=strength, sparsity=sparsity, rounds=rounds, restore_norms=restore_norms
+            )
 
         replaced = streaming.rewrite_shard(shard, edit)
         total_tensors += replaced
@@ -499,13 +588,13 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
         # A heartbeat per shard, which is the unit a person waits on. Baseline 2.1 asks for one
         # every 30 to 60 seconds and a shard is usually well inside that; a shard that is not is
         # exactly the case where the elapsed figure is what somebody wants.
-        log(f"  [{n}/{len(todo)}] {pathlib.Path(shard).name}: {replaced} tensor(s) in "
-            f"{time.monotonic() - shard_start:.1f}s")
+        log(
+            f"  [{n}/{len(todo)}] {pathlib.Path(shard).name}: {replaced} tensor(s) in "
+            f"{time.monotonic() - shard_start:.1f}s"
+        )
 
-    log(f"  baked {total_tensors} tensor(s) across {len(todo)} shard(s) in "
-        f"{time.monotonic() - started:.1f}s")
-    return {"shards": len(todo), "tensors": total_tensors, "resumed": bool(already),
-            "digest": digest, **stats}
+    log(f"  baked {total_tensors} tensor(s) across {len(todo)} shard(s) in {time.monotonic() - started:.1f}s")
+    return {"shards": len(todo), "tensors": total_tensors, "resumed": bool(already), "digest": digest, **stats}
 
 
 # ── the directions file, which is what makes the split across machines possible ─────
@@ -541,8 +630,7 @@ def real_counts(dirs_per_position):
 
     arr = np.asarray(dirs_per_position, dtype=np.float32)
     if arr.ndim != 3:
-        raise StreamBakeError(
-            f"a direction set is [positions, K, hidden] and this is {arr.shape}.")
+        raise StreamBakeError(f"a direction set is [positions, K, hidden] and this is {arr.shape}.")
     norms = np.linalg.norm(arr, axis=-1)
     return [int(n) for n in (norms > DIRECTION_EPSILON).sum(axis=-1)]
 
@@ -563,8 +651,10 @@ def describe_directions(dirs_per_position):
     span = str(lo) if lo == hi else f"{lo} to {hi}"
     if lo == cap:
         return f"{len(counts)} positions, {cap} each, {total} in all"
-    return (f"{len(counts)} positions, {span} each, {total} in all; {cap} were allocated per "
-            f"position and the rows that went unfilled are zero, which ablate nothing")
+    return (
+        f"{len(counts)} positions, {span} each, {total} in all; {cap} were allocated per "
+        f"position and the rows that went unfilled are zero, which ablate nothing"
+    )
 
 
 def save_directions(path, dirs_per_position, *, model, mode, provenance=None):
@@ -600,19 +690,23 @@ def save_directions(path, dirs_per_position, *, model, mode, provenance=None):
 
     arr = np.asarray(dirs_per_position, dtype=np.float32)
     if arr.ndim != 3:
-        raise StreamBakeError(
-            f"a direction set is [positions, K, hidden] and this is {arr.shape}.")
+        raise StreamBakeError(f"a direction set is [positions, K, hidden] and this is {arr.shape}.")
     # `K` IS THE CAP AND `directions_found` IS THE COUNT, and both are written because a reader of
     # this file cannot otherwise tell them apart. `K` describes the array, so a bake can allocate
     # against it; `directions_found` describes the run, and on most runs it is smaller. Written
     # here rather than left to each caller's provenance dictionary, because a caller that forgets
     # it leaves a file whose only answer to "how many directions is this" is the padded one.
     counts = real_counts(arr)
-    meta = {"model": str(model), "mode": str(mode),
-            "positions": str(arr.shape[0]), "K": str(arr.shape[1]), "hidden": str(arr.shape[2]),
-            "directions_found": str(sum(counts)),
-            "directions_found_per_position": json.dumps(counts),
-            "tool": "senbonzakura"}
+    meta = {
+        "model": str(model),
+        "mode": str(mode),
+        "positions": str(arr.shape[0]),
+        "K": str(arr.shape[1]),
+        "hidden": str(arr.shape[2]),
+        "directions_found": str(sum(counts)),
+        "directions_found_per_position": json.dumps(counts),
+        "tool": "senbonzakura",
+    }
     for key, value in (provenance or {}).items():
         # Every value stringified, because safetensors metadata is a map of string to string and
         # a non-string here fails at write time with a message about the format rather than the
@@ -705,10 +799,10 @@ def load_directions(path):
     if arr is None:
         raise StreamBakeError(
             f"{path} holds {keys} and not {DIRECTIONS_KEY!r}, so it is some other safetensors "
-            f"file rather than a direction set.")
+            f"file rather than a direction set."
+        )
     if arr.ndim != 3:
-        raise StreamBakeError(
-            f"{path} holds a {arr.shape} tensor and a direction set is [positions, K, hidden].")
+        raise StreamBakeError(f"{path} holds a {arr.shape} tensor and a direction set is [positions, K, hidden].")
     return arr, meta
 
 
@@ -719,7 +813,7 @@ def build_parser():
         allow_abbrev=False,
         prog="senbonzakura stream-bake",
         description="Apply a saved direction set to a checkpoint that does not fit in memory. "
-                    "Peak memory is one tensor, so the limit is disk rather than RAM.",
+        "Peak memory is one tensor, so the limit is disk rather than RAM.",
         epilog="""\
 examples:
   senbonzakura stream-bake --model ./Qwen3-235B --directions dirs.safetensors --out ./edited
@@ -742,43 +836,77 @@ hard-linked where the filesystem allows it and so usually costs no disk and no t
 A run interrupted at any point resumes from the shard it reached; re-running a finished
 bake does nothing rather than projecting the weights a second time.
 """,
-        formatter_class=__import__("argparse").RawDescriptionHelpFormatter)
-    p.add_argument("--model", required=True,
-                   help="the checkpoint to read. Never written to")
-    p.add_argument("--directions", required=True,
-                   help="a directions file from `abliterate --save-directions`")
-    p.add_argument("--out", required=True,
-                   help="where the edited copy goes. Refused if it could reach the model")
+        formatter_class=__import__("argparse").RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--model", required=True, help="the checkpoint to read. Never written to")
+    p.add_argument("--directions", required=True, help="a directions file from `abliterate --save-directions`")
+    p.add_argument("--out", required=True, help="where the edited copy goes. Refused if it could reach the model")
     # BOUNDED BELOW AT ZERO AND NOT ABOVE. A negative strength does not weaken the edit, it ADDS
     # the refusal direction back with the sign flipped, which is a different intervention that
     # would run silently and report as a bake. Above 1.0 is over-ablation, which is meaningful
     # and sometimes wanted, so it is left open.
-    p.add_argument("--strength", type=argresolve.real_number("--strength", minimum=0.0),
-                   default=1.0,
-                   help="how much of the direction to remove (default: 1.0). Above 1.0 removes "
-                        "more than the component that is there, which is a real choice and not "
-                        "an error")
-    p.add_argument("--sparsity", type=float, default=0.0,
-                   help="restrict the edit to the top-magnitude rows (default: 0.0, every row)")
-    p.add_argument("--rounds", type=argresolve.whole_number("--rounds", minimum=0), default=0,
-                   help="refinement rounds after the norm restore (default: 0)")
-    p.add_argument("--max-directions", dest="K",
-                   type=argresolve.whole_number("--max-directions", minimum=1), default=None,
-                   help="use only the first K directions of the set (default: all of them)")
-    p.add_argument("--mode", choices=("per_layer", "single"), default=None,
-                   help="per_layer uses each layer's own set; single shares one across the stack. "
-                        "Default: whatever the directions file records")
-    p.add_argument("--no-restore-norms", dest="restore_norms", action="store_false",
-                   help="the naive formulation: remove the direction and let row lengths fall "
-                        "where they may. This is the control, not the recommended path")
-    p.add_argument("--prediction-head", dest="prediction_head", default="skip",
-                   choices=PREDICTION_HEAD_POLICIES,
-                   help="what to do with a multi-token prediction head stored inside the decoder "
-                        "stack (default: skip). The config's declared layer count excludes it, so "
-                        "skipping is what that declaration means; `edit` is the other arm of a "
-                        "question nobody has measured")
-    p.add_argument("--no-ablate-conv", dest="ablate_conv", action="store_false",
-                   help="leave convolutional residual writers alone")
+    p.add_argument(
+        "--strength",
+        type=argresolve.real_number("--strength", minimum=0.0),
+        default=1.0,
+        help="how much of the direction to remove (default: 1.0). Above 1.0 removes "
+        "more than the component that is there, which is a real choice and not "
+        "an error",
+    )
+    p.add_argument(
+        "--sparsity",
+        type=float,
+        default=0.0,
+        help="restrict the edit to the top-magnitude rows (default: 0.0, every row)",
+    )
+    p.add_argument(
+        "--rounds",
+        type=argresolve.whole_number("--rounds", minimum=0),
+        default=0,
+        help="refinement rounds after the norm restore (default: 0)",
+    )
+    p.add_argument(
+        "--max-directions",
+        dest="K",
+        type=argresolve.whole_number("--max-directions", minimum=1),
+        default=None,
+        help="use only the first K directions of the set (default: all of them)",
+    )
+    p.add_argument(
+        "--mode",
+        choices=("per_layer", "single"),
+        default=None,
+        help="per_layer uses each layer's own set; single shares one across the stack. "
+        "Default: whatever the directions file records",
+    )
+    p.add_argument(
+        "--no-restore-norms",
+        dest="restore_norms",
+        action="store_false",
+        help="the naive formulation: remove the direction and let row lengths fall "
+        "where they may. This is the control, not the recommended path",
+    )
+    p.add_argument(
+        "--prediction-head",
+        dest="prediction_head",
+        default="skip",
+        choices=PREDICTION_HEAD_POLICIES,
+        help="what to do with a multi-token prediction head stored inside the decoder "
+        "stack (default: skip). The config's declared layer count excludes it, so "
+        "skipping is what that declaration means; `edit` is the other arm of a "
+        "question nobody has measured",
+    )
+    p.add_argument(
+        "--no-ablate-conv", dest="ablate_conv", action="store_false", help="leave convolutional residual writers alone"
+    )
+    p.add_argument(
+        "--skip-residual",
+        dest="skip_residual",
+        action="store_true",
+        help="do not measure the residual for the recipe. Measuring is one extra streaming "
+        "pass and is the default, because a recipe without a residual says less about "
+        "what the edit removed. A skipped residual is recorded as not measured, with the reason",
+    )
     return p
 
 
@@ -792,18 +920,51 @@ def main(argv=None):
             # SAID, NOT REFUSED. The paths legitimately differ between the machine that extracted
             # and the one that bakes, which is the whole point of the file. The hidden-size check
             # in the pre-flight is the one that can actually prove a mismatch.
-            print(f"  NOTE: these directions were extracted from {recorded!r} and --model is "
-                  f"{a.model!r}. That is expected when the two steps ran on different machines, "
-                  f"and the pre-flight still checks the geometry.")
+            print(
+                f"  NOTE: these directions were extracted from {recorded!r} and --model is "
+                f"{a.model!r}. That is expected when the two steps ran on different machines, "
+                f"and the pre-flight still checks the geometry."
+            )
         out = prepare_output(a.model, a.out)
-        stats = bake(out, arr, K=a.K, strength=a.strength, sparsity=a.sparsity, rounds=a.rounds,
-                     restore_norms=a.restore_norms, ablate_conv=a.ablate_conv, mode=mode,
-                     prediction_head=a.prediction_head)
+        stats = bake(
+            out,
+            arr,
+            K=a.K,
+            strength=a.strength,
+            sparsity=a.sparsity,
+            rounds=a.rounds,
+            restore_norms=a.restore_norms,
+            ablate_conv=a.ablate_conv,
+            mode=mode,
+            prediction_head=a.prediction_head,
+        )
     except StreamBakeError as e:
         raise SystemExit(f"stream-bake: {e}") from e
     except streaming.ShardError as e:
         raise SystemExit(f"stream-bake: {e}") from e
     print(f"  edited {stats['tensors']} tensor(s) in {a.out}")
+    # THE RECIPE IS WRITTEN BY DEFAULT, and a failure to write one never fails the bake: the edit has
+    # already been made, and the reason no recipe exists is printed beside it.
+    import shlex
+    import sys
+
+    from . import recipe
+
+    recipe.write_for_bake(
+        model=a.model,
+        out=out,
+        directions=a.directions,
+        strength=a.strength,
+        restore_norms=a.restore_norms,
+        sparsity=a.sparsity,
+        rounds=a.rounds,
+        K=a.K,
+        mode=mode,
+        ablate_conv=a.ablate_conv,
+        prediction_head=a.prediction_head,
+        skip_residual=a.skip_residual,
+        command="senbonzakura stream-bake " + shlex.join(argv if argv is not None else sys.argv[1:]),
+    )
     return 0
 
 
@@ -811,6 +972,7 @@ def main(argv=None):
 # module as a script executes this before anything defined below it, so a block placed higher up
 # makes `python -m senbonzakura.streambake` fail on names that do not exist yet while the console
 # script works. `tests/test_main_block_is_last.py` holds the shape.
-if __name__ == "__main__":   # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover
     from .entry import module_entry
+
     module_entry(main)

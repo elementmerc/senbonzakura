@@ -187,16 +187,16 @@ def test_the_two_moe_layouts_give_the_same_non_expert_roles_for_block_zero():
 
 
 def test_a_dense_gated_mlp_is_an_mlp_and_a_routed_gate_is_a_router():
-    assert modelmap.classify_block_path("mlp.gate_proj.weight") == "mlp"
-    assert modelmap.classify_block_path("mlp.gate.weight") == "router"
+    assert modelmap.classify("mlp.gate_proj.weight") == "mlp"
+    assert modelmap.classify("mlp.gate.weight") == "router"
 
 
 def test_an_expert_path_is_an_expert_even_though_it_also_names_an_mlp():
-    assert modelmap.classify_block_path("mlp.experts.12.up_proj.weight") == "expert_mlp"
+    assert modelmap.classify("mlp.experts.12.up_proj.weight") == "expert_mlp"
 
 
 def test_a_name_no_rule_covers_is_unclassified_rather_than_defaulted():
-    assert modelmap.classify_block_path("frobnicator.weight") == "unclassified"
+    assert modelmap.classify("frobnicator.weight") == "unclassified"
 
 
 def test_a_name_outside_every_block_has_no_block_role():

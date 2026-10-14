@@ -723,7 +723,32 @@ def refusal_section(abl, ref=None):
     return lines
 
 
-def _held_out_lines(abl, ref):
+NOT_MEASURED_OVER_REFUSAL = (
+    "**NOT MEASURED.** No run on harmless prompts was supplied, so nothing here says how often the "
+    "model refuses a request it should answer. A refusal rate on its own cannot tell a model that "
+    "refuses what it should from one that refuses everything.")
+
+
+def overrefusal_section(over):
+    """How often a harmless request is refused: the cost side of the refusal figure.
+
+    `over` is a `senbonzakura score` artefact run on the benign half of the set. A refusal rate
+    says what the edit removed; it does not say what else went with it, and an edit that refuses
+    everything scores perfectly on refusal. The reading is the same one the refusal section uses,
+    so the sample, the interval and the artefact's own warnings reach the reader the same way.
+    """
+    if not over:
+        return [NOT_MEASURED_OVER_REFUSAL]
+    n = refusal_n(None, over)
+    replies = n if n is not None else NOT_RECORDED
+    lines = [f"Harmless prompts scored: `{over.get('eval', 'unknown')}`, {replies} replies.", ""]
+    lines += _held_out_lines(None, over, "refused, on harmless prompts")
+    for whose, warning in artefact_warnings(None, over):
+        lines += ["", f"> **Read {whose} with this.** {warning}"]
+    return lines
+
+
+def _held_out_lines(abl, ref, heading="refusal after the edit"):
     """The publishable refusal figures: the ones taken after the edit, on rows nothing was fitted on.
 
     Every rate comes out of the stamp the scoring command wrote, so the estimator, the sample and
@@ -732,7 +757,7 @@ def _held_out_lines(abl, ref):
     lines = []
     for _slot, block in stamped_readings(ref, "refusal_rate"):
         estimator = block.get("estimator", "unnamed estimator")
-        lines += _stamped_reading(block, f"refusal after the edit, by `{estimator}`")
+        lines += _stamped_reading(block, f"{heading}, by `{estimator}`")
     # The unstamped rates the same artefact carries, which the stamp does not cover and which a
     # risk function asks about immediately: an answer that lectures instead of helping, and output
     # that has fallen apart.
@@ -1006,7 +1031,7 @@ def redact_command(command, secrets=()):
 
 
 def build(abl=None, cap=None, command=None, licence=None, licence_link=None, secrets=(),
-          ref=None, tam=None, mt=None):
+          ref=None, tam=None, mt=None, over=None):
     """The card, as markdown lines. `secrets` are values to keep off the page wherever they
     appear in `command`, on top of the flags `redact_command` always strips.
 
@@ -1021,6 +1046,10 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None, sec
 
     `mt` is a `senbonzakura multiturn` artefact, added 2026-10-07 for the same reason and the
     same way: the limits section named it as the one remaining artefact this page would not read.
+
+    `over` is a `senbonzakura score` artefact run on harmless prompts. Without it the card says
+    the over-refusal side was not measured, because a refusal rate alone cannot show what else the
+    edit refuses.
     """
     out = front_matter(abl, licence or "other", licence_link)
     out += ["# Abliteration report", ""]
@@ -1036,6 +1065,7 @@ def build(abl=None, cap=None, command=None, licence=None, licence_link=None, sec
     out += ["## What was done", "", *method_section(abl), ""]
     out += ["## What was measured", "", *measured_section(abl, cap, ref), ""]
     out += ["## Refusal and coherence", "", *refusal_section(abl, ref), ""]
+    out += ["## Over-refusal, which is what refusing costs", "", *overrefusal_section(over), ""]
     out += ["## Capability, which is what the edit cost", "", *capability_section(cap), ""]
     out += ["## Tamper resistance, which is whether it comes back", "",
             *tamper_section(tam), ""]
@@ -1242,6 +1272,12 @@ def build_parser():
                          "several turns, and whether that beat simply asking again. Without it "
                          "every rate on the card describes one reply to one request, and the card "
                          "says so")
+    ap.add_argument("--overrefusal", default="",
+                    help="a `senbonzakura score` artefact run on HARMLESS prompts (XSTest-safe is "
+                         "the set this project uses). It gives how often a request that should be "
+                         "answered is refused. Without it the card says that side was not "
+                         "measured, because a refusal rate on its own cannot tell a model that "
+                         "refuses what it should from one that refuses everything")
     ap.add_argument("--base-licence", dest="base_licence", default="",
                     help="the base model's licence, as an SPDX identifier where one exists "
                          "(apache-2.0, mit, gemma, llama3.2, other). Required, and not inferred: a "
@@ -1259,7 +1295,8 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    if not (a.abliteration or a.capability or a.refusal or a.tamper or a.multiturn):
+    if not (a.abliteration or a.capability or a.refusal or a.tamper or a.multiturn
+            or a.overrefusal):
         # SHAPE, NOT REASONING. This said "A card with no artefacts behind it would be a template,
         # and this exists to stop those being published", which explains the refusal to somebody
         # who has not asked why and never shows them what to type.
@@ -1270,6 +1307,7 @@ def main(argv=None):
             "  --capability FILE     a capability run's output\n"
             "  --tamper FILE         a `senbonzakura tamper` run's output\n"
             "  --multiturn FILE      a `senbonzakura multiturn` run's output\n"
+            "  --overrefusal FILE    a `senbonzakura score` run on harmless prompts\n"
             "  --base-licence NAME   the base model's licence, which is not inferred\n"
             "\n"
             "  senbonzakura report --abliteration edited/abliteration.json \\\n"
@@ -1288,7 +1326,8 @@ def main(argv=None):
         raise SystemExit(bad)
     lines = build(load(a.abliteration), load(a.capability), a.command or None,
                   licence=a.base_licence or None, licence_link=a.base_licence_link or None,
-                  ref=load(a.refusal), tam=load(a.tamper), mt=load(a.multiturn))
+                  ref=load(a.refusal), tam=load(a.tamper), mt=load(a.multiturn),
+                  over=load(a.overrefusal))
     text = "\n".join(lines)
     if a.out:
         Path(a.out).write_text(text + "\n", encoding="utf-8")

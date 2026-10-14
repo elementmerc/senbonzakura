@@ -117,3 +117,67 @@ def test_write_is_atomic_and_leaves_no_part_file(tmp_path):
     recipe_mod.write(target, _build(model, dirs))
     assert json.loads(target.read_text(encoding="utf-8"))["schema"] == "abliteration-recipe/1"
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_a_bake_with_sparsity_is_refused_rather_than_recorded_as_dense(tmp_path):
+    model = tmp_path / "m"
+    make_checkpoint(model)
+    dirs = tmp_path / "d.safetensors"
+    make_directions(dirs)
+    with pytest.raises(recipe_mod.RecipeError, match="sparsity"):
+        _build(model, dirs, sparsity=0.3)
+
+
+def test_a_bake_with_rounds_is_refused_rather_than_recorded_as_single_pass(tmp_path):
+    model = tmp_path / "m"
+    make_checkpoint(model)
+    dirs = tmp_path / "d.safetensors"
+    make_directions(dirs)
+    with pytest.raises(recipe_mod.RecipeError, match="rounds"):
+        _build(model, dirs, rounds=4)
+
+
+def test_a_recipe_without_a_residual_says_it_was_not_measured(tmp_path):
+    model = tmp_path / "m"
+    make_checkpoint(model)
+    dirs = tmp_path / "d.safetensors"
+    make_directions(dirs)
+    doc = _build(model, dirs)
+    assert doc["profile"] == "core/1"
+    assert doc["extensions"] == []
+    assert doc["edit"]["direction_residual"]["status"] == "not_measured"
+    assert doc["edit"]["direction_residual"]["why"]
+
+
+def test_the_residual_measurement_records_the_definition_it_used(tmp_path):
+    from tests.test_recipe_roundtrip import bake_reference
+
+    model = tmp_path / "m"
+    make_checkpoint(model)
+    dirs = tmp_path / "d.safetensors"
+    make_directions(dirs)
+    baked = bake_reference(model, tmp_path / "baked", dirs)
+    residual = recipe_mod.measure_residual(
+        model, baked, dirs, layer_count=LAYERS, targets=[recipe_mod.ATTN_TARGET, recipe_mod.MLP_TARGET]
+    )
+    assert residual["status"] == "measured"
+    assert residual["metric"] == recipe_mod.RESIDUAL_METRIC
+    assert residual["definition"] == recipe_mod.RESIDUAL_DEFINITION
+    assert residual["rounds"] == 0
+    # The edit must remove most of the direction, and the figures must be internally consistent.
+    assert 0 <= residual["after"] < residual["before"]
+    assert residual["fraction_remaining"] == pytest.approx(residual["after"] / residual["before"])
+
+
+def test_the_residual_measurement_refuses_a_checkpoint_with_nothing_to_measure(tmp_path):
+    from tests.test_recipe_roundtrip import bake_reference
+
+    model = tmp_path / "m"
+    make_checkpoint(model)
+    dirs = tmp_path / "d.safetensors"
+    make_directions(dirs)
+    baked = bake_reference(model, tmp_path / "baked", dirs)
+    with pytest.raises(recipe_mod.RecipeError, match="residual stream"):
+        recipe_mod.measure_residual(
+            model, baked, dirs, layer_count=LAYERS, targets=["model.layers.*.mlp.gate_proj.weight"]
+        )

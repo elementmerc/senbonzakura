@@ -63,7 +63,7 @@ def test_bfloat16_rounds_to_nearest_with_ties_to_even_and_does_not_truncate():
 def test_a_clean_recipe_is_accepted_in_check_mode(world):
     summary = applier.apply(world["recipe"], world["model"], world["dirs"], None, check_only=True, log=lambda *_: None)
     assert summary["tensors_to_edit"] == 2 * LAYERS
-    assert summary["checked_only"] is True
+    assert summary["status"] == "checked"
 
 
 @pytest.mark.parametrize("schema", ["abliteration-recipe/2", "some-other-format/1", 7])

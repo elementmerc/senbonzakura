@@ -22,6 +22,7 @@ import pathlib
 import struct
 
 import numpy as np
+import pytest
 
 from senbonzakura import recipe as recipe_mod
 from senbonzakura import streambake
@@ -214,3 +215,38 @@ def test_the_recipe_senbonzakura_writes_records_what_the_bake_did(tmp_path):
     assert recipe["base"]["weights_sha256"] is not None
     expected = hashlib.sha256(dirs.read_bytes()).hexdigest()
     assert recipe["edit"]["directions"]["sha256"] == expected
+
+
+def test_the_writer_and_the_applier_measure_the_same_residual(tmp_path):
+    """Two independent implementations of the residual definition must agree on one run.
+
+    The writer computes before and after from the two checkpoints. The applier computes them while
+    it edits and refuses a recipe whose recorded figures disagree. A recipe the writer measures and
+    the applier accepts is the cross-check; neither implementation is trusted alone.
+    """
+    model = tmp_path / "model"
+    make_checkpoint(model)
+    dirs = tmp_path / "directions.safetensors"
+    make_directions(dirs)
+    baked = bake_reference(model, tmp_path / "bake", dirs)
+    residual = recipe_mod.measure_residual(
+        model, baked, dirs, layer_count=LAYERS, targets=[recipe_mod.ATTN_TARGET, recipe_mod.MLP_TARGET]
+    )
+    recipe = recipe_mod.build(
+        name="cross-check",
+        model_dir=model,
+        model_id="fixture/tiny",
+        revision="fixture",
+        directions_path=dirs,
+        layer_count=LAYERS,
+        strength=1.0,
+        restore_norms=True,
+        measured=None,
+        command="cmd",
+        residual=residual,
+    )
+    path = recipe_mod.write(tmp_path / "recipe.json", recipe)
+    summary = load_applier().apply(path, model, dirs, tmp_path / "applied", log=lambda *_: None)
+    assert summary["residual"]["measured"] is True
+    assert summary["residual"]["before"] == pytest.approx(residual["before"], rel=1e-3)
+    assert summary["residual"]["after"] == pytest.approx(residual["after"], rel=1e-3, abs=1e-6)

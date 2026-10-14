@@ -102,7 +102,36 @@ POSITION_CAVEAT = (
     "does not say where refusal ends.")
 
 
-def render_block(status, tint, arms):
+def permitted(render):
+    """What a renderer may do with this render block, as fields it can act on.
+
+    `tint_allowed: false` forbids SINGLING OUT blocks, and nothing else. It does not forbid a
+    proportional picture, which is what `mode: "spread"` exists to allow. Marks may only ever come
+    from here: the per arm `exceeds_null` flags are facts about each arm, not permission, and
+    drawing from them bypasses this gate.
+    """
+    mode, claim = render["mode"], render["localisation_claim"]
+    rule = {
+        "blocks": ("You may single out the blocks in render.bar.blocks_clearing_it and nothing "
+                   "beyond them."),
+        "spread": ("You may colour each block in proportion to its share, on one continuous "
+                   "scale. You may not threshold, rank, outline, label or otherwise single out "
+                   "any block, and you may not describe the picture as where the behaviour is "
+                   "located. Show render.statement, and render.caveats when present, with it."),
+        "none": "Draw no per block colour at all. There is nothing per block to show.",
+    }[mode]
+    return {
+        "colour_blocks_by_share": mode in ("spread", "blocks"),
+        "single_out_blocks": bool(claim),
+        "describe_as_where_the_behaviour_lives": bool(claim) and not render.get("position_dependent"),
+        "marks_only_from_render": True,
+        "must_show": ["render.statement", *(["render.caveats"] if render.get("caveats") else [])],
+        "decided_by": ["render.mode", "render.localisation_claim", "render.position_dependent"],
+        "rule": rule,
+    }
+
+
+def render_block(status, tint, arms, model=None):
     """What a renderer needs to draw this result honestly, and what it may not read out of it.
 
     A card draws one of three things. `blocks`: a localisation claim, only when tinting is allowed.
@@ -140,16 +169,23 @@ def render_block(status, tint, arms):
         cleared = [bool(arms[n]["blocks"][k]["exceeds_null"]) for n in shares]
         rows.append({"index": k, "share": sum(usable) / len(usable) if usable else None,
                      "per_arm": per_arm, "cleared_the_bar": all(cleared)})
-    return {
+    out = {
         "version": RENDER_VERSION, "mode": mode, "localisation_claim": claim,
+        "binds_to": {"model_id": (model or {}).get("id"),
+                     "model_revision": (model or {}).get("revision"),
+                     "rule": ("A card must refuse this artefact unless BOTH the model id and the "
+                              "revision match the model it is about; a revision alone does not "
+                              "identify what was measured.")},
         "statement": sentence, "blocks": rows,
         "bar": {"blocks_clearing_it": [r["index"] for r in rows if r["cleared_the_bar"]],
                 "family_wise_threshold": {
                     n: (a.get("controls") or {}).get("family_wise_threshold")
                     for n, a in arms.items()}},
         "derived_from": ("arms.*.blocks[].effect and arms.*.blocks[].exceeds_null, with the "
-                         "status and tint_allowed above; no other input"),
+                         "status, tint_allowed and model above; no other input"),
     }
+    out["permitted"] = permitted(out)
+    return out
 
 
 def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
@@ -163,9 +199,14 @@ def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
     doc = json.loads(path.read_text(encoding="utf-8"))
     when = (now or _dt.datetime.now(_dt.timezone.utc)).isoformat(timespec="seconds")
     notes = doc.setdefault("amendments", [])
-    doc["render"] = render_block(doc["status"], doc["tint_allowed"], doc["arms"])
+    doc["render"] = render_block(doc["status"], doc["tint_allowed"], doc["arms"], doc.get("model"))
     notes.append({"added": "render", "when": when, "by": f"render_block v{RENDER_VERSION}",
                   "derived_from": doc["render"]["derived_from"]})
+    comparable = doc.get("comparable_with")
+    if comparable is not None and "model_id" not in comparable and doc.get("model"):
+        comparable["model_id"] = doc["model"]["id"]
+        notes.append({"added": "comparable_with.model_id", "when": when,
+                      "derived_from": "model.id; a revision alone does not identify the model"})
     if followups_path:
         doc["followups"] = json.loads(Path(followups_path).read_text(encoding="utf-8"))
         notes.append({"added": "followups", "when": when,
@@ -175,6 +216,7 @@ def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
         if "tracks_position" in verdicts:
             doc["render"]["position_dependent"] = True
             doc["render"]["caveats"] = [POSITION_CAVEAT]
+            doc["render"]["permitted"] = permitted(doc["render"])
             doc["limits"] = [*doc["limits"], POSITION_CAVEAT]
             notes.append({"added": "render.caveats and a limit", "when": when,
                           "by": "the declared position follow-up returned tracks_position",
@@ -296,12 +338,12 @@ def run(args, *, log=print):
         "sampling": {"seed": args.seed, "n_measure": args.n_measure, "n_confirm": args.n_confirm,
                      "batch": args.batch, "torch": torch.__version__},
         "status": status, "status_reason": reason, "tint_allowed": tint,
-        "render": render_block(status, tint, arms),
+        "render": render_block(status, tint, arms, identity),
         "arms_agree": status != ARMS_DISAGREE,
         "arms": arms,
         "controls": {"selftest": selftest, "behaviour_removed_standin": removed},
         "limits": [*A.LIMITS, STANDIN_LIMIT, *model_specific_limits(arms)],
-        "comparable_with": {"schema": SCHEMA, "instrument_version": A.INSTRUMENT_VERSION,
+        "comparable_with": {"schema": SCHEMA, "model_id": identity["id"], "instrument_version": A.INSTRUMENT_VERSION,
                             "estimator": A.ESTIMATOR, "precision": identity["precision"],
                             "model_revision": identity["revision"]},
     }

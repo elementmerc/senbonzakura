@@ -290,3 +290,68 @@ def test_amending_adds_the_start_test_and_records_the_declaration_it_ran_under(t
     doc = R.amend(path, start_path=start)
     assert doc["where_it_starts"]["judgement"]["verdict"] == "supported"
     assert doc["amendments"][-1]["declaration_sha256"] == "zzz"
+
+
+# --------------------------------------------------------------- what a renderer is permitted
+
+def test_a_spread_may_be_coloured_by_share_but_nothing_may_be_singled_out():
+    out = R.render_block(A.DIFFUSE, False, {"disjoint": _res([1.0, 3.0])},
+                         {"id": "m", "revision": "r"})
+    perm = out["permitted"]
+    assert perm["colour_blocks_by_share"] is True and perm["single_out_blocks"] is False
+    assert perm["describe_as_where_the_behaviour_lives"] is False
+    assert perm["marks_only_from_render"] is True
+    assert "may not threshold, rank, outline, label" in perm["rule"]
+    assert perm["must_show"] == ["render.statement"]
+
+
+def test_a_confirmed_localisation_may_single_out_only_the_blocks_that_cleared_the_bar():
+    out = R.render_block(A.LOCALISED, True, {"disjoint": _res([0.1, 5.0], cleared=(1,))})
+    perm = out["permitted"]
+    assert perm["single_out_blocks"] is True and perm["describe_as_where_the_behaviour_lives"]
+    assert "render.bar.blocks_clearing_it" in perm["rule"]
+
+
+def test_no_per_block_picture_means_no_colour_at_all():
+    perm = R.render_block(A.READOUT_INVALID, False, {})["permitted"]
+    assert perm["colour_blocks_by_share"] is False and perm["single_out_blocks"] is False
+    assert "Draw no per block colour" in perm["rule"]
+
+
+def test_the_render_block_binds_the_artefact_to_both_the_model_id_and_the_revision():
+    out = R.render_block(A.DIFFUSE, False, {"disjoint": _res([1.0])}, {"id": "org/m", "revision": "r1"})
+    assert out["binds_to"]["model_id"] == "org/m" and out["binds_to"]["model_revision"] == "r1"
+    assert "BOTH" in out["binds_to"]["rule"]
+    assert R.render_block(A.DIFFUSE, False, {})["binds_to"]["model_id"] is None
+
+
+def test_a_position_dependent_follow_up_withdraws_the_right_to_describe_it_as_a_location(tmp_path):
+    base = {"status": A.LOCALISED, "tint_allowed": True, "model": {"id": "m", "revision": "r"},
+            "arms": {"disjoint": _res([0.1, 5.0], cleared=(1,))}, "limits": []}
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(base))
+    follow = tmp_path / "f.json"
+    follow.write_text(json.dumps({"predeclaration_sha256": "x",
+                                  "position_verdict_by_arm": {"disjoint": "tracks_position"}}))
+    perm = R.amend(path, follow)["render"]["permitted"]
+    assert perm["single_out_blocks"] is True
+    assert perm["describe_as_where_the_behaviour_lives"] is False
+    assert "render.caveats" in perm["must_show"]
+
+
+def test_the_artefact_names_the_model_id_it_is_comparable_with(monkeypatch, tmp_path):
+    R.run(_stub_run(monkeypatch, tmp_path), log=lambda *_: None)
+    doc = json.loads((tmp_path / "attribution.json").read_text())
+    assert doc["comparable_with"]["model_id"] == "stub"
+    assert doc["render"]["binds_to"]["model_id"] == "stub"
+    assert doc["render"]["permitted"]["marks_only_from_render"] is True
+
+
+def test_amending_an_older_artefact_adds_the_model_id_to_what_it_is_comparable_with(tmp_path):
+    base = {"status": A.DIFFUSE, "tint_allowed": False, "model": {"id": "org/m", "revision": "r"},
+            "arms": {"disjoint": _res([1.0])}, "comparable_with": {"model_revision": "r"}}
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(base))
+    doc = R.amend(path)
+    assert doc["comparable_with"]["model_id"] == "org/m"
+    assert any(n["added"] == "comparable_with.model_id" for n in doc["amendments"])

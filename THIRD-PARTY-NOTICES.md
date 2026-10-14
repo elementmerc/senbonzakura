@@ -295,6 +295,20 @@ packaged, not imported, and reach no user through PyPI, so they carry no notice 
 the distributed artefact. The obligation they do carry, redistribution of the font within this
 repository, is met by `OFL.txt` sitting next to them.
 
+## React, react-dom and scheduler, bundled into the workbench interface
+
+| | |
+|---|---|
+| Packages | `react` 19.3.0, `react-dom` 19.3.0, and `scheduler` 0.28.0 (a dependency of `react-dom`) |
+| Source | Already in this repository's `web/package-lock.json`, with `resolved` and `integrity` (sha512) recorded for each. Not newly adopted and not fetched for this change, so the seven-day cooldown applies to the adoption of these versions, which was made when the lockfile was committed |
+| Licence | **MIT** for all three, read from each package's own LICENSE file |
+| Copyright | Copyright (c) Meta Platforms, Inc. and affiliates. |
+| What ships | Compiled into `src/senbonzakura/workbench/core/static/workbench-ui.js` by esbuild 0.28.1 (MIT, a build tool that is not itself shipped). The MIT notice travels with the bundle through this file |
+| Build | `tools/workbench-ui/`, which reads the three packages from `web/node_modules` and fails with a plain message when they are missing |
+
+The copyright notice and permission text of the MIT licence are in each package's LICENSE file, and
+this entry records where they are. The bundle does not strip them.
+
 ## Licence reach, and why this file stops where it does
 
 Recorded 2026-09-22, because the v1.0 gate asks for it and because "these notices look complete"

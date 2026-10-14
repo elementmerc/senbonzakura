@@ -192,7 +192,17 @@ SHARED_EXPERT_WIDTH_KEYS = ("shared_expert_intermediate_size", "moe_shared_exper
 #: are dense); `mlp_only_layers` is a LIST of dense block indices (Qwen3-30B-A3B says `[]`, so
 #: every one of its 48 blocks is routed). On that pair an empty list and a count of zero happen to
 #: agree, which is exactly the coincidence that would let a polarity bug ship.
-DENSE_PREFIX_KEY = "num_dense_layers"
+#: Spellings of "the first N blocks are dense, the rest are mixture of experts". A tuple rather
+#: than one string because `first_k_dense_replace` is the spelling DeepSeek, GLM, Kimi, Bailing,
+#: Mistral and Command-R use, and with only `num_dense_layers` read, every feed-forward in those
+#: models came back unknown. That is not a harmless gap: the workbench drew each one as "not
+#: measured", which reads as "we looked and could not tell" when in fact the config said so
+#: plainly under a name this tuple did not list.
+#:
+#: The two mean the same thing, which is why they belong in one tuple rather than in two branches.
+#: The vendored conversion code is the evidence: it maps `first_k_dense_replace` straight onto the
+#: leading-dense-block count for all six of those families.
+DENSE_PREFIX_KEYS = ("num_dense_layers", "first_k_dense_replace")
 DENSE_INDEX_KEY = "mlp_only_layers"
 
 #: GGUF metadata spellings, after the architecture prefix is stripped. A GGUF names its keys
@@ -818,15 +828,18 @@ def experts(cfg):
     nulls = tuple(sorted(k for k in EXPERT_COUNT_KEYS
                          if isinstance(scope, dict) and k in scope and scope[k] is None))
 
-    prefix, _ = _first(scope, (DENSE_PREFIX_KEY,))
+    prefix, prefix_key = _first(scope, DENSE_PREFIX_KEYS)
     listed = scope.get(DENSE_INDEX_KEY) if isinstance(scope, dict) else None
     if prefix is not None:
-        dense = Resolved(value=list(range(int(prefix))), source=DENSE_PREFIX_KEY)
+        # The key that was actually found, not the first of the tuple. Every field in this record
+        # carries the key it came from, and a reader checking a record against the config file has
+        # to find the same name in both.
+        dense = Resolved(value=list(range(int(prefix))), source=prefix_key)
     elif isinstance(listed, list):
         dense = Resolved(value=[int(i) for i in listed], source=DENSE_INDEX_KEY)
     else:
-        dense = Resolved(why=f"this config does not say which blocks are dense: neither "
-                             f"{DENSE_PREFIX_KEY} (a count of leading dense blocks) nor "
+        dense = Resolved(why=f"this config does not say which blocks are dense: none of "
+                             f"{list(DENSE_PREFIX_KEYS)} (a count of leading dense blocks) nor "
                              f"{DENSE_INDEX_KEY} (a list of dense block indices) is present")
 
     if count is None:

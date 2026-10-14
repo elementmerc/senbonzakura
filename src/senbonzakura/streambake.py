@@ -428,6 +428,41 @@ def preflight(index, directions, *, out, plan, log=print):
             "layers": index.count, "unreachable": list(missing), "peak_tensor_bytes": biggest}
 
 
+def check_orthonormal(directions, layers, K):
+    """Refuse a direction set whose used rows are not orthonormal, before any byte is written.
+
+    THE BAKE IS A PROJECTION ONLY FOR AN ORTHONORMAL BASIS. The edit computes `R^T (R W)`, and that
+    removes the span of R, and removes it exactly, only when the rows of R are orthonormal. A basis
+    with a row of squared norm 9 is baked without error and is a different edit: the stronger row is
+    removed three times over and the others are left alone. Nothing downstream can tell, because the
+    run completes and reports success. This was reproduced on 2026-10-14 with the conformance
+    fixture, which baked a layer whose Gram diagonal was `[9, 1]`.
+
+    Checked on the rows the bake actually uses (the first K of each layer's set), against the same
+    tolerance the reference applier enforces, so the two tools refuse the same files. Empty slots
+    are skipped, as they are everywhere in this module.
+    """
+    import numpy as np
+
+    from .cli import ORTHONORMAL_TOL
+
+    arr = np.asarray(directions, dtype=np.float64)
+    for layer in sorted(set(layers)):
+        rows = arr[layer + 1, :K, :]
+        live = rows[np.linalg.norm(rows, axis=-1) > DIRECTION_EPSILON]
+        if live.shape[0] == 0:
+            continue
+        gram = live @ live.T
+        deviation = float(np.abs(gram - np.eye(live.shape[0])).max())
+        if deviation > ORTHONORMAL_TOL:
+            raise StreamBakeError(
+                f"the direction set for layer {layer} is not orthonormal: its {live.shape[0]} "
+                f"non-empty row(s) have a worst Gram deviation of {deviation:.2e}, and the "
+                f"tolerance is {ORTHONORMAL_TOL:.0e}. The edit removes the span of these rows only "
+                f"when they are orthonormal, so baking would produce a different model and report "
+                f"success. Re-extract the directions, or orthonormalise them, before baking.")
+
+
 # ── the bake ─────────────────────────────────────────────────────────────────────────
 
 def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, restore_norms=True,
@@ -447,6 +482,7 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
             f" config's layer count excludes; policy is {prediction_head!r}")
     stats = preflight(index, arr, out=out, plan=plan, log=log)
     K = stats["K"] if K is None else min(int(K), stats["K"])
+    check_orthonormal(arr, plan.values(), K)
 
     # The policy is part of the key, like every other edit parameter: resuming a skip-the-head
     # bake with edit-the-head would leave one checkpoint holding both answers to the question the

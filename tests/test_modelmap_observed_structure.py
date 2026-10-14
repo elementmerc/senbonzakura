@@ -5,7 +5,7 @@
 """The map against the structure of real checkpoints, read from their headers and indexes.
 
 The fixtures in tests/fixtures/structure are tensor inventories (name, shape, dtype) taken from
-checkpoints on atlas with no weight loaded. They hold what the map is held to, and they cover the
+checkpoints on a development machine with no weight loaded. They hold what the map is held to, and they cover the
 two expert layouts this project has observed:
 
     inv-qwen3-1.7b.json                   dense, safetensors, shapes from headers

@@ -44,7 +44,27 @@ def _load():
     return module
 
 
-probe_mod = _load()
+try:
+    probe_mod = _load()
+except ImportError as exc:
+    # PRESENT BUT UNIMPORTABLE IS A THIRD STATE, and it used to take the whole suite down.
+    #
+    # The skip above covers the probe being absent. It does not cover the probe being there and
+    # failing to import, which happened on 2026-10-14 when the probe was changed to import the
+    # package's resolver: `private/` is a SYMLINK into a shared tree, so the edit landed on every
+    # branch and every worktree at once, while the package symbol it now needs existed on one
+    # branch. `dev` could no longer collect this module.
+    #
+    # A tracked test that loads an UNVERSIONED file cannot treat that file's imports as a hard
+    # requirement, because the file does not travel with the branch. So this skips, and it names
+    # the missing symbol rather than skipping quietly: a skip that does not say what it could not
+    # do reads exactly like a pass, which is the failure this project has met six times over.
+    pytest.skip(
+        f"the research probe is present but could not be imported on this checkout: {exc}. "
+        f"private/ is shared rather than branched, so the probe can need a symbol this branch "
+        f"does not have. Nothing was verified.",
+        allow_module_level=True)
+
 ProbeError = probe_mod.ProbeError
 
 

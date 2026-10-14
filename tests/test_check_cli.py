@@ -146,14 +146,20 @@ def test_the_summary_says_how_many_checks_applied(tmp_path):
     of "applied" is the number of checks AVAILABLE, and it reconciles with the line below it.
     """
     _, text = _run([str(_write(tmp_path, "ok.json", GOOD))])
-    applied = re.search(r"of (\d+) checks applied", text)
-    available = re.search(r"(\d+) checks available", text)
-    assert applied, f"no 'N of M checks applied' line in the output:\n{text}"
+    # Wrapped to the terminal width, so the phrase can break across a line. Compared on the words.
+    flat = " ".join(text.split())
+    applied = re.search(r"of (\d+) single-file checks applied", flat)
+    pairs = re.search(r"(\d+) pair checks not run", flat)
+    available = re.search(r"(\d+) checks available", flat)
+    assert applied, f"no 'N of M single-file checks applied' line in the output:\n{text}"
+    assert pairs, f"the applied line does not say how many pair checks were left out:\n{text}"
     assert available, f"no 'M checks available' summary line in the output:\n{text}"
-    assert applied.group(1) == available.group(1), (
-        f"the applied line says 'of {applied.group(1)} checks applied' while the summary says "
-        f"'{available.group(1)} checks available'. Those have to be the same number: the defect "
-        f"this test exists for was the denominator being the count that did NOT apply.")
+    reconciled = int(applied.group(1)) + int(pairs.group(1))
+    assert reconciled == int(available.group(1)), (
+        f"the applied line says {applied.group(1)} single-file checks and {pairs.group(1)} pair "
+        f"checks left out, which is {reconciled}, while the summary says {available.group(1)} "
+        f"checks available. The numbers have to add up on one screen: the defect this test exists "
+        f"for was a denominator that did not match what the reader was shown.")
 
 
 def test_a_clean_report_refuses_to_read_as_a_certificate(tmp_path):
@@ -164,11 +170,19 @@ def test_a_clean_report_refuses_to_read_as_a_certificate(tmp_path):
     assert "cannot tell you a number is right" in text
 
 
-def test_quiet_prints_findings_and_nothing_else(tmp_path):
+def test_quiet_prints_findings_and_what_it_could_not_vouch_for(tmp_path):
+    """Quiet mode drops the clean files, and nothing else.
+
+    THE OLD VERSION ASSERTED THAT `ok.json` WAS ABSENT, and that was only ever true because `ok.json`
+    was treated as clean. Under the examined floor it applies to six of twenty-one checks, so it is
+    INCONCLUSIVE, and an inconclusive file must not vanish in quiet mode: silence there reads as the
+    same thing a clean file reads as. Clean silence is pinned directly in the new test module, against
+    a verdict that is actually clean.
+    """
     _, text = _run(["--quiet", str(_write(tmp_path, "ok.json", GOOD)),
                     str(_write(tmp_path, "bad.json", BAD))])
     assert "bad.json" in text
-    assert "ok.json" not in text
+    assert "ok.json" in text and "INCONCLUSIVE" in text
     assert "cannot tell you" not in text
 
 

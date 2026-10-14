@@ -171,7 +171,7 @@ def test_the_report_still_says_how_much_to_believe_it(confidence):
     from senbonzakura_check import cli
 
     out = io.StringIO()
-    cli._render("run.json", [_finding(confidence=confidence, severity="withdraws")], [], None, out)
+    cli._render("run.json", [_finding(confidence=confidence, severity="withdraws")], None, out)
     rendered = out.getvalue()
     assert f"{confidence} confidence" in rendered
     assert "CANNOT BE QUOTED" in rendered

@@ -396,7 +396,76 @@ def _why_it_was_skipped(path):
     return "not a result artefact, skipped"
 
 
-def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, total=None):
+#: THE LINE BETWEEN "CLEAN" AND "INCONCLUSIVE", and the one number in this file a reader may want to
+#: argue with. A clean verdict says the checks found nothing, which is only half a statement when
+#: most of them never looked at the file. Half is the judgement: below it the majority of what the
+#: checker knows about this kind of file was not applied, so silence cannot be read as a clean bill.
+#: Changing it changes what the word "clean" is allowed to mean, so it is a decision, not a tuning.
+_EXAMINED_FLOOR = 0.5
+
+
+def _verdict(findings, problem, named, applied, denominator):
+    """One word for what the run established about one entry.
+
+    `unchecked` and `not_a_result` are the two ways a file was never read. `finding` means a check
+    fired, whatever else was true. `inconclusive` is the case this exists for: nothing fired, but
+    too few checks applied for the silence to mean anything. `clean` needs the floor met, and an
+    entry with no applicable checks at all can never be clean, because nothing could have looked.
+    """
+    if problem:
+        return "unchecked" if named else "not_a_result"
+    if findings:
+        return "finding"
+    if not denominator or applied < _EXAMINED_FLOOR * denominator:
+        return "inconclusive"
+    return "clean"
+
+
+def _count_phrase(applied, denominator, pairs):
+    """How many checks applied, stated so that it reconciles with the footer.
+
+    A single file can never be checked by a pair check, so those are counted apart. Saying so in
+    the line itself means "5 of 21" beside "25 checks available" is arithmetic the reader is handed,
+    not arithmetic they have to guess at.
+    """
+    if pairs:
+        return f"{applied} of {denominator} single-file checks applied, {pairs} pair checks not run"
+    return f"{applied} of {denominator} checks applied"
+
+
+def _examination_block(path, findings, applied, denominator, not_examined, verdict, out, *,
+                       quiet, pairs=0):
+    """What the checker looked at and what it did not, printed beside every verdict.
+
+    THE NOT-EXAMINED LIST IS THE POINT, not an appendix. A reader who sees "nothing found" has to be
+    able to see, in the same screen, which checks said nothing about this file and why that matters.
+    Printing only the count leaves the reader to do the arithmetic, and the arithmetic is what goes
+    missing when somebody is hoping the answer is clean.
+    """
+    if quiet:
+        if verdict == "inconclusive":
+            print(f"~  {path}  INCONCLUSIVE: {_count_phrase(applied, denominator, pairs)}", file=out)
+        return
+    if verdict == "inconclusive":
+        print(f"~  {path}", file=out)
+        _wrapped(f"INCONCLUSIVE, NOT CLEAN: nothing found, but only "
+                 f"{_count_phrase(applied, denominator, pairs)} to this file, so most of it was never "
+                 f"examined.", out, indent="   ")
+    elif verdict == "clean":
+        print(f"\u2713  {path}", file=out)
+        _wrapped(f"nothing found ({_count_phrase(applied, denominator, pairs)})", out, indent="   ")
+    else:
+        _wrapped(f"Examined: {_count_phrase(applied, denominator, pairs)}.", out, indent="   ")
+    if not_examined:
+        _wrapped(f"Did not examine ({len(not_examined)}): " + ", ".join(not_examined), out,
+                 indent="   ")
+    if verdict == "inconclusive":
+        _wrapped("Nothing here says the file is right. Read the list above before quoting it.",
+                 out, indent="   ")
+
+
+def _render(path, findings, problem, out, *, named=True, quiet=False, applied=0, denominator=0,
+            not_examined=(), pairs=0):
     if problem:
         if named:
             print(f"?  {path}\n   UNCHECKED: {problem}", file=out)
@@ -459,19 +528,15 @@ def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, t
         # A linter with a bad false-positive rate is uninstalled once and never again, so the reader
         # has to be able to judge this one without going and reading the source.
         _section("When this check is wrong", f.false_positive, out)
-    if quiet:
+    if quiet and findings:
         return
-    if not findings and skipped:
-        # COUNTED THE WAY A READER READS IT. This said "(13 checks did not apply)" beside a summary
-        # line saying "16 checks available", and `--min-applied` then printed "3 of 13 applied",
-        # reusing the count of checks that did NOT apply as the denominator of the ones that did.
-        # Three numbers on one screen, one of them used two ways.
-        applied = (total - len(skipped)) if total is not None else None
-        detail = (f"{applied} of {total} checks applied" if applied is not None
-                  else f"{len(skipped)} checks did not apply")
-        print(f"✓  {path}\n   nothing found ({detail})", file=out)
-    elif not findings:
-        print(f"✓  {path}\n   nothing found", file=out)
+    if not findings:
+        _examination_block(path, findings, applied, denominator, not_examined,
+                           _verdict(findings, problem, named, applied, denominator), out,
+                           quiet=quiet, pairs=pairs)
+        return
+    _examination_block(path, findings, applied, denominator, not_examined,
+                       "finding", out, quiet=quiet, pairs=pairs)
 
 
 #: How often a sweep says it is still alive, in seconds. Baseline section 2.1 asks for one every
@@ -481,7 +546,7 @@ def _render(path, findings, skipped, problem, out, *, named=True, quiet=False, t
 HEARTBEAT_SECONDS = 30
 
 
-def _entry(path, findings, skipped, problem, named, applied):
+def _entry(path, findings, skipped, problem, named, applied, denominator, not_examined):
     """One file's object in the machine-readable report.
 
     Pulled out of the `--json` branch when the report started streaming: the shape has to be
@@ -498,6 +563,11 @@ def _entry(path, findings, skipped, problem, named, applied):
         # and `not_a_result` alone, and a file that parsed with every check skipped came out
         # looking checked. The Action did exactly that and its `fail-on-empty` could not fire.
         "applied": applied,
+        # THE VERDICT IN ONE WORD, so a consumer does not reconstruct it from the counts. Added
+        # beside the old keys rather than replacing them, because CI reads this shape.
+        "verdict": _verdict(findings, problem, named, applied, denominator),
+        "applicable": denominator,
+        "not_examined": list(not_examined),
         "skipped": skipped,
         "findings": [{
             "check": f.check_id, "title": f.title, "confidence": f.confidence,
@@ -762,15 +832,17 @@ def main(argv=None, out=None, clock=None):
     # and one unreadable file in the last artefact changes the status of everything before it, so
     # streaming the OUTPUT must not mean deciding the STATUS early. A partial report carries no
     # footer and no status line, which is what tells a reader it is partial.
-    n_findings = n_unchecked = n_not_result = n_checked = 0
+    n_findings = n_unchecked = n_not_result = n_checked = n_inconclusive = 0
     thin = []
     reachable = [c for c in checks if getattr(c, "arity", "document") != "pair"]
     heartbeat = _Heartbeat(len(files) + (1 if args.pair else 0), clock=clock)
     first_json_entry = True
 
-    def emit(path, findings, skipped, problem, named, applied):
-        """Write one entry, in whichever of the two formats was asked for."""
+    def emit(path, findings, skipped, problem, named, applied, denominator, not_examined,
+             pairs=0):
+        """Write one entry, in whichever of the two formats was asked for. Returns its verdict."""
         nonlocal first_json_entry
+        verdict = _verdict(findings, problem, named, applied, denominator)
         if args.json:
             # STREAMED AS A JSON ARRAY, one element at a time, so the format a consumer parses is
             # unchanged. A run killed partway leaves the array unterminated, which `json.load`
@@ -778,15 +850,19 @@ def main(argv=None, out=None, clock=None):
             # about this run is known" rather than as a clean sweep. That is the correct reading
             # of a partial file and the reason this is an array rather than one object per line.
             print("" if first_json_entry else ",", file=out)
-            json.dump(_entry(path, findings, skipped, problem, named, applied), out, indent=2)
+            json.dump(_entry(path, findings, skipped, problem, named, applied, denominator,
+                             not_examined), out, indent=2)
             first_json_entry = False
-        elif not (args.quiet and not findings and not (problem and named)):
-            _render(path, findings, skipped, problem, out, named=named,
-                    quiet=args.quiet, total=len(checks))
+        elif not args.quiet or verdict in ("finding", "unchecked", "inconclusive"):
+            _render(path, findings, problem, out, named=named, quiet=args.quiet,
+                    applied=applied, denominator=denominator, not_examined=not_examined,
+                    pairs=pairs)
+        return verdict
 
-    def tally(findings, problem, named, applied):
-        nonlocal n_findings, n_unchecked, n_not_result, n_checked
+    def tally(findings, problem, named, applied, verdict):
+        nonlocal n_findings, n_unchecked, n_not_result, n_checked, n_inconclusive
         n_findings += len(findings)
+        n_inconclusive += verdict == "inconclusive"
         if problem and named:
             n_unchecked += 1
         elif problem:
@@ -817,9 +893,11 @@ def main(argv=None, out=None, clock=None):
             # decision rather than a bug fix. The open question it leaves, whether a staged file
             # that is corrupt should block, is in DEFERRED.md.
             named = True
-        applied = 0 if problem else len(checks) - len(skipped)
-        emit(path, findings, skipped, problem, named, applied)
-        tally(findings, problem, named, applied)
+        applied = 0 if problem else len(reachable) - sum(1 for c in reachable if c.id in skipped)
+        not_examined = [] if problem else [c.id for c in reachable if c.id in skipped]
+        verdict = emit(path, findings, skipped, problem, named, applied, len(reachable),
+                       not_examined, pairs=n_pair_checks)
+        tally(findings, problem, named, applied, verdict)
         if not problem and applied < min(args.min_applied or 0, len(reachable)):
             thin.append((path, applied))
         heartbeat.tick(path)
@@ -833,8 +911,11 @@ def main(argv=None, out=None, clock=None):
             files[0][0], files[1][0], checks, row_select=row_select)
         pair_applied = 0 if pair_problem else n_pair_checks - len(pair_skipped)
         pair_label = f"{files[0][0]} vs {files[1][0]}"
-        emit(pair_label, pair_findings, pair_skipped, pair_problem, True, pair_applied)
-        tally(pair_findings, pair_problem, True, pair_applied)
+        pair_not_examined = [] if pair_problem else [c.id for c in checks
+                                                     if c.arity == "pair" and c.id in pair_skipped]
+        pair_verdict = emit(pair_label, pair_findings, pair_skipped, pair_problem, True,
+                            pair_applied, n_pair_checks, pair_not_examined)
+        tally(pair_findings, pair_problem, True, pair_applied, pair_verdict)
         heartbeat.tick(pair_label)
 
     if args.json:
@@ -849,8 +930,10 @@ def main(argv=None, out=None, clock=None):
         # summary reading "3 file(s)" after two were named would be a small lie of exactly the
         # kind this command exists to catch in other people's output.
         pair_tail = ", 1 pair" if args.pair else ""
+        inconclusive_tail = f", {n_inconclusive} inconclusive" if n_inconclusive else ""
         print(f"\n{len(files)} file(s){pair_tail}, {n_findings} finding(s), "
-              f"{n_unchecked} unchecked{tail}, {len(checks)} checks available.", file=out)
+              f"{n_unchecked} unchecked{inconclusive_tail}{tail}, {len(checks)} checks available.",
+              file=out)
         # SAID IN ITS OWN SENTENCE, because "0 file(s)" sits inside a line that otherwise reads
         # like a clean report, and a reader skims it as one. Found by pointing the checker at a
         # directory that existed and held nothing: it exited 0, which in CI is a green that

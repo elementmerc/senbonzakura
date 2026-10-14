@@ -273,3 +273,20 @@ def test_a_position_dependent_follow_up_adds_a_caveat_to_the_render_block_and_th
                                   "position_verdict_by_arm": {"disjoint": "stable"}}))
     path.write_text(json.dumps(base))
     assert "caveats" not in R.amend(path, stable)["render"]
+
+
+def test_the_mechanism_is_in_the_caveat_a_reader_will_meet():
+    assert "mean difference of the residual after block p - 1" in R.POSITION_CAVEAT
+    assert "always large" in R.POSITION_CAVEAT
+
+
+def test_amending_adds_the_start_test_and_records_the_declaration_it_ran_under(tmp_path):
+    base = {"status": A.DIFFUSE, "tint_allowed": False, "arms": {"disjoint": _res([1.0, 1.0])},
+            "limits": []}
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps(base))
+    start = tmp_path / "s.json"
+    start.write_text(json.dumps({"declaration_sha256": "zzz", "judgement": {"verdict": "supported"}}))
+    doc = R.amend(path, start_path=start)
+    assert doc["where_it_starts"]["judgement"]["verdict"] == "supported"
+    assert doc["amendments"][-1]["declaration_sha256"] == "zzz"

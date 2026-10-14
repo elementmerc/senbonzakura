@@ -193,6 +193,28 @@ def build_partitions(track_dir, *, n_measure=200, n_confirm=0, seed=0):
     return parts, digests
 
 
+def fresh_requests(track_dir, used_groups, *, n, seed):
+    """`n` harmful measure requests that no earlier step used, one prompt each, and their digest.
+
+    Drawn by its own generator, so asking for them cannot disturb the draws that the original
+    partitions came from. Returns the arm and a description that never contains a prompt.
+    """
+    from pathlib import Path
+
+    from . import track
+    harmful, _ = track.load_partitions(Path(track_dir))
+    groups = track.group_by_request(harmful["measure"])
+    keys = sorted(k for k in groups if k not in set(used_groups))
+    if len(keys) < n:
+        raise A.AttributionError(f"only {len(keys)} unused requests remain in the measure "
+                                 f"partition, fewer than the {n} asked for.")
+    gen = torch.Generator().manual_seed(seed + 9001)
+    chosen = [keys[i] for i in torch.randperm(len(keys), generator=gen).tolist()[:n]]
+    picks = [groups[k][int(torch.randint(len(groups[k]), (1,), generator=gen))] for k in chosen]
+    return A.arm(picks, chosen), {"n": n, "unused_requests_available": len(keys),
+                                  "digest": digest(picks)}
+
+
 class HFSubject:
     def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print):
         if arm not in ARM_DECLARATIONS:

@@ -195,6 +195,7 @@ def judge_start(rows):
 # ------------------------------------------------------------------------------ the follow-up run
 
 SCHEMA = "senbonzakura-attribution-followups/1"
+START_SCHEMA = "senbonzakura-attribution-start/1"
 
 
 def build_parser():
@@ -211,6 +212,8 @@ def build_parser():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--n-fresh", type=int, default=150,
+                   help="requests no earlier step used, for the where-it-starts test")
     return p
 
 
@@ -296,13 +299,90 @@ def run(args, *, log=print):
     return out
 
 
+def run_start(args, *, log=print):
+    """Run the declared where-it-starts test on requests no earlier step used."""
+    import json
+    import time
+    from pathlib import Path
+
+    import torch
+
+    from . import attribution as A
+    from . import attribution_hf as H
+    from . import attribution_run as R
+
+    original = json.loads(Path(args.artefact).read_text(encoding="utf-8"))
+    t0 = time.monotonic()
+    model, tok, identity = H.load(args.model, device=args.device,
+                                  revision=original["model"]["revision"])
+    parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
+                                        n_confirm=args.n_confirm, seed=args.seed)
+    if (json.loads(json.dumps(digests)) != original["behaviour"]["partitions"]
+            or identity["revision"] != original["model"]["revision"]):
+        raise A.AttributionError("these are not the inputs the original run used, so a test on "
+                                 "them would answer a different question.")
+    used = set(parts["measure"]["harmful"].groups) | set(parts["confirm"]["harmful"].groups)
+    fresh, fresh_digest = H.fresh_requests(args.track, used, n=args.n_fresh, seed=args.seed)
+
+    subject = H.HFSubject(model, tok, batch=args.batch, log=log)
+    nb = subject.n_blocks
+    res = {k: {s: subject.residuals(list(parts[k][s].prompts)) for s in ("harmful", "harmless")}
+           for k in ("fit", "search")}
+    conv = A.DEFAULT
+    late = tuple(range(LATE_FROM, nb))
+
+    def flags(direction, blocks):
+        got = subject.refusal_flags(list(fresh.prompts), direction, blocks)
+        return torch.tensor(got, dtype=torch.float64)
+
+    log("[start] baseline replies")
+    base = flags(None, ())
+    rows, details = {}, {}
+    for p in START_POSITIONS:
+        d_p, held_out = A.fit_direction_at(res["fit"]["harmful"], res["fit"]["harmless"],
+                                           res["search"]["harmful"], res["search"]["harmless"], p)
+        log(f"[start] position {p}")
+        early, later = flags(d_p, EARLY), flags(d_p, late)
+        drop_early, drop_late = base - early, base - later
+        zeros = torch.zeros_like(base)[None]
+        gen = torch.Generator().manual_seed(args.seed + p)
+        pe, be = A.bootstrap_effects(drop_early[None], zeros, fresh.groups, fresh.groups,
+                                     conv.resamples, gen)
+        pc, bc = A.bootstrap_effects((drop_late - drop_early)[None], zeros, fresh.groups,
+                                     fresh.groups, conv.resamples, gen)
+        elo, ehi = A.interval(be, conv.alpha)
+        clo, chi = A.interval(bc, conv.alpha)
+        rows[p] = {"early_drop_ci": [float(elo[0]), float(ehi[0])],
+                   "contrast_ci": [float(clo[0]), float(chi[0])]}
+        details[str(p)] = {
+            "held_out_auc": held_out, "early_drop": float(pe[0]),
+            "late_drop_minus_early_drop": float(pc[0]), **rows[p],
+            "harmful_refusal_rate": {"none": float(base.mean()), "early": float(early.mean()),
+                                     "later": float(later.mean())}}
+    out = {"schema": START_SCHEMA, "declaration": START_DECLARATION,
+           "declaration_sha256": START_SHA256, "exploratory": True,
+           "inputs": {"artefact": Path(args.artefact).name, "model": identity,
+                      "fresh_requests": fresh_digest, "early_blocks": list(EARLY),
+                      "later_blocks": [LATE_FROM, nb - 1], "seed": args.seed},
+           "positions": details, "judgement": judge_start(rows),
+           "seconds": round(time.monotonic() - t0)}
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    R.write_json(Path(args.out) / "start.json", out)
+    log(f"where it starts: {out['judgement']['verdict']}")
+    return out
+
+
 def main(argv=None):
     import sys
 
     from . import attribution as A
+    argv = list(sys.argv[1:] if argv is None else argv)
+    runner = run
+    if argv and argv[0] == "start":
+        runner, argv = run_start, argv[1:]
     args = build_parser().parse_args(argv)
     try:
-        run(args)
+        runner(args)
     except A.AttributionError as e:
         print(f"follow-up stopped: {e}", file=sys.stderr)
         return 2

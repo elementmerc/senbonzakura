@@ -94,9 +94,12 @@ def model_specific_limits(arms):
 RENDER_VERSION = 1
 POSITION_CAVEAT = (
     "The largest block effect follows the position the direction was fitted at: refitting at "
-    "other positions moved the peak with it, to the block just before each. So the per block "
-    "profile describes where THIS direction is written, and its upper edge is a product of where "
-    "the direction was taken. It does not say where refusal ends.")
+    "other positions moved the peak with it, to the block just before each. This is partly "
+    "mechanical. A direction fitted at position p is the mean difference of the residual after "
+    "block p - 1, and that residual contains block p - 1's own write, so that block's write along "
+    "the direction is always large. The per block profile therefore describes where THIS "
+    "direction is written, and its upper edge is a product of where the direction was taken. It "
+    "does not say where refusal ends.")
 
 
 def render_block(status, tint, arms):
@@ -149,7 +152,7 @@ def render_block(status, tint, arms):
     }
 
 
-def amend(artefact_path, followups_path=None, *, now=None):
+def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
     """Add what was derived or measured after the run, and say so inside the file.
 
     Nothing the run wrote is changed. A `render` block is derived from fields already present, and
@@ -176,6 +179,11 @@ def amend(artefact_path, followups_path=None, *, now=None):
             notes.append({"added": "render.caveats and a limit", "when": when,
                           "by": "the declared position follow-up returned tracks_position",
                           "derived_from": "followups.position_verdict_by_arm"})
+    if start_path:
+        doc["where_it_starts"] = json.loads(Path(start_path).read_text(encoding="utf-8"))
+        notes.append({"added": "where_it_starts", "when": when,
+                      "by": "attribution_followups start, declared before it ran",
+                      "declaration_sha256": doc["where_it_starts"]["declaration_sha256"]})
     write_json(path, doc)
     return doc
 

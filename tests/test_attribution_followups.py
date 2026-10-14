@@ -179,10 +179,10 @@ def test_fitting_at_a_chosen_position_is_refused_when_the_position_does_not_exis
 
 # --------------------------------------------------------------------------- where it starts
 
-def _rows(early_hi=0.05, contrast_lo=0.5, **override):
+def _rows(early_hi=0.05, contrast_lo=0.5, override=None):
     base = {p: {"early_drop_ci": [-0.02, early_hi], "contrast_ci": [contrast_lo, 0.9]}
             for p in F.START_POSITIONS}
-    base.update(override)
+    base.update(override or {})
     return base
 
 
@@ -202,18 +202,18 @@ def test_an_early_set_that_does_nothing_with_a_visible_contrast_everywhere_is_su
 
 
 def test_one_position_where_the_early_blocks_matter_falsifies_the_lower_edge():
-    out = F.judge_start(_rows(**{15: {"early_drop_ci": [0.1, 0.3], "contrast_ci": [0.5, 0.9]}}))
+    out = F.judge_start(_rows(override={15: {"early_drop_ci": [0.1, 0.3], "contrast_ci": [0.5, 0.9]}}))
     assert out["verdict"] == "falsified" and out["positions_where_early_blocks_matter"] == [15]
 
 
 def test_a_test_that_could_not_see_the_later_set_matter_is_uninformative_not_supported():
-    out = F.judge_start(_rows(**{24: {"early_drop_ci": [0.0, 0.02], "contrast_ci": [0.05, 0.4]}}))
+    out = F.judge_start(_rows(override={24: {"early_drop_ci": [0.0, 0.02], "contrast_ci": [0.05, 0.4]}}))
     assert out["verdict"] == "uninformative"
     assert out["positions_where_the_test_could_not_see_a_difference"] == [24]
 
 
 def test_falsified_takes_precedence_over_uninformative():
-    rows = _rows(**{15: {"early_drop_ci": [0.1, 0.3], "contrast_ci": [0.0, 0.1]}})
+    rows = _rows(override={15: {"early_drop_ci": [0.1, 0.3], "contrast_ci": [0.0, 0.1]}})
     assert F.judge_start(rows)["verdict"] == "falsified"
 
 
@@ -226,3 +226,78 @@ def test_the_ceiling_is_inclusive_and_the_floor_is_exclusive():
 def test_a_missing_position_cannot_be_judged_for_the_start_test():
     with pytest.raises(ValueError, match="no result"):
         F.judge_start({15: {"early_drop_ci": [0, 0], "contrast_ci": [1, 1]}})
+
+
+def _start_args(tmp_path, original):
+    return F.build_parser().parse_args(["stub", "--track", "t", "--artefact", str(original),
+                                        "--out", str(tmp_path / "s"), "--batch", "8",
+                                        "--n-fresh", "20"])
+
+
+def _patch_start(monkeypatch):
+    from test_attribution_hf import _parts
+
+    from senbonzakura import attribution as A
+    from senbonzakura import attribution_hf as H
+    fresh = A.arm([f"bad fresh {i}" for i in range(20)], [f"fresh{i}" for i in range(20)])
+    monkeypatch.setattr(H, "fresh_requests",
+                        lambda *_a, **_k: (fresh, {"n": 20, "digest": "d"}))
+    monkeypatch.setattr(F, "START_POSITIONS", (1, 2, 3))
+    monkeypatch.setattr(F, "EARLY", (0,))
+    monkeypatch.setattr(F, "LATE_FROM", 1)
+    return _parts
+
+
+def test_the_start_test_runs_end_to_end_on_a_stub_and_records_what_it_was_declared_as(
+        tmp_path, monkeypatch):
+    import json
+    original, _, _ = _original_artefact(tmp_path / "orig", monkeypatch)
+    _patch_start(monkeypatch)
+    out = F.run_start(_start_args(tmp_path, original), log=lambda *_: None)
+    written = json.loads((tmp_path / "s" / "start.json").read_text())
+    assert written["declaration_sha256"] == F.START_SHA256 and written["exploratory"] is True
+    assert set(written["positions"]) == {"1", "2", "3"}
+    assert out["judgement"]["verdict"] in {"supported", "falsified", "uninformative"}
+    assert written["inputs"]["fresh_requests"]["digest"] == "d"
+    for row in written["positions"].values():
+        assert set(row["harmful_refusal_rate"]) == {"none", "early", "later"}
+        assert len(row["early_drop_ci"]) == 2 and len(row["contrast_ci"]) == 2
+    assert "bad fresh" not in json.dumps(written)
+
+
+def test_the_start_test_refuses_inputs_that_are_not_the_original_runs(tmp_path, monkeypatch):
+    from senbonzakura import attribution as A
+    from senbonzakura import attribution_hf as H
+    original, _, _ = _original_artefact(tmp_path / "orig", monkeypatch)
+    monkeypatch.setattr(H, "build_partitions",
+                        lambda *_a, **_k: (_parts_unused(), {"measure": {}}))
+    with pytest.raises(A.AttributionError, match="not the inputs the original run used"):
+        F.run_start(_start_args(tmp_path, original), log=lambda *_: None)
+
+
+def test_main_dispatches_start_to_the_start_runner(monkeypatch):
+    seen = []
+    monkeypatch.setattr(F, "run_start", lambda args, **_k: seen.append(args.n_fresh))
+    monkeypatch.setattr(F, "run", lambda *_a, **_k: seen.append("followups"))
+    argv = ["m", "--track", "t", "--artefact", "a", "--out", "o"]
+    assert F.main(["start", *argv, "--n-fresh", "7"]) == 0
+    assert F.main(argv) == 0
+    assert seen == [7, "followups"]
+
+
+def test_fresh_requests_exclude_what_was_used_and_leave_other_draws_alone(monkeypatch, tmp_path):
+    from senbonzakura import attribution as A
+    from senbonzakura import attribution_hf as H
+    from senbonzakura import track
+    rows = [f"Explain how to thing{i}" for i in range(30)]
+    monkeypatch.setattr(track, "load_partitions",
+                        lambda _p: ({"fit": [], "search": [], "measure": rows}, {}))
+    groups = sorted(track.group_by_request(rows))
+    used = set(groups[:10])
+    arm, info = H.fresh_requests(tmp_path, used, n=8, seed=0)
+    assert len(arm.prompts) == 8 and not set(arm.groups) & used
+    assert info["unused_requests_available"] == 20
+    again, _ = H.fresh_requests(tmp_path, used, n=8, seed=0)
+    assert again.groups == arm.groups
+    with pytest.raises(A.AttributionError, match="fewer than the 30 asked for"):
+        H.fresh_requests(tmp_path, used, n=30, seed=0)

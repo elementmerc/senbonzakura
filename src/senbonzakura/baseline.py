@@ -201,6 +201,15 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
                 "fortnight. Record the interval the measurement reports, or declare the metric "
                 "deterministic if it genuinely does not vary between runs.")
         lo, hi = interval
+        if lo == hi:
+            # A ZERO-WIDTH INTERVAL on a metric that varies is a claim of perfect precision that no
+            # bootstrap produces. Recorded, it would switch off the too-blunt guard, which exists
+            # precisely so that a measurement cannot pass by being imprecise (see `refuse_if_too_blunt`).
+            raise BaselineError(
+                f"interval {interval} has zero width, which says the measurement has no sampling "
+                f"uncertainty at all. A metric that genuinely does not vary between runs is "
+                f"declared deterministic instead; a metric that varies needs the interval it "
+                f"actually reports.")
         # BEFORE THE INTERVAL TEST, so a NaN is named as a NaN. Without this the comparison below
         # is False for one and the writer reported it as a point outside its own interval.
         point = numeric_point(point, side="this baseline")
@@ -603,8 +612,20 @@ def refuse_if_too_blunt(baseline, now_interval):
     lo, hi = float(now_interval[0]), float(now_interval[1])
     base_lo, base_hi = float(baseline["interval"][0]), float(baseline["interval"][1])
     base_width, width = base_hi - base_lo, hi - lo
-    if base_width <= 0 or width <= base_width * MAX_WIDTH_RATIO:
+    if width <= base_width * MAX_WIDTH_RATIO:
         return
+    if base_width <= 0:
+        # A ZERO-WIDTH BASELINE HAS NO RATIO TO TAKE, and this branch existed to avoid a division by
+        # zero, which had quietly become a pass: any run wider than nothing was waved through, and
+        # an overlap with a point is a coincidence. Refused, because the run could not have seen a
+        # move against a baseline that claims none of its own uncertainty. Such a baseline is also
+        # refused at `record`, so this covers a file written before that check existed.
+        raise BaselineError(
+            f"the baseline's interval [{base_lo:.4f}, {base_hi:.4f}] has zero width, so it claims "
+            f"no sampling uncertainty, while this run's interval [{lo:.4f}, {hi:.4f}] has width "
+            f"{width:.4f}. An overlap with a point is a coincidence, not evidence that the "
+            f"property held, so the comparison is refused rather than passed. Record the baseline "
+            f"again at the precision it was actually measured at.")
     raise BaselineError(
         f"this run's interval [{lo:.4f}, {hi:.4f}] is {width / base_width:.1f} times wider than "
         f"the baseline's [{base_lo:.4f}, {base_hi:.4f}], so an overlap between them is not "

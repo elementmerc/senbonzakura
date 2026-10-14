@@ -148,3 +148,26 @@ def test_a_split_stored_as_text_is_not_read_as_a_number():
     normalised = normalise(doc)
     assert "harmful_arm_positive_fraction" not in normalised
     assert VERDICT_CONSTANT not in {f.check_id for f in check_document(doc)[0]}
+
+
+#: The headline-against-control check. Its catch on the 1.7B is post-hoc in the same way as the verdict
+#: check, because it was written after this file was read. It is pinned on the real published
+#: head-to-head artefacts as well, which are the non-post-hoc half of its silence.
+HEADLINE_CONTROL = "a-headline-that-its-own-control-does-not-reproduce"
+
+
+def test_the_headline_control_check_fires_on_both_defective_files_and_not_on_the_corrected_ones():
+    assert HEADLINE_CONTROL in _finding_ids(AS_FIRST_PUBLISHED_17B)
+    assert HEADLINE_CONTROL in _finding_ids(AS_FIRST_PUBLISHED_06B)
+    assert HEADLINE_CONTROL not in _finding_ids(CORRECTED_17B)
+    assert HEADLINE_CONTROL not in _finding_ids(CORRECTED_1011)
+
+
+def test_the_headline_control_check_is_silent_on_every_published_head_to_head_scored_artefact():
+    """Ten real published figures, none written against this check. A check that fires on them
+    would be firing on correct measurements, and that is the failure the silence half exists for.
+    """
+    scored = sorted((ROOT / "head-to-head" / "results" / "2026-09-10").glob("scored-*.json"))
+    assert len(scored) == 10, f"expected the ten published scored arms, found {len(scored)}"
+    fired = [p.name for p in scored if HEADLINE_CONTROL in _finding_ids(p)]
+    assert not fired, f"the headline-control check fired on published correct artefacts: {fired}"

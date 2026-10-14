@@ -91,6 +91,7 @@ two row sets overlap. Extend it when a real check cannot be written, not in anti
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -351,6 +352,12 @@ def _entry_matches(entry, conditions) -> bool:
     return True
 
 
+def _is_finite_number(value) -> bool:
+    """A real number a comparison can be made on: not a bool, not a string, not NaN or infinity."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
+
+
 def evaluate(rule: dict, doc: Any) -> bool:
     """Whether `rule` holds for `doc`.
 
@@ -526,6 +533,31 @@ def evaluate(rule: dict, doc: Any) -> bool:
             return False
         differing = sum(1 for k in a.keys() & b.keys() if a[k] != b[k])
         return differing > limit
+
+    if op == "differs_by_more_than":
+        # THE SEVENTH OPERATOR, and the first that compares two numbers by how far apart they are.
+        # `disagrees` asks whether two recorded values are EQUAL, which no measurement ever is, and
+        # `differs_in_more_than` counts keys. Neither can say "these should agree to a stated
+        # tolerance and do not". The compass published a headline AUC of 0.9636 beside a canonical
+        # control of 0.8132 in one file, and the gap is the whole finding: the control removes the
+        # one free choice the headline made, so a gap wider than the tolerance means the headline is
+        # a product of that choice.
+        #
+        # THE TOLERANCE IS A VALUE IN THE CHECK FILE, never a constant here, so each check states
+        # what agreement it expects and why. Missing or non-numeric on either side is FALSE: a claim
+        # about two recorded values needs both recorded. A non-finite value is also FALSE, because a
+        # NaN is not a figure that disagrees with anything; it is a different defect for a different
+        # check, and this one must not claim it.
+        paths = rule.get("paths")
+        if not isinstance(paths, list) or len(paths) != 2:
+            raise CheckError("`differs_by_more_than` needs exactly two `paths`")
+        tolerance = rule.get("value")
+        if not _is_finite_number(tolerance) or tolerance < 0:
+            raise CheckError("`differs_by_more_than` needs a non-negative numeric `value`")
+        a, b = (dotted(doc, p) for p in paths)
+        if not (_is_finite_number(a) and _is_finite_number(b)):
+            return False
+        return abs(a - b) > tolerance
 
     if op == "intersects":
         paths = rule.get("paths")

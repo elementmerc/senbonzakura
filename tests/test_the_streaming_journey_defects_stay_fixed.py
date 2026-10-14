@@ -186,8 +186,12 @@ def test_the_direction_file_records_the_count_as_well_as_the_cap():
     with tempfile.TemporaryDirectory() as tmp:
         path = pathlib.Path(tmp) / "dirs.safetensors"
         streambake.save_directions(path, arr, model="m", mode="per_layer", provenance={"seed": 1})
+        # Read the raw map, then flatten it the way any reader of this format does. The fields
+        # live inside one canonical entry since 2026-10-14, because a safetensors metadata map of
+        # more than one entry is reordered on every write and the file's bytes have to be
+        # reproducible. The fields themselves are unchanged, which is what this test is about.
         with safetensors.safe_open(str(path), framework="np") as handle:
-            meta = handle.metadata()
+            meta = streambake.flatten_metadata(handle.metadata())
 
     assert meta["K"] == "3", "the cap must still be recorded; a bake allocates against it"
     assert meta["directions_found"] == "4", meta

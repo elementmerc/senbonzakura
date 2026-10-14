@@ -513,6 +513,8 @@ def bake(out, directions, *, K=None, strength=1.0, sparsity=0.0, rounds=0, resto
 #: The one tensor name inside a directions file. Named rather than inlined because the reader and
 #: the writer both have to agree and they are not next to each other.
 DIRECTIONS_KEY = "dirs_per_position"
+# The single `__metadata__` entry every field is packed into. See `canonical_metadata`.
+METADATA_KEY = "senbonzakura"
 
 
 #: The norm below which a direction row is an unused slot rather than a direction. The same figure
@@ -577,6 +579,20 @@ def save_directions(path, dirs_per_position, *, model, mode, provenance=None):
     safetensors rather than `.npy` or a pickle: the format is already a dependency, it carries a
     metadata dictionary for the provenance, and it cannot execute anything on load. A directions
     file is a thing people will send each other, and a pickle is a thing people should not send.
+
+    FOR ANYBODY ELSE READING THIS FORMAT. The tensor is at `dirs_per_position` and is
+    `[positions, K, hidden]`. The provenance is a single `__metadata__` entry named
+    `senbonzakura`, holding JSON with its keys sorted:
+
+        import json
+        from safetensors import safe_open
+        with safe_open(path, framework="np") as f:
+            fields = json.loads(f.metadata()["senbonzakura"])
+
+    One entry rather than one per field, because a safetensors metadata map of several entries is
+    reordered on every write and this file's bytes have to be reproducible. See
+    `canonical_metadata`. Files written before 2026-10-14 carry one entry per field instead, and
+    `flatten_metadata` reads both.
     """
     import numpy as np
     import torch
@@ -615,8 +631,59 @@ def save_directions(path, dirs_per_position, *, model, mode, provenance=None):
 
     tensors = {DIRECTIONS_KEY: torch.from_numpy(np.ascontiguousarray(arr))}
     with crashsafe.atomic_write(path, binary=True) as fh:
-        fh.write(save(tensors, metadata=meta))
+        fh.write(save(tensors, metadata=canonical_metadata(meta)))
     return path
+
+
+def canonical_metadata(fields):
+    """Collapse the provenance into ONE metadata entry, so the file's bytes are reproducible.
+
+    TWO RUNS ON THE SAME INPUT HAVE TO PRODUCE THE SAME FILE, and until this existed they did
+    not. Measured on 2026-10-14: five writes of identical tensors gave four different sha256
+    values. The tensor entries were not the problem; safetensors sorts those and they were stable
+    in every run. It is the `__metadata__` map, which the format serialises from a Rust HashMap
+    whose iteration order is randomised, so `{a, b, c}` came back as `{b, a, c}` and then
+    `{c, a, b}`. Randomised per CALL, measured: two writes in one interpreter disagree as readily
+    as two in separate ones.
+
+    It only bites with two or more entries, which is why it appeared the day the direction counts
+    were added to this writer rather than when the writer was first written.
+
+    A map of ONE entry has no ordering left to randomise, so everything goes into a single key as
+    JSON with its own keys sorted. That restores byte-identical output without giving up any of
+    the provenance, and it is the whole fix: no post-processing of the header, no rewriting of the
+    file after the format has produced it.
+
+    WHY THIS MATTERS BEYOND TIDINESS. A recipe binds itself to its direction set by that file's
+    hash. While the bytes moved per process, a recipe written on Monday could not be shown to
+    describe the file it was written from, and the honest reading of a hash that changes on
+    rebuild is that it verifies nothing.
+    """
+    return {METADATA_KEY: json.dumps(dict(fields), sort_keys=True, separators=(",", ":"))}
+
+
+def flatten_metadata(meta):
+    """The provenance as a flat mapping, whichever of the two layouts the file carries.
+
+    Files written before 2026-10-14 hold one entry per field. Files written after hold a single
+    canonical entry. Readers get the flat mapping either way, so nothing downstream has to know
+    which it was handed, and a direction set a user extracted on an earlier version keeps working.
+    """
+    if METADATA_KEY not in meta:
+        return dict(meta)
+    merged = {k: v for k, v in meta.items() if k != METADATA_KEY}
+    try:
+        packed = json.loads(meta[METADATA_KEY])
+    except (TypeError, ValueError) as e:
+        raise StreamBakeError(
+            f"the provenance in this directions file is not readable JSON ({e}), so the file "
+            f"cannot say which model or mode it came from. Extract the directions again.") from e
+    if not isinstance(packed, dict):
+        raise StreamBakeError(
+            "the provenance in this directions file is not a mapping, so the file cannot say "
+            "which model or mode it came from. Extract the directions again.")
+    merged.update({str(k): v for k, v in packed.items()})
+    return merged
 
 
 def load_directions(path):
@@ -627,9 +694,14 @@ def load_directions(path):
         with safe_open(str(path), framework="np") as f:
             keys = list(f.keys())
             arr = f.get_tensor(DIRECTIONS_KEY) if DIRECTIONS_KEY in keys else None
-            meta = f.metadata() or {}
+            raw_meta = f.metadata() or {}
     except Exception as e:
         raise StreamBakeError(f"{path} could not be read as a directions file: {e}") from e
+    # Outside the try on purpose. This one already explains what is wrong with the provenance,
+    # and inside the block above it would be caught and reworded into "could not be read as a
+    # directions file", which is true of a corrupt header and misleading about a readable file
+    # whose provenance will not parse.
+    meta = flatten_metadata(raw_meta)
     if arr is None:
         raise StreamBakeError(
             f"{path} holds {keys} and not {DIRECTIONS_KEY!r}, so it is some other safetensors "

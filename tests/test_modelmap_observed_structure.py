@@ -163,7 +163,7 @@ def _role_counts(inventory, block):
 
 
 def test_every_block_tensor_in_every_real_fixture_has_a_role():
-    for inventory in (QWEN3, ABL4B, GGUF, INDEX):
+    for inventory in (QWEN3, ABL4B, GGUF, INDEX, LFM2):
         for t in inventory["tensors"]:
             name = t["name"]
             if modelmap.block_of(name, _prefix(name)) is not None:
@@ -207,3 +207,45 @@ def test_a_name_outside_every_block_has_no_block_role():
 def test_collapse_expert_index_folds_the_index_and_nothing_else():
     assert (modelmap.collapse_expert_index("mlp.experts.127.down_proj.weight")
             == "mlp.experts.{e}.down_proj.weight")
+
+
+LFM2 = _load("LFM2.5-1.2B-Instruct")
+
+
+def _blocks_holding(inventory, needle):
+    return sorted({modelmap.block_of(t["name"], "model.layers") for t in inventory["tensors"]
+                   if needle in t["name"] and modelmap.block_of(t["name"], "model.layers")
+                   is not None})
+
+
+def test_the_hybrid_checkpoint_has_attention_in_exactly_the_blocks_its_config_names():
+    """Hybrid, observed on weights: the config's layer_types and the tensor names must agree."""
+    declared = [i for i, kind in enumerate(LFM2["config"]["layer_types"]) if kind == "full_attention"]
+    assert declared == [2, 5, 8, 10, 12, 14]
+    assert _blocks_holding(LFM2, "self_attn.") == declared
+
+
+def test_the_hybrid_conv_blocks_hold_conv_and_no_attention():
+    conv_blocks = [i for i, kind in enumerate(LFM2["config"]["layer_types"]) if kind == "conv"]
+    assert len(conv_blocks) == 10
+    assert _blocks_holding(LFM2, "conv.") == conv_blocks
+    for index in conv_blocks:
+        counts = _role_counts(LFM2, index)
+        assert counts.get("conv") == 3, counts
+        assert "attention" not in counts, counts
+
+
+def test_the_hybrid_attention_blocks_hold_attention_and_no_conv():
+    for index in (2, 5, 8, 10, 12, 14):
+        counts = _role_counts(LFM2, index)
+        assert counts.get("attention") == 4, counts
+        assert counts.get("attention_norm") == 2, counts
+        assert "conv" not in counts, counts
+
+
+def test_the_canonical_map_reads_the_hybrid_config_into_its_block_kinds():
+    described = modelmap.describe(config=LFM2["config"])
+    kinds = [k.value for k in described.mechanisms.kinds.value]
+    assert kinds.count("attention") == 6
+    assert kinds.count("mixer") == 10
+    assert described.experts.is_mixture is False

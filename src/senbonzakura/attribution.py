@@ -61,6 +61,13 @@ LIMITS = (
         "direction_inert, which says nothing about whether it is localised."
     ),
     "A block that is needed is not thereby a block that is enough.",
+    (
+        "The refusal readout is built from first tokens that open only one kind of reply on the "
+        "fit partition. A token that opens both kinds is excluded even when it is the commonest "
+        "refusal opener, so the margin can lean mostly on the compliance side and cover only a "
+        "minority of replies directly. How well it predicts replies the sets do not cover is "
+        "reported in controls.readout_agreement_detail.by_coverage."
+    ),
     "Single block ablation cannot identify blocks that back one another up; redundant says so.",
     (
         "The readout is a first token proxy for the behaviour, validated against generation on a "

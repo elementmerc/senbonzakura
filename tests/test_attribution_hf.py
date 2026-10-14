@@ -142,6 +142,29 @@ def test_a_readout_that_predicts_generation_has_high_agreement(subject):
     assert value == pytest.approx(1.0)
     assert subject.agreement_detail["onset_coverage"] == pytest.approx(1.0)
     assert subject.agreement_detail["auc_within_harmful"] is None  # all harmful ones refuse
+    split = subject.agreement_detail["by_coverage"]
+    assert split["covered"]["auc"] == pytest.approx(1.0)
+    assert split["uncovered"] == {"refused": 0, "complied": 0, "auc": None}
+
+
+def test_replies_whose_opener_is_in_neither_set_are_scored_separately(subject):
+    parts = _parts()
+    subject.prepare(parts)
+    # Remove the compliance token from the set so those replies become uncovered.
+    subject.comply_ids = torch.tensor([COMPLY_B])
+    subject.readout_agreement(parts["search"]["harmful"].prompts,
+                              parts["search"]["harmless"].prompts)
+    detail = subject.agreement_detail
+    assert detail["onset_coverage"] == pytest.approx(0.5)
+    assert detail["by_coverage"]["uncovered"]["complied"] == len(parts["search"]["harmless"].prompts)
+
+
+def test_the_token_sets_record_how_they_depend_on_the_declared_floor(subject):
+    subject.prepare(_parts())
+    sets = subject.agreement_detail["token_sets"]
+    assert sets["min_token_count"] == H.MIN_TOKEN_COUNT
+    assert set(sets["sensitivity_to_min_token_count"]) == {"1", "2", "3"}
+    assert "tok1" in sets["refusal_openers_by_count"]
 
 
 def test_replies_are_generated_once_per_prompt(subject, monkeypatch):

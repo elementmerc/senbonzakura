@@ -1,0 +1,254 @@
+{
+  "cases": [
+    {
+      "id": "valid",
+      "expect": "applied",
+      "patch": [],
+      "output": "expected"
+    },
+    {
+      "id": "descriptive-extension-ignored",
+      "expect": "applied",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "extensions"
+          ],
+          "value": [
+            {
+              "id": "x_example_notes",
+              "edit_affecting": false,
+              "description": "a note the applier does not need to honour"
+            }
+          ]
+        }
+      ],
+      "output": "expected",
+      "ignored_extensions": [
+        "x_example_notes"
+      ]
+    },
+    {
+      "id": "profile-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "delete",
+          "path": [
+            "profile"
+          ]
+        }
+      ],
+      "code": "profile-missing"
+    },
+    {
+      "id": "profile-unsupported",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "profile"
+          ],
+          "value": "core/2"
+        }
+      ],
+      "code": "profile-unsupported"
+    },
+    {
+      "id": "edit-affecting-extension-refused",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "extensions"
+          ],
+          "value": [
+            {
+              "id": "x_example_sparse",
+              "edit_affecting": true
+            }
+          ]
+        }
+      ],
+      "code": "extension-unsupported"
+    },
+    {
+      "id": "extension-without-edit-flag",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "extensions"
+          ],
+          "value": [
+            {
+              "id": "x_example_notes"
+            }
+          ]
+        }
+      ],
+      "code": "extension-malformed"
+    },
+    {
+      "id": "unknown-edit-key",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "sparsity"
+          ],
+          "value": 0.3
+        }
+      ],
+      "code": "unknown-edit-key"
+    },
+    {
+      "id": "strength-and-schedule-both",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "schedule"
+          ],
+          "value": []
+        }
+      ],
+      "code": "strength-invalid"
+    },
+    {
+      "id": "negative-strength",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "strength"
+          ],
+          "value": -1.0
+        }
+      ],
+      "code": "strength-invalid"
+    },
+    {
+      "id": "projection-side-input",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "projection_side"
+          ],
+          "value": "input"
+        }
+      ],
+      "code": "convention-unsupported"
+    },
+    {
+      "id": "residual-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "delete",
+          "path": [
+            "edit",
+            "direction_residual"
+          ]
+        }
+      ],
+      "code": "residual-missing"
+    },
+    {
+      "id": "residual-mismatch",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "direction_residual",
+            "after"
+          ],
+          "value": 0.45617774388464194
+        }
+      ],
+      "code": "residual-mismatch"
+    },
+    {
+      "id": "base-hash-mismatch",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "base",
+            "weights_sha256"
+          ],
+          "value": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "code": "base-mismatch"
+    },
+    {
+      "id": "target-matches-nothing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "targets"
+          ],
+          "value": [
+            "model.layers.*.mlp.gate_proj.bias"
+          ]
+        }
+      ],
+      "code": "no-target-matches"
+    },
+    {
+      "id": "residual-not-measured-allowed",
+      "expect": "applied",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "direction_residual"
+          ],
+          "value": {
+            "status": "not_measured",
+            "why": "conformance case: the residual is recorded as unmeasured"
+          }
+        }
+      ],
+      "output": "expected"
+    },
+    {
+      "id": "directions-not-orthonormal",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "directions",
+            "sha256"
+          ],
+          "value": "a02462d122ad56c7903219d82efae537221d20888e62f65d19d26a7915b0e9a6"
+        }
+      ],
+      "code": "directions-not-orthonormal",
+      "directions": "cases/bad-basis/directions.safetensors"
+    }
+  ]
+}

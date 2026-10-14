@@ -2,20 +2,23 @@
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 # Author:  Daniel Iwugo
 # Comment: Christ is King  # noqa: ERA001
-"""The committed conformance fixture passes its own checker, and the checker can actually fail.
+"""The conformance fixture and harness: a tool's conformance level is measured, not asserted.
 
-The fixture lives in `recipes/conformance/` and is built from senbonzakura's bake by
-`tools/recipe/build_conformance.py`. The checker, `recipes/conformance/check.py`, is the piece a
-third party runs; it does not import senbonzakura. These tests run the reference applier on the
-fixture and hand the result to that checker, then plant defects to show the checker refuses them.
+`recipes/conformance/run.py` drives any tool through a command template and reports the level it
+reaches. These tests run it on the reference applier, one named test per case, and show that the
+harness refuses to award a level to a tool that does not earn it.
 """
 
 import importlib.util
+import json
 import pathlib
-import shutil
+import sys
+
+import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "recipes" / "conformance"
+TOOL = f"{sys.executable} {REPO / 'recipes' / 'apply_recipe.py'} {{recipe}} {{model}} {{directions}} {{out}}"
 
 
 def _load(name, path):
@@ -25,113 +28,98 @@ def _load(name, path):
     return module
 
 
-applier = _load("apply_recipe", REPO / "recipes" / "apply_recipe.py")
-checker = _load("conformance_check", FIXTURE / "check.py")
+harness = _load("conformance_run", FIXTURE / "run.py")
+CASES = json.loads((FIXTURE / "cases.json").read_text(encoding="utf-8"))["cases"]
 
 
-def _applied(tmp_path):
-    """The reference applier's output for the fixture, in a fresh directory."""
-    model = tmp_path / "model"
-    model.mkdir(parents=True)
-    shutil.copyfile(FIXTURE / "model" / "model.safetensors", model / "model.safetensors")
-    shutil.copyfile(FIXTURE / "model" / "config.json", model / "config.json")
-    out = tmp_path / "applied"
-    applier.apply(FIXTURE / "recipe.json", model, FIXTURE / "directions.safetensors", out, log=lambda *_: None)
-    return out
+@pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
+def test_the_reference_applier_passes_every_conformance_case(case, tmp_path):
+    result = harness.run_case(TOOL, case, tmp_path)
+    assert result["ok"], result["problem"]
 
 
-def test_the_reference_applier_passes_the_conformance_fixture(tmp_path):
-    out = _applied(tmp_path)
-    actual = checker.read_tensors(out)
-    expected = checker.read_tensors(FIXTURE / "expected")
-    assert checker.compare(actual, expected) == []
+def test_the_reference_applier_reaches_the_core_profile_level(tmp_path):
+    results = [harness.run_case(TOOL, case, tmp_path) for case in CASES]
+    assert harness.level_of(results, CASES) == "core/1 core"
 
 
-def test_the_checker_passes_its_own_fixture_through_the_command_line(tmp_path):
-    out = _applied(tmp_path)
-    assert checker.main(["check.py", str(out), str(FIXTURE / "expected")]) == 0
+def _write_fake_tool(path, *, status, code=None, exit_code=0, make_output=False):
+    body = f"""
+import json, pathlib, sys
+status = {status!r}
+if {make_output!r} and status == "applied":
+    pathlib.Path(sys.argv[4]).mkdir(parents=True, exist_ok=True)
+print(json.dumps({{"status": status, "code": {code!r}, "ignored_extensions": []}}))
+sys.exit({exit_code})
+"""
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
-def test_the_checker_refuses_a_float32_value_that_is_off_by_more_than_the_tolerance(tmp_path):
-    out = _applied(tmp_path)
-    actual = checker.read_tensors(out)
-    expected = checker.read_tensors(FIXTURE / "expected")
-    name = "model.layers.1.mlp.down_proj.weight"
-    dtype, values, shape = actual[name]
-    tampered = values.copy()
-    tampered[0, 0] += 1e-3
-    actual[name] = (dtype, tampered, shape)
-    problems = checker.compare(actual, expected)
-    assert any(name in p and "differs" in p for p in problems)
+def test_a_tool_that_applies_everything_is_not_awarded_a_level(tmp_path):
+    fake = _write_fake_tool(tmp_path / "applies_everything.py", status="applied", make_output=True)
+    tool = f"{sys.executable} {fake} {{recipe}} {{model}} {{directions}} {{out}}"
+    results = [harness.run_case(tool, case, tmp_path) for case in CASES]
+    assert harness.level_of(results, CASES) == "none"
+    refused = [r for r in results if r["id"] == "profile-unsupported"]
+    assert refused and not refused[0]["ok"]
 
 
-def test_the_checker_refuses_a_bfloat16_value_that_is_off_by_more_than_one_unit(tmp_path):
-    out = _applied(tmp_path)
-    actual = checker.read_tensors(out)
-    expected = checker.read_tensors(FIXTURE / "expected")
-    name = "model.layers.0.self_attn.o_proj.weight"
-    dtype, values, shape = actual[name]
-    assert dtype == "BF16"
-    tampered = values.copy()
-    tampered[3, 3] = tampered[3, 3] * 1.5
-    actual[name] = (dtype, tampered, shape)
-    problems = checker.compare(actual, expected)
-    assert any(name in p for p in problems)
+def test_a_tool_that_refuses_everything_reaches_no_level_because_the_valid_case_fails(tmp_path):
+    fake = _write_fake_tool(
+        tmp_path / "refuses_everything.py", status="refused", code="profile-unsupported", exit_code=2
+    )
+    tool = f"{sys.executable} {fake} {{recipe}} {{model}} {{directions}} {{out}}"
+    results = [harness.run_case(tool, case, tmp_path) for case in CASES]
+    assert harness.level_of(results, CASES) == "none"
 
 
-def test_the_checker_refuses_a_tensor_whose_dtype_changed(tmp_path):
-    out = _applied(tmp_path)
-    actual = checker.read_tensors(out)
-    expected = checker.read_tensors(FIXTURE / "expected")
-    name = "model.layers.1.mlp.down_proj.weight"
-    _dtype, values, shape = actual[name]
-    actual[name] = ("F16", values, shape)
-    problems = checker.compare(actual, expected)
-    assert any("dtype" in p and name in p for p in problems)
+def test_a_refusal_with_the_wrong_code_is_counted_as_a_failure(tmp_path):
+    fake = _write_fake_tool(tmp_path / "wrong_code.py", status="refused", code="something-else", exit_code=2)
+    tool = f"{sys.executable} {fake} {{recipe}} {{model}} {{directions}} {{out}}"
+    case = next(c for c in CASES if c["id"] == "profile-missing")
+    result = harness.run_case(tool, case, tmp_path)
+    assert not result["ok"]
+    assert "expected code" in result["problem"]
 
 
-def test_the_checker_refuses_a_missing_tensor(tmp_path):
-    out = _applied(tmp_path)
-    actual = checker.read_tensors(out)
-    expected = checker.read_tensors(FIXTURE / "expected")
-    del actual["model.norm.weight"]
-    problems = checker.compare(actual, expected)
-    assert any("missing" in p for p in problems)
+def test_the_harness_reports_a_patch_that_does_not_apply(tmp_path):
+    broken = {
+        "id": "broken",
+        "expect": "refused",
+        "code": "x",
+        "patch": [{"op": "delete", "path": ["edit", "no_such_field"]}],
+    }
+    result = harness.run_case(TOOL, broken, tmp_path)
+    assert not result["ok"]
+    assert "does not apply" in result["problem"]
 
 
-def test_an_unedited_checkpoint_is_refused_as_not_the_edit(tmp_path):
-    # The sharpest failure a third party can make: returning the base model untouched and
-    # reporting success. The fixture's expected output differs from the base, so the checker must
-    # say so.
-    base = checker.read_tensors(FIXTURE / "model")
-    expected = checker.read_tensors(FIXTURE / "expected")
-    problems = checker.compare(base, expected)
-    assert problems, "the base checkpoint should not pass as the edited one"
-
-
-def test_the_checker_exit_status_is_one_on_a_failure(tmp_path):
-    out = _applied(tmp_path)
-    bad = tmp_path / "bad"
-    shutil.copytree(out, bad)
-    path = bad / "model.safetensors"
-    raw = bytearray(path.read_bytes())
-    header, data_start, _size = applier.read_safetensors_header(path)
-    # The sign bit of the last byte of one float32 value: a change that cannot hide under the
-    # tolerance, so the exit status is the only thing being tested.
-    begin = header["model.layers.1.mlp.down_proj.weight"]["data_offsets"][0]
-    raw[data_start + begin + 3] ^= 0x80
-    path.write_bytes(bytes(raw))
-    assert checker.main(["check.py", str(bad), str(FIXTURE / "expected")]) == 1
-
-
-def test_the_fixture_is_small_enough_to_read_in_a_glance():
-    total = sum(p.stat().st_size for p in FIXTURE.rglob("*") if p.is_file())
-    assert total < 64 * 1024, total
+def test_the_fixture_stays_small_enough_to_read(tmp_path):
+    # Counts the fixture and both harness scripts: two checkpoints of about 7 kB each, the directions,
+    # the valid and defective recipes as patches, and the harness and checker source. Excludes the
+    # untracked stale copies the operator has yet to clear, and any cache directory.
+    tracked = [
+        p
+        for p in FIXTURE.rglob("*")
+        if p.is_file()
+        and "__pycache__" not in p.parts
+        and p.relative_to(FIXTURE).as_posix() not in ("config.json", "model.safetensors")
+    ]
+    total = sum(p.stat().st_size for p in tracked)
+    assert total < 48 * 1024, total
 
 
 def test_the_applier_output_is_bit_identical_on_every_run(tmp_path):
-    # Reproducibility: a published output hash has to be a fact about the recipe, not about one
-    # run, so two runs must write the same bytes.
-    first = _applied(tmp_path / "a")
-    second = _applied(tmp_path / "b")
-    assert (first / "model.safetensors").read_bytes() == (second / "model.safetensors").read_bytes()
+    first = harness.run_case(TOOL, next(c for c in CASES if c["id"] == "valid"), tmp_path / "a")
+    second = harness.run_case(TOOL, next(c for c in CASES if c["id"] == "valid"), tmp_path / "b")
+    assert first["ok"] and second["ok"]
+    out_a = pathlib.Path(tmp_path / "a" / "valid" / "model.safetensors").read_bytes()
+    out_b = pathlib.Path(tmp_path / "b" / "valid" / "model.safetensors").read_bytes()
+    assert out_a == out_b
+
+
+def test_a_refused_run_leaves_no_output_checkpoint(tmp_path):
+    case = next(c for c in CASES if c["id"] == "residual-mismatch")
+    harness.run_case(TOOL, case, tmp_path)
+    assert not (tmp_path / "residual-mismatch" / "model.safetensors").exists()

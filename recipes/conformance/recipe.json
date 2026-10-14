@@ -5,6 +5,15 @@
     "weights_sha256": "8b319e9edb7e97c4280f6706fb0d3724ad570df3d7badb9dcf690cdcd5a57a75"
   },
   "edit": {
+    "direction_residual": {
+      "after": 0.9123554877692839,
+      "before": 2.4747314973221197,
+      "definition": "max over the edited tensors, over output rows, of |R_layer W| in float64, where R_layer is the layer's non-empty direction rows and W is the tensor before the edit (before) or after it (after)",
+      "fraction_remaining": 0.3686684752493488,
+      "metric": "max_abs_projection",
+      "rounds": 0,
+      "status": "measured"
+    },
     "directions": {
       "directions_found": 3,
       "directions_found_per_position": [
@@ -14,7 +23,7 @@
       ],
       "encoding": "safetensors",
       "file": "directions.safetensors",
-      "sha256": "6d564616262fb3ba0c433079dce2973b088ba7d717a58b5c61e7be004b8729e1",
+      "sha256": "fa2e0129afcc679b280baed5661b7c8d66176443d4915d34eaccb064ecc6160b",
       "shape": [
         3,
         2,
@@ -37,11 +46,13 @@
     ],
     "tensor_naming": "huggingface"
   },
+  "extensions": [],
   "measured": {
     "status": "not_measured",
     "why": "conformance fixture: a weight check, not a behaviour measurement"
   },
   "name": "conformance-tiny",
+  "profile": "core/1",
   "reproduce": {
     "command": "senbonzakura stream-bake --model MODEL --directions DIRS --out OUT",
     "tool": "senbonzakura"

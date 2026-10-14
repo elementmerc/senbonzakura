@@ -254,3 +254,22 @@ def test_amending_adds_a_render_block_and_the_followups_without_touching_the_res
     assert json.loads(path.read_text())["amendments"][0]["by"] == "render_block v1"
     again = R.amend(path)
     assert [n["added"] for n in again["amendments"]] == ["render", "followups", "render"]
+
+
+def test_a_position_dependent_follow_up_adds_a_caveat_to_the_render_block_and_the_limits(tmp_path):
+    base = {"status": A.DIFFUSE, "tint_allowed": False, "arms": {"disjoint": _res([1.0, 1.0])},
+            "limits": ["kept"]}
+    path = tmp_path / "attribution.json"
+    path.write_text(json.dumps(base))
+    follow = tmp_path / "followups.json"
+    follow.write_text(json.dumps({"predeclaration_sha256": "abc",
+                                  "position_verdict_by_arm": {"disjoint": "tracks_position"}}))
+    doc = R.amend(path, follow)
+    assert doc["render"]["position_dependent"] is True
+    assert doc["render"]["caveats"] == [R.POSITION_CAVEAT] and R.POSITION_CAVEAT in doc["limits"]
+    assert doc["limits"][0] == "kept"
+    stable = tmp_path / "stable.json"
+    stable.write_text(json.dumps({"predeclaration_sha256": "abc",
+                                  "position_verdict_by_arm": {"disjoint": "stable"}}))
+    path.write_text(json.dumps(base))
+    assert "caveats" not in R.amend(path, stable)["render"]

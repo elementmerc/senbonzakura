@@ -92,6 +92,11 @@ def model_specific_limits(arms):
 
 
 RENDER_VERSION = 1
+POSITION_CAVEAT = (
+    "The largest block effect follows the position the direction was fitted at: refitting at "
+    "other positions moved the peak with it, to the block just before each. So the per block "
+    "profile describes where THIS direction is written, and its upper edge is a product of where "
+    "the direction was taken. It does not say where refusal ends.")
 
 
 def render_block(status, tint, arms):
@@ -163,6 +168,14 @@ def amend(artefact_path, followups_path=None, *, now=None):
         notes.append({"added": "followups", "when": when,
                       "by": "attribution_followups, predeclared before it ran",
                       "predeclaration_sha256": doc["followups"]["predeclaration_sha256"]})
+        verdicts = set(doc["followups"].get("position_verdict_by_arm", {}).values())
+        if "tracks_position" in verdicts:
+            doc["render"]["position_dependent"] = True
+            doc["render"]["caveats"] = [POSITION_CAVEAT]
+            doc["limits"] = [*doc["limits"], POSITION_CAVEAT]
+            notes.append({"added": "render.caveats and a limit", "when": when,
+                          "by": "the declared position follow-up returned tracks_position",
+                          "derived_from": "followups.position_verdict_by_arm"})
     write_json(path, doc)
     return doc
 

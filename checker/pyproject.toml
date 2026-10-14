@@ -100,3 +100,18 @@ where = ["src"]
 # shape as the 0.3.0 wheel that shipped without its corpus: it installed, imported and answered
 # `--help` perfectly while failing every user.
 senbonzakura_check = ["checks/*.json"]
+
+# Coverage for the checker distribution alone, measured with its own tests:
+#   coverage run --rcfile=checker/pyproject.toml -m pytest -o addopts="" <the tests that import senbonzakura_check>
+#   coverage report --rcfile=checker/pyproject.toml
+# The root pyproject measures only `senbonzakura`, so the checker needs its own figure. The root
+# total is deliberately not changed here: adding the checker to it would move the 95 per cent floor
+# on a figure nobody has measured with the full suite, which is the operator's decision.
+[tool.coverage.run]
+source = ["senbonzakura_check"]
+branch = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_empty = true

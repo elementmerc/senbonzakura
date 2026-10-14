@@ -97,11 +97,11 @@ def test_plants_are_deterministic_for_a_seed():
 
 def test_an_unknown_block_kind_fails_loudly():
     with pytest.raises(ValueError, match="unknown block kind"):
-        fx.ToyBlock("nonsense", 1.0, 0, 0)(torch.zeros(1, 2, fx.WIDTH))
+        fx.ToyBlock("nonsense", 1.0, 0, 0)(torch.zeros(1, 2, fx.WIDTH), torch.zeros(1, 2))
 
 
 def test_a_mixer_writes_only_into_coordinates_nothing_reads():
     block = fx.ToyBlock("mixer", 0.0, 0, 0)
     h = torch.randn(4, 2, fx.WIDTH)
-    out = block(h)[0]
+    out = block(h, h[..., fx.IN])[0]
     assert torch.equal(out[..., :fx.FIRST_FREE], h[..., :fx.FIRST_FREE])

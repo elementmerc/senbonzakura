@@ -35,3 +35,12 @@ at a commit, by somebody who did not pick them for being coverable. A miss here 
 result and is reported as one. Nothing in `held-out/` may cause a check to be written or
 widened: doing that converts the only honest measurement of the check set into a fitted one,
 which is exit-gate loophole 2 of the v0.8 rung and the reason the directory is separate.
+
+## `recovered/`, the files as they were, from git history
+
+The `ours/` files above are reconstructions built to contain a defect, and their `expect` lines name
+the check that must fire, so they cannot show that the checker finds anything nobody described to it.
+`recovered/` holds the committed blobs themselves, read out of git at the commit where a figure was
+live. The only change is a home-directory path replaced by a placeholder, and the `_provenance` block
+names the commit each file came from. `tests/test_recovered_walkbacks.py` runs them through the
+checker with no check named to it, and records what it found and what it missed.

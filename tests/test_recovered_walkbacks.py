@@ -26,6 +26,7 @@ which the cold-incident row of the v0.8 rung still owes.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -87,7 +88,7 @@ def test_a_recovered_file_says_where_it_came_from_and_what_was_changed(path):
 def test_a_recovered_file_carries_no_home_path_and_no_prompt_field(path):
     """The repository is public. A scrub that missed a path, or a prompt-shaped key, is a leak."""
     text = path.read_text(encoding="utf-8")
-    assert "/home/" not in text and "/Users/" not in text, f"{path.name} names a home directory"
+    assert not re.search(r"/(home|Users)/", text), f"{path.name} names a home directory"
     leaked = sorted(FORBIDDEN_KEYS & set(_walk_keys(_load(path))))
     assert not leaked, f"{path.name} carries prompt-shaped keys {leaked}"
 

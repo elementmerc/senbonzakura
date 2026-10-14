@@ -70,6 +70,10 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # no token generated and no card: it compares two files. That is also why it must never grow
     # a safety verdict, which the module docstring argues at length.
     "diff": ("modeldiff", "main"),
+    # Which blocks of an UNEDITED model carry refusal, measured by taking each block's share of a
+    # direction away and watching the behaviour. Its own command because it reads nothing the
+    # abliteration tool wrote: where the tool wrote is not evidence of where the behaviour lived.
+    "attribute": ("attribution_run", "main"),
     "stream-bake": ("streambake", "main"),
     "stream-extract": ("streamextract", "main"),
     "coherence": ("coherence", "main"),

@@ -518,6 +518,46 @@ def markdown_findings(path: Path, text: str) -> list[str]:
     return found
 
 
+#: HTML, which arrived unread. Added 2026-10-14, when the workbench's `index.html` and
+#: `motion.html` were refused for having no recorded reading and the merge carrying them was
+#: backed out rather than the gate widened.
+#:
+#: WHY NOT `IGNORED_KINDS`. That set already holds `.js`, `.css` and `.svg`, so the obvious move
+#: was one more entry. It was refused: an entry there clears every HTML file in the repository
+#: forever, and HTML carries a `<pre>` exactly as readily as Markdown carries a fence. This gate is
+#: the one control between a harmful prompt and a public push, and the cheapest way to put a hole
+#: in it is to widen it by kind while tired.
+#:
+#: SO IT READS SHAPE, exactly as `markdown_findings` does and for the same reason. A pasted
+#: generation arrives inside a container, because that is how anybody puts model output into a
+#: page: `<pre>`, `<blockquote>`, `<samp>` or a `<textarea>`. An application shell needs none of
+#: them. The rule costs nothing this project uses and removes the container a leak would travel in.
+#:
+#: WHAT IT CANNOT SEE, said plainly rather than implied: a generation retyped as ordinary prose in
+#: a `<p>`, or one assembled by JavaScript at runtime. `.js` is itself an `IGNORED_KINDS` entry, so
+#: a string literal in a script is unread today; that is recorded in DEFERRED.md and is a wider gap
+#: than this one.
+HTML_SUFFIXES = frozenset({".html", ".htm"})
+
+
+def html_findings(path: Path, text: str) -> list[str]:
+    """Verbatim containers in an HTML page, as sentences. Empty means clean."""
+    found = []
+    lowered = text.lower()
+    for tag, why in (
+        ("pre", "preformatted text is how model output is pasted into a page"),
+        ("blockquote", "a blockquote is a container for somebody else's words"),
+        ("samp", "a samp element is literally markup for a program's output"),
+        ("textarea", "a textarea with content in the source is a pasted body of text"),
+    ):
+        opens = lowered.count(f"<{tag}")
+        if opens:
+            found.append(
+                f"{path}: carries {opens} <{tag}> element(s). An application page needs none: "
+                f"{why}, so it is refused here rather than read")
+    return found
+
+
 def is_markdown(path: Path) -> bool:
     """A Markdown file, by the same lowercased suffix the dispatcher uses.
 
@@ -568,6 +608,7 @@ def is_documentation_markdown(path: Path) -> bool:
 JSON_KEYS, JSONL_KEYS = "json", "jsonl"
 BINARY_DATASET, NOTEBOOK, TEXT_CORPUS = "binary-dataset", "notebook", "text-corpus"
 RESULTS_NOTE, IGNORE, UNRECORDED = "results-note", "ignore", "unrecorded"
+HTML_PAGE = "html-page"
 
 
 def dispatch_kind(path: Path) -> str:
@@ -591,6 +632,8 @@ def handler_for(path: Path) -> str:
         # note would refuse every README in the repository. Markdown somewhere this project has not
         # recorded as documentation is REFUSED: see DOCUMENTATION_DIRS for what that buys.
         return IGNORE if is_documentation_markdown(path) else UNRECORDED
+    if kind in HTML_SUFFIXES:
+        return HTML_PAGE
     if kind in SUFFIXES:
         return JSONL_KEYS if kind == ".jsonl" else JSON_KEYS
     if kind in BINARY_DATASET_SUFFIXES:
@@ -729,6 +772,11 @@ def scan_bytes(path: Path, raw: bytes, *, kind: str | None = None) -> list[str]:
     if kind == RESULTS_NOTE:
         try:
             return markdown_findings(path, raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            return [f"{path}: is not readable as UTF-8 text, so it cannot be cleared"]
+    if kind == HTML_PAGE:
+        try:
+            return html_findings(path, raw.decode("utf-8"))
         except UnicodeDecodeError:
             return [f"{path}: is not readable as UTF-8 text, so it cannot be cleared"]
     findings: list[str] = []

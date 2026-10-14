@@ -546,3 +546,69 @@ class TestResultsMarkdown:
             "guarantee it does not give")
         p = self._md(tmp_path, "# Run\n\nThe model said it could not help with that request.\n")
         assert guard.scan_file(p) == []
+
+
+class TestHtmlIsReadRatherThanCleared:
+    """HTML arrived unread, and the fix had to be a reading rather than an exemption.
+
+    The workbench's `index.html` and `motion.html` were refused on 2026-10-14 for having no
+    recorded reading, which was correct: this gate is deny-first. The obvious repair was one more
+    entry in `IGNORED_KINDS`, which already holds `.js`, `.css` and `.svg`. That was refused,
+    because an entry there clears every HTML file in the repository forever and HTML carries a
+    `<pre>` exactly as readily as Markdown carries a fence.
+    """
+
+    def _html(self, tmp_path, body, name="index.html"):
+        p = tmp_path / name
+        p.write_text(body, encoding="utf-8")
+        return p
+
+    def test_an_application_shell_is_clean(self, tmp_path):
+        """It has to pass the pages we actually serve, or it gets switched off."""
+        p = self._html(tmp_path, '<!doctype html><html><head><title>t</title></head>'
+                                 '<body><div id="app"></div><script src="app.js"></script>'
+                                 "</body></html>")
+        assert guard.scan_file(p) == []
+
+    @pytest.mark.parametrize("tag,body", [
+        ("pre", "<body><pre>Sure, here is how to</pre></body>"),
+        ("blockquote", "<body><blockquote>I cannot help with that</blockquote></body>"),
+        ("samp", "<body><samp>what the model said</samp></body>"),
+        ("textarea", '<body><textarea rows="4">a pasted body of text</textarea></body>'),
+    ])
+    def test_every_container_a_generation_arrives_in_is_refused(self, tmp_path, tag, body):
+        p = self._html(tmp_path, body)
+        found = guard.scan_file(p)
+        assert found, f"a <{tag}> in a page was cleared"
+        assert tag in found[0]
+
+    def test_the_tag_match_is_case_insensitive(self, tmp_path):
+        """`<PRE>` is the same element, and a check that reads one spelling reports clean on the
+        other. This project has shipped that exact defect: a guard covering one spelling of a
+        defect reports clean on the rest, and reporting clean is worse than not running.
+        """
+        p = self._html(tmp_path, "<body><PRE>upper case still hides a generation</PRE></body>")
+        assert guard.scan_file(p), "an uppercase <PRE> was cleared"
+
+    @pytest.mark.parametrize("name", ["page.html", "page.htm", "PAGE.HTML"])
+    def test_every_spelling_of_the_suffix_reaches_the_reading(self, tmp_path, name):
+        """`.htm` and an uppercase suffix are the same kind. Dispatch lowercases; this pins it."""
+        assert guard.handler_for(Path(name)) == guard.HTML_PAGE
+
+    def test_html_is_not_in_the_ignored_kinds(self):
+        """The repair this test exists to prevent. If someone later adds `.html` to IGNORED_KINDS
+        the reading above becomes unreachable and every HTML file is cleared unread, which is the
+        hole this gate exists to not have.
+        """
+        assert ".html" not in guard.IGNORED_KINDS
+        assert ".htm" not in guard.IGNORED_KINDS
+
+    def test_it_says_what_it_cannot_see(self):
+        """A generation retyped into a `<p>`, or assembled by a script at runtime, passes. The
+        source has to keep saying so: a guard whose reach is assumed is worse than one whose
+        reach is stated.
+        """
+        source = (Path(__file__).resolve().parent.parent / "tools" / "ci"
+                  / "check_prompt_artefacts.py").read_text(encoding="utf-8")
+        assert "assembled by JavaScript at runtime" in source, (
+            "the HTML rule no longer states what it cannot see")

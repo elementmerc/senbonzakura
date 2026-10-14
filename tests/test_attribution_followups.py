@@ -175,3 +175,54 @@ def test_fitting_at_a_chosen_position_is_refused_when_the_position_does_not_exis
         A.fit_direction_at(x, x * 0, x, x * 0, 9)
     with pytest.raises(A.AttributionError, match="identical mean residuals"):
         A.fit_direction_at(x, x, x, x, 1)
+
+
+# --------------------------------------------------------------------------- where it starts
+
+def _rows(early_hi=0.05, contrast_lo=0.5, **override):
+    base = {p: {"early_drop_ci": [-0.02, early_hi], "contrast_ci": [contrast_lo, 0.9]}
+            for p in F.START_POSITIONS}
+    base.update(override)
+    return base
+
+
+def test_the_start_declaration_states_where_the_idea_came_from_and_is_checksummed():
+    import hashlib
+    text = F.START_DECLARATION
+    assert hashlib.sha256(text.encode()).hexdigest() == F.START_SHA256
+    assert "READING" in text and "NOT declared before those tables existed" in text
+    assert "FALSIFIED if criterion 1 fails at ANY" in text and "UNINFORMATIVE" in text
+    assert F.START_POSITIONS == (15, 18, 21, 24) and tuple(range(10)) == F.EARLY
+    assert (F.EARLY_DROP_CEILING, F.CONTRAST_FLOOR) == (0.15, 0.15)
+
+
+def test_an_early_set_that_does_nothing_with_a_visible_contrast_everywhere_is_supported():
+    out = F.judge_start(_rows())
+    assert out["verdict"] == "supported" and "exploratory" in out["framing"]
+
+
+def test_one_position_where_the_early_blocks_matter_falsifies_the_lower_edge():
+    out = F.judge_start(_rows(**{15: {"early_drop_ci": [0.1, 0.3], "contrast_ci": [0.5, 0.9]}}))
+    assert out["verdict"] == "falsified" and out["positions_where_early_blocks_matter"] == [15]
+
+
+def test_a_test_that_could_not_see_the_later_set_matter_is_uninformative_not_supported():
+    out = F.judge_start(_rows(**{24: {"early_drop_ci": [0.0, 0.02], "contrast_ci": [0.05, 0.4]}}))
+    assert out["verdict"] == "uninformative"
+    assert out["positions_where_the_test_could_not_see_a_difference"] == [24]
+
+
+def test_falsified_takes_precedence_over_uninformative():
+    rows = _rows(**{15: {"early_drop_ci": [0.1, 0.3], "contrast_ci": [0.0, 0.1]}})
+    assert F.judge_start(rows)["verdict"] == "falsified"
+
+
+def test_the_ceiling_is_inclusive_and_the_floor_is_exclusive():
+    assert F.judge_start(_rows(early_hi=0.15))["verdict"] == "supported"
+    assert F.judge_start(_rows(early_hi=0.1500001))["verdict"] == "falsified"
+    assert F.judge_start(_rows(contrast_lo=0.15))["verdict"] == "uninformative"
+
+
+def test_a_missing_position_cannot_be_judged_for_the_start_test():
+    with pytest.raises(ValueError, match="no result"):
+        F.judge_start({15: {"early_drop_ci": [0, 0], "contrast_ci": [1, 1]}})

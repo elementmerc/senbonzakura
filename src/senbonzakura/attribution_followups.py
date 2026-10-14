@@ -125,6 +125,73 @@ def judge_band(check):
                         "requests; the negative result is kept")}
 
 
+# --------------------------------------------------------------------------- where it starts
+
+START_POSITIONS = (15, 18, 21, 24)
+#: Blocks 0 to 9 inclusive, the "early" set.
+EARLY = tuple(range(10))
+#: The first block of the comparison set, which runs to the last block of the model.
+LATE_FROM = 10
+#: Declared with the test. The largest share of the position follow-up's total effect that blocks 0
+#: to 9 held, in the tables, was about 14% (at position 15), and 0.15 is that rounded up in
+#: percentage points of the harmful refusal rate. A convention chosen AFTER seeing the tables.
+EARLY_DROP_CEILING = 0.15
+#: How much more the comparison set must lower refusals than the early set, for the test to be
+#: able to see a difference at all.
+CONTRAST_FLOOR = 0.15
+
+START_DECLARATION = f"""\
+FOLLOW-UP 3, WHERE IT STARTS. Declared before it was run, and before anything further was looked at.
+
+PROVENANCE OF THE IDEA, stated so nobody downstream presents it as predeclared. It came from READING
+the four per block tables of follow-up 2 (computed on the measure partition), in which blocks 0 to 9
+sit near zero at every fitting position. It was NOT declared before those tables existed. The two
+numbers below were chosen after seeing them. The test itself runs on 150 requests that no earlier
+step used.
+
+Claim: the direction is not written by blocks 0 to 9, whichever of the positions
+{list(START_POSITIONS)} it is fitted at.
+For each of those positions the direction is refitted on the fit partition, and while the model
+writes its replies it is removed from (a) blocks 0 to 9 and (b) blocks {LATE_FROM} to the last block.
+Compared with no ablation, on the fresh requests, requests resampled whole:
+  1. the early set lowers the harmful refusal rate by at most {EARLY_DROP_CEILING:.2f}: the upper end
+     of the 95% interval on its drop is no greater than {EARLY_DROP_CEILING:.2f};
+  2. the later set lowers it by more than the early set, with the lower end of the interval on the
+     difference above {CONTRAST_FLOOR:.2f}. This is a positive control: if the later set cannot be
+     seen to matter more, the test could not have shown a difference and says nothing.
+FALSIFIED if criterion 1 fails at ANY of the four positions: the early blocks do carry the direction
+at that position, and there is no stable lower edge.
+UNINFORMATIVE if criterion 1 holds everywhere but criterion 2 fails at any position.
+SUPPORTED only if both hold at all four. A supported result is "survived one held out test" and
+remains exploratory. The upper edge is not addressed by this test at all.
+"""
+START_SHA256 = hashlib.sha256(START_DECLARATION.encode("utf-8")).hexdigest()
+
+
+def judge_start(rows):
+    """The verdict from the four positions' results, by the declared criteria and nothing else.
+
+    `rows` maps each position to `{"early_drop_ci": [lo, hi], "contrast_ci": [lo, hi]}`.
+    """
+    missing = [p for p in START_POSITIONS if p not in rows]
+    if missing:
+        raise ValueError(f"positions {missing} have no result, so the declared test cannot be "
+                         f"judged")
+    broken = [p for p in START_POSITIONS if rows[p]["early_drop_ci"][1] > EARLY_DROP_CEILING]
+    blind = [p for p in START_POSITIONS if rows[p]["contrast_ci"][0] <= CONTRAST_FLOOR]
+    if broken:
+        verdict = "falsified"
+    elif blind:
+        verdict = "uninformative"
+    else:
+        verdict = "supported"
+    return {"verdict": verdict, "positions_where_early_blocks_matter": broken,
+            "positions_where_the_test_could_not_see_a_difference": blind,
+            "framing": ("exploratory: the idea came from reading tables, and a supported result is "
+                        "one held out test" if verdict == "supported" else
+                        "kept as it came out; see the positions listed")}
+
+
 # ------------------------------------------------------------------------------ the follow-up run
 
 SCHEMA = "senbonzakura-attribution-followups/1"

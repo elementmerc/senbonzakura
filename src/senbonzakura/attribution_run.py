@@ -151,6 +151,7 @@ def run(args, *, log=print):
     _project(model, tok, parts, nb, conv, args, log)
 
     arms = {}
+    todo = []
     for arm_name in (H.ARM_DISJOINT, H.ARM_PURITY):
         cache = out / f"arm-{arm_name}.json"
         if cache.exists() and not args.force:
@@ -159,7 +160,13 @@ def run(args, *, log=print):
                 log(f"[{arm_name}] reusing {cache} (same inputs)")
                 arms[arm_name] = saved["result"]
                 continue
-        subject = H.HFSubject(model, tok, batch=args.batch, arm=arm_name, log=log)
+        todo.append(arm_name)
+    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log) for n in todo}
+    with _stage(log, "readout tokens"):
+        for subject in subjects.values():
+            subject.prepare(parts)
+    shared = H.share_readouts(subjects.values())
+    for arm_name, subject in subjects.items():
         with _stage(log, f"arm {arm_name}"):
             result = A.attribute(
                 subject, parts, seed=args.seed, conv=conv, log=log,
@@ -167,7 +174,9 @@ def run(args, *, log=print):
                                                                     conv=conv))
         result["readout_arm"] = {"name": arm_name, **H.ARM_DECLARATIONS[arm_name]}
         arms[arm_name] = result
-        _write(cache, {"fingerprint": fingerprint, "result": result})
+        _write(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
+    if shared is not None:
+        log(f"shared forward passes: {shared.misses} computed, {shared.hits} reused by the other arm")
 
     with _stage(log, "selftest"):
         selftest = A.selftest()
@@ -219,16 +228,20 @@ def _project(model, tok, parts, nb, conv, args, log):
     direction[0] = 1.0
     probe.refusal_ids = torch.tensor([0], device=model.device)
     probe.comply_ids = torch.tensor([1], device=model.device)
+    # The first pass pays for CUDA start up, kernel selection and tokenising, none of which recur,
+    # and timing it projected 1,061 minutes for a run that is an order of magnitude cheaper. So one
+    # untimed pass warms everything and the timed pass is the steady state.
+    probe.readout(sample, direction, range(nb))
     t = time.monotonic()
     probe.readout(sample, direction, range(nb))
     per_prompt = (time.monotonic() - t) / len(sample)
     prompts = len(parts["measure"]["harmful"].prompts) + len(parts["measure"]["harmless"].prompts)
     passes = (2 + 3 * nb) + (conv.shuffled_label_replicates + conv.random_direction_replicates) \
         * (nb + 2)
-    minutes = 2 * passes * prompts * per_prompt / 60.0
+    minutes = passes * prompts * per_prompt / 60.0
     log(f"projection: {per_prompt * 1000:.1f} ms per prompt with every block hooked; "
-        f"{passes} passes x {prompts} prompts x 2 arms is about {minutes:.0f} minutes of readout "
-        f"work (a projection from {len(sample)} prompts, generation not included)")
+        f"{passes} passes x {prompts} prompts, shared by both arms, is about {minutes:.0f} minutes "
+        f"of readout work (a projection from {len(sample)} prompts, generation not included)")
     if minutes > args.budget_minutes:
         raise SystemExit(
             f"projected {minutes:.0f} minutes of readout work is over the {args.budget_minutes:.0f} "

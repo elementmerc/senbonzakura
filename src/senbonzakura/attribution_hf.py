@@ -91,6 +91,46 @@ def token_sets(refused, complied, arm):
     return ref, com, dropped
 
 
+class SharedReadouts:
+    """Last position logits at a set of token ids, kept per condition and shared between arms.
+
+    The two readout arms differ only in which tokens they read, and the forward pass that produces
+    those logits is identical, so computing it once per condition halves the run without changing a
+    single number. The key is the exact prompts, the exact direction and the exact blocks, so an
+    arm asking something the other did not simply misses and computes it.
+    """
+
+    def __init__(self, ids):
+        self.ids = torch.as_tensor(sorted({int(t) for t in ids}))
+        self._store = {}
+        self.hits = self.misses = 0
+
+    def fetch(self, prompts, direction, blocks, compute):
+        # Order matters (the readouts come back in prompt order), and a hash that can collide would
+        # hand one question another's answer, so the key is a cryptographic digest of the exact
+        # prompts in order.
+        key = (hashlib.sha256("\x00".join(prompts).encode("utf-8")).hexdigest(),
+               None if direction is None else hashlib.sha256(
+                   direction.detach().float().cpu().numpy().tobytes()).hexdigest(),
+               tuple(blocks))
+        if key in self._store:
+            self.hits += 1
+        else:
+            self.misses += 1
+            self._store[key] = compute()
+        return self._store[key]
+
+
+def share_readouts(subjects):
+    """Let subjects that have all been prepared share their forward passes. Returns the cache."""
+    ready = [s for s in subjects if s.refusal_ids is not None]
+    shared = SharedReadouts([t for s in ready for t in
+                             (*s.refusal_ids.tolist(), *s.comply_ids.tolist())]) if ready else None
+    for s in ready:
+        s.use_shared(shared)
+    return shared
+
+
 def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None):
     """The model, its tokenizer and the identity a result must carry."""
     import transformers
@@ -161,6 +201,7 @@ class HFSubject:
         self.model, self.tok, self.batch, self.log, self.arm = model, tok, batch, log, arm
         self._standing = []
         self._encoded = {}
+        self._shared = None
         self.layers = modelmap.stack_or_raise(model)
         self.n_blocks = len(self.layers)
         self.refusal_ids = self.comply_ids = None
@@ -306,13 +347,33 @@ class HFSubject:
     def readout(self, prompts, direction=None, blocks=()):
         if self.refusal_ids is None:
             raise A.AttributionError(self.readout_why_not or "prepare() has not been called")
+        prompts = list(prompts)
+        union, ref_pos, com_pos = self._union()
+        got = (self._shared.fetch(prompts, direction, blocks,
+                                  lambda: self._logits_at(prompts, direction, blocks, union))
+               if self._shared is not None else self._logits_at(prompts, direction, blocks, union))
+        return (torch.logsumexp(got[:, ref_pos], 1)
+                - torch.logsumexp(got[:, com_pos], 1)).double()
+
+    def use_shared(self, shared):
+        self._shared = shared
+
+    def _union(self):
+        """The token ids to read, and where each arm's tokens sit among them."""
+        ids = (self._shared.ids if self._shared is not None
+               else torch.cat([self.refusal_ids, self.comply_ids]).cpu())
+        where = {int(t): i for i, t in enumerate(ids.tolist())}
+        return (ids, torch.tensor([where[int(t)] for t in self.refusal_ids.tolist()]),
+                torch.tensor([where[int(t)] for t in self.comply_ids.tolist()]))
+
+    @torch.no_grad()
+    def _logits_at(self, prompts, direction, blocks, ids):
         out = []
         for chunk in self._batches(prompts):
             with self._under_standing_edit(), A.ablating(self.layers, direction, blocks):
                 logits = last_token_logits(self.model, self._encode(chunk), log=self.log)
-            out.append(torch.logsumexp(logits[:, self.refusal_ids], 1)
-                       - torch.logsumexp(logits[:, self.comply_ids], 1))
-        return torch.cat(out).double().cpu()
+            out.append(logits[:, ids.to(logits.device)].cpu())
+        return torch.cat(out)
 
     def _opener_counts(self, ids, top=12):
         """Decoded opener tokens with their counts, most common first. Single tokens only."""

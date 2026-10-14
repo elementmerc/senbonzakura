@@ -438,3 +438,46 @@ def test_the_length_direction_control_runs_on_text_and_is_reported_beside_the_to
     style = result["controls"]["style_direction"]
     assert style["ran"] is True and style["flag_ratio"] == A.STYLE_FLAG_RATIO
     assert set(style) >= {"total", "max_single", "flagged"}
+
+
+# ------------------------------------------------------------- forward passes shared by the arms
+
+def _two_arms():
+    out = {}
+    for arm in (H.ARM_DISJOINT, H.ARM_PURITY):
+        sub = H.HFSubject(StubModel(), StubTok(), batch=8, arm=arm, log=lambda *_: None)
+        sub.prepare(_parts())
+        out[arm] = sub
+    return out
+
+
+def test_sharing_forward_passes_changes_no_number_and_the_second_arm_reuses_them():
+    prompts = _parts()["measure"]["harmful"].prompts
+    axis = _axis0()
+    alone = {a: s.readout(prompts, axis, [0, 1]) for a, s in _two_arms().items()}
+    arms = _two_arms()
+    shared = H.share_readouts(arms.values())
+    together = {a: s.readout(prompts, axis, [0, 1]) for a, s in arms.items()}
+    for arm in arms:
+        assert torch.equal(alone[arm], together[arm])
+    assert (shared.misses, shared.hits) == (1, 1)
+
+
+def test_an_arm_asking_a_different_question_misses_instead_of_getting_a_wrong_answer():
+    arms = _two_arms()
+    shared = H.share_readouts(arms.values())
+    prompts = _parts()["measure"]["harmful"].prompts
+    arms[H.ARM_DISJOINT].readout(prompts, _axis0(), [0])
+    arms[H.ARM_PURITY].readout(prompts, _axis0(), [1])
+    arms[H.ARM_PURITY].readout(prompts[:5], _axis0(), [0])
+    arms[H.ARM_PURITY].readout(prompts, None, ())
+    assert (shared.misses, shared.hits) == (4, 0)
+
+
+def test_a_subject_with_no_readout_is_left_out_of_the_shared_cache():
+    arms = _two_arms()
+    arms[H.ARM_PURITY].refusal_ids = None
+    shared = H.share_readouts(arms.values())
+    assert shared.ids.tolist() == sorted(set(arms[H.ARM_DISJOINT].refusal_ids.tolist()
+                                             + arms[H.ARM_DISJOINT].comply_ids.tolist()))
+    assert H.share_readouts([arms[H.ARM_PURITY]]) is None

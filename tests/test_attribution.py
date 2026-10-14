@@ -127,8 +127,23 @@ def test_dropping_the_redundancy_check_would_misreport_the_redundant_plant(runs)
 
 
 def test_dropping_the_readout_gate_would_misreport_the_bad_readout_plant(runs):
-    ev = _evidence(runs, "bad_readout")
+    # The bad readout stops before any evidence exists (it is checked before anything is ranked),
+    # so its evidence is the localised plant's with the agreement the bad readout reports.
+    ev = {**_evidence(runs, "one_block"), "agreement": 0.4}
+    assert A.classify(ev, A.DEFAULT, fx.N_BLOCKS)[0] == fx.EXPECTED["bad_readout"]
     assert _status_with(ev, agreement=1.0) != fx.EXPECTED["bad_readout"]
+
+
+def test_an_unvalidated_readout_stops_the_run_before_any_block_is_ranked(runs):
+    result = runs["bad_readout"][2]
+    assert result["status"] == A.READOUT_INVALID and "blocks" not in result
+    assert result["controls"]["readout_agreement"] == pytest.approx(0.4)
+
+
+def test_a_readout_that_could_not_be_validated_at_all_is_readout_invalid(runs):
+    ev = {**_evidence(runs, "one_block"), "agreement": None}
+    status, reason = A.classify(ev, A.DEFAULT, fx.N_BLOCKS)
+    assert status == A.READOUT_INVALID and "could not be validated" in reason
 
 
 def test_dropping_the_absence_gate_would_misreport_the_absent_plant(runs):
@@ -295,7 +310,7 @@ def test_a_block_returning_something_unknown_fails_loudly():
 
 def test_a_block_returning_an_empty_tuple_fails_loudly():
     with pytest.raises(A.AttributionError):
-        A._unwrap(())
+        A.unwrap(())
 
 
 # ---------------------------------------------------------------------------- the statistics

@@ -70,6 +70,17 @@ LIMITS = (
         "One model, one precision, one prompt format. Artefacts that differ in any of these are not "
         "comparable."
     ),
+    (
+        "The planted test models switch off block to block dependence on purpose, and real models "
+        "have it. This instrument measures the TOTAL effect of removing the direction from a "
+        "block's write, indirect routes through later blocks included, so a block can score high "
+        "because later blocks read what it wrote, not because it holds the behaviour itself."
+    ),
+    (
+        "direction_inert depends on the null being sound. It is returned when the total effect "
+        "does not clear what shuffled label and random directions do, so a null that is too "
+        "strong or too weak moves that verdict, and it is the status hardest to verify by eye."
+    ),
     "No measurement above 3B parameters stands for this project.",
 )
 
@@ -102,7 +113,7 @@ DEFAULT = Conventions()
 
 # ----------------------------------------------------------------------------- the intervention
 
-def _unwrap(out):
+def unwrap(out):
     if isinstance(out, tuple):
         out = out[0] if out else None
     if not isinstance(out, torch.Tensor):
@@ -144,7 +155,7 @@ def ablating(layers, direction, blocks):
                     raise AttributionError(
                         "could not find the hidden states a decoder block was given, so its write "
                         "cannot be separated from its input.")
-                after = _unwrap(out)
+                after = unwrap(out)
                 write = (after - before).float()
                 kept = after.float() - (write @ d.to(write.device)).unsqueeze(-1) * d.to(write.device)
                 kept = kept.to(after.dtype)
@@ -340,7 +351,22 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
     names = list(conds)
     log(f"attribution: {len(names)} conditions over {n_h} + {n_l} measurement prompts")
 
-    # -- the direction, fitted on one partition and positioned on another
+    if hasattr(subject, "prepare"):
+        subject.prepare(parts)
+
+    # The readout is validated BEFORE anything is ranked with it, and a readout that fails is the
+    # whole answer: with no valid readout there is no way to tell an absent behaviour from one the
+    # proxy cannot see, so neither is claimed.
+    agreement = subject.readout_agreement(parts["search"]["harmful"].prompts,
+                                          parts["search"]["harmless"].prompts)
+    agreement = None if agreement is None or not math.isfinite(agreement) else float(agreement)
+    problem = _readout_problem(agreement, conv)
+    if problem:
+        out = _finish(READOUT_INVALID, problem, conv, nb, seed)
+        out["controls"] = {"readout_agreement": agreement,
+                           "readout_agreement_detail": getattr(subject, "agreement_detail", None)}
+        return out
+
     res = {k: {s: subject.residuals(list(parts[k][s].prompts)) for s in ("harmful", "harmless")}
            for k in ("fit", "search")}
     direction, position, position_aucs = fit_direction(
@@ -352,13 +378,9 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
     point, boot = _bootstrap_effects(drop_h, drop_l, gh, gl, conv.resamples, gen)
     lo, hi = _interval(boot, conv.alpha)
 
-    # -- gate 1: is there a behaviour at all
+    # -- is there a behaviour at all
     base_auc = auc(base_h, base_l)
     auc_lo = _auc_interval(base_h, base_l, gh, gl, conv, gen)[0]
-    # -- gate 2: does the cheap readout predict the real behaviour
-    agreement = float(subject.readout_agreement(parts["search"]["harmful"].prompts,
-                                                parts["search"]["harmless"].prompts))
-
     idx = {n: i for i, n in enumerate(names)}
     singles = [idx[f"single:{k}"] for k in range(nb)]
     e_single, e_lo = point[singles], lo[singles]
@@ -410,6 +432,7 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
         "controls": {
             "baseline": {"auc": base_auc, "auc_lower": auc_lo},
             "readout_agreement": agreement,
+            "readout_agreement_detail": getattr(subject, "agreement_detail", None),
             "shuffled_label": nulls["shuffled"],
             "random_direction": nulls["random"],
             "family_wise_threshold": tau,
@@ -439,19 +462,29 @@ def _auc_interval(base_h, base_l, gh, gl, conv, gen):
     return float(torch.quantile(v, conv.alpha / 2)), float(torch.quantile(v, 1 - conv.alpha / 2))
 
 
+def _readout_problem(agreement, conv):
+    """Why the readout cannot stand in for the behaviour, or None when it can."""
+    if agreement is None:
+        return ("the readout could not be validated against generated behaviour (see "
+                "controls.readout_agreement_detail), so it cannot stand in for the behaviour.")
+    if agreement < conv.readout_agreement_floor:
+        return (f"the readout agrees with generated behaviour at {agreement:.3f}, below "
+                f"{conv.readout_agreement_floor}, so it cannot stand in for the behaviour.")
+    return None
+
+
 def classify(ev, conv, n_blocks):
     """The status and the reason, from the evidence alone. Pure, so a broken copy can be compared."""
     if ev["n_smaller_arm"] < conv.min_prompts:
         return UNRESOLVED, (f"{ev['n_smaller_arm']} measurement prompts is below the floor of "
                             f"{conv.min_prompts}.")
+    problem = _readout_problem(ev["agreement"], conv)
+    if problem:
+        return READOUT_INVALID, problem
     if ev["baseline_auc_lo"] <= conv.absent_auc_floor:
         return ABSENT, (f"the baseline readout does not separate harmful from harmless prompts "
                         f"(AUC interval starts at {ev['baseline_auc_lo']:.3f}, floor "
                         f"{conv.absent_auc_floor}), so there is no behaviour to attribute.")
-    if ev["agreement"] < conv.readout_agreement_floor:
-        return READOUT_INVALID, (f"the readout agrees with generated behaviour at "
-                                 f"{ev['agreement']:.3f}, below {conv.readout_agreement_floor}, "
-                                 f"so it cannot stand in for the behaviour.")
     if ev["total_lo"] <= 0.0 or ev["total"] <= ev["t_null"]:
         return DIRECTION_INERT, (
             f"removing the direction from every block moved the readout by {ev['total']:.3f}, "

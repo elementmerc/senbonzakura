@@ -62,11 +62,11 @@ LIMITS = (
     ),
     "A block that is needed is not thereby a block that is enough.",
     (
-        "The refusal readout is built from first tokens that open only one kind of reply on the "
-        "fit partition. A token that opens both kinds is excluded even when it is the commonest "
-        "refusal opener, so the margin can lean mostly on the compliance side and cover only a "
-        "minority of replies directly. How well it predicts replies the sets do not cover is "
-        "reported in controls.readout_agreement_detail.by_coverage."
+        "A first token readout can end up measuring whether the model opens with a compliance "
+        "opener. It then predicts refusal well because refusal is mostly not complying, which is "
+        "detecting the absence of compliance and a weaker claim than detecting refusal. Whether "
+        "that happened on this run is in controls.readout_agreement_detail (the share of fit "
+        "refusals the refusal set covers, and the openers that fall in neither set)."
     ),
     "Single block ablation cannot identify blocks that back one another up; redundant says so.",
     (
@@ -232,7 +232,7 @@ def _resample_weights(groups, draws, gen):
     return counts[:, index]
 
 
-def _bootstrap_effects(drop_h, drop_l, groups_h, groups_l, draws, gen):
+def bootstrap_effects(drop_h, drop_l, groups_h, groups_l, draws, gen):
     """Point effects `[C]` and resampled effects `[draws, C]` of mean(drop_h) - mean(drop_l)."""
     point = drop_h.mean(1) - drop_l.mean(1)
     wh = _resample_weights(groups_h, draws, gen)
@@ -242,7 +242,7 @@ def _bootstrap_effects(drop_h, drop_l, groups_h, groups_l, draws, gen):
     return point, boot
 
 
-def _interval(values, alpha):
+def interval(values, alpha):
     lo, hi = torch.quantile(values, torch.tensor([alpha / 2, 1 - alpha / 2], dtype=values.dtype),
                             dim=0)
     return lo, hi
@@ -382,8 +382,8 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
 
     drop_h, drop_l, base_h, base_l = _effects_for(subject, measure, direction, conds)
     gh, gl = measure["harmful"].groups, measure["harmless"].groups
-    point, boot = _bootstrap_effects(drop_h, drop_l, gh, gl, conv.resamples, gen)
-    lo, hi = _interval(boot, conv.alpha)
+    point, boot = bootstrap_effects(drop_h, drop_l, gh, gl, conv.resamples, gen)
+    lo, hi = interval(boot, conv.alpha)
 
     # -- is there a behaviour at all
     base_auc = auc(base_h, base_l)
@@ -393,7 +393,7 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
     e_single, e_lo = point[singles], lo[singles]
     total, total_lo, total_hi = point[idx["all"]], lo[idx["all"]], hi[idx["all"]]
 
-    nulls = _null_replicates(subject, parts, res, measure, conds, direction, seed, conv)
+    nulls = _null_replicates(subject, parts, res, measure, direction, seed, conv)
     tau = float(torch.quantile(nulls["max_block"], conv.null_quantile))
     t_null = float(torch.quantile(nulls["abs_total"], conv.null_quantile))
 
@@ -442,17 +442,72 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
             "readout_agreement_detail": getattr(subject, "agreement_detail", None),
             "shuffled_label": nulls["shuffled"],
             "random_direction": nulls["random"],
+            "style_direction": style_direction(subject, parts, res, position, float(total), nb),
             "family_wise_threshold": tau,
             "total_threshold": t_null,
         },
     })
     if status == LOCALISED and predictive is not None:
-        out["predictive_check"] = predictive(subject, parts, exceeding, direction)
+        ranking = sorted(range(nb), key=lambda k: -float(e_single[k]))
+        out["predictive_check"] = predictive(subject, parts, exceeding, direction, ranking)
     elif status == LOCALISED:
         out["predictive_check"] = {"ran": False,
                                    "why": "no predictive check was supplied for this run"}
     out["tint_allowed"] = tint_allowed(out)
     return out
+
+
+#: Declared with the instrument and reported only, never used to change a status: a direction that
+#: separates long prompts from short ones, removed from every block, is flagged when it does at
+#: least this share of what the behaviour direction does.
+STYLE_FLAG_RATIO = 0.5
+
+
+def style_direction(subject, parts, res, position, total, nb):
+    """What removing a prompt LENGTH direction does to the same readout, beside the real total.
+
+    Harmful prompts tend to be longer or shorter than harmless ones, so a direction fitted to the
+    class contrast can be partly a direction for length. This fits one for length alone (long
+    against short within each class, so the classes are balanced) and removes it from every block.
+    If that moves the readout about as much as the behaviour direction does, the behaviour
+    direction may be reading style. Reported beside the result; it changes no status.
+    """
+    first = parts["fit"]["harmful"].prompts[:1]
+    if not (first and isinstance(first[0], str)):
+        return {"ran": False, "why": "prompts are not text, so there is no length to split on"}
+    long_rows, short_rows = [], []
+    for side in ("harmful", "harmless"):
+        prompts = parts["fit"][side].prompts
+        lengths = sorted(len(p) for p in prompts)
+        cut = lengths[len(lengths) // 2]
+        resid = res["fit"][side][position].double()
+        for i, p in enumerate(prompts):
+            (long_rows if len(p) > cut else short_rows).append(resid[i])
+    if not long_rows or not short_rows:
+        return {"ran": False, "why": "every fit prompt has the same length"}
+    diff = torch.stack(long_rows).mean(0) - torch.stack(short_rows).mean(0)
+    if not float(diff.norm()) > 0.0:
+        return {"ran": False, "why": "long and short prompts have identical mean residuals"}
+    t_style, singles = total_and_singles(subject, parts["measure"], (diff / diff.norm()).float(), nb)
+    return {"ran": True, "total": t_style, "max_single": float(singles.max()),
+            "ratio_to_behaviour_total": t_style / total if total > 0 else None,
+            "flag_ratio": STYLE_FLAG_RATIO,
+            "flagged": bool(total > 0 and t_style / total >= STYLE_FLAG_RATIO)}
+
+
+def selftest(*, conv=DEFAULT):
+    """Run every planted model and report whether each got its planted status.
+
+    An instrument that has never been seen to return nothing has not been validated, so every
+    artefact carries this beside its result. It is cheap and deterministic.
+    """
+    from . import attribution_fixtures as fx
+    cases = {}
+    for name, expected in fx.EXPECTED.items():
+        got = attribute(fx.ToySubject(name), fx.partitions(name), seed=0, conv=conv)["status"]
+        cases[name] = {"expected": expected, "got": got, "ok": got == expected}
+    return {"passed": all(c["ok"] for c in cases.values()), "instrument_version": INSTRUMENT_VERSION,
+            "cases": cases}
 
 
 def _auc_interval(base_h, base_l, gh, gl, conv, gen):
@@ -546,7 +601,15 @@ def _finish(status, reason, conv, n_blocks, seed):
 
 # ----------------------------------------------------------------------------------- the nulls
 
-def _null_replicates(subject, parts, res, measure, conds, direction, seed, conv):
+def total_and_singles(subject, measure, direction, nb):
+    """The total effect and every single block effect of removing `direction`, on the measure arms."""
+    sub = {"none": (), "all": tuple(range(nb)), **{f"single:{k}": (k,) for k in range(nb)}}
+    dh, dl, _, _ = _effects_for(subject, measure, direction, sub)
+    eff = dh.mean(1) - dl.mean(1)
+    return float(eff[1]), eff[2:]
+
+
+def _null_replicates(subject, parts, res, measure, direction, seed, conv):
     """Shuffled label and random direction replicates of the whole measurement.
 
     A shuffled label replicate permutes which REQUESTS count as harmful in the fit and search
@@ -564,15 +627,8 @@ def _null_replicates(subject, parts, res, measure, conds, direction, seed, conv)
     """
     nb = subject.n_blocks
     gen = torch.Generator().manual_seed(seed + 7919)
-    sub = {n: b for n, b in conds.items() if n == "all" or n.startswith("single:")}
-    sub = {"none": (), **sub}
-
     def stats(d):
-        dh, dl, _, _ = _effects_for(subject, measure, d, sub)
-        eff = dh.mean(1) - dl.mean(1)
-        names = list(sub)
-        singles = torch.tensor([eff[names.index(f"single:{k}")] for k in range(nb)])
-        return float(eff[names.index("all")]), singles
+        return total_and_singles(subject, measure, d, nb)
 
     shuffled, random_ = [], []
     pooled = {k: torch.cat([res[k]["harmful"], res[k]["harmless"]], 1) for k in ("fit", "search")}

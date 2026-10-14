@@ -43,6 +43,7 @@ class Inner(nn.Module):
 
 class Cfg:
     _commit_hash = "abc"
+    hidden_size = W
 
 
 class StubModel(nn.Module):
@@ -73,6 +74,8 @@ class StubModel(nn.Module):
         for layer in self.model.layers:
             h = layer(h)
         logits = h @ self.head
+        # A floor for the neutral token, so a small leak into the refusal axis cannot win by itself.
+        logits[..., 0] = logits[..., 0] + 3.0
         if logits_to_keep:
             logits = logits[:, -logits_to_keep:]
         return type("Out", (), {"logits": logits})()
@@ -107,11 +110,15 @@ class StubTok:
         return [f"tok{i}" for i in ids]
 
 
-def _parts(n=40):
-    def arm(prefix):
-        prompts = [f"{prefix} request {i}" for i in range(n)]
-        return A.arm(prompts, [f"{prefix}{i}" for i in range(n)])
-    return {k: {"harmful": arm("bad"), "harmless": arm("fine")} for k in ("fit", "search", "measure")}
+def _parts(n=40, confirm=False):
+    def arm(prefix, tag=""):
+        prompts = [f"{prefix} request {i}{tag}" for i in range(n)]
+        return A.arm(prompts, [f"{prefix}{i}{tag}" for i in range(n)])
+    out = {k: {"harmful": arm("bad"), "harmless": arm("fine")}
+           for k in ("fit", "search", "measure")}
+    if confirm:
+        out["confirm"] = {"harmful": arm("bad", " c"), "harmless": arm("fine", " c")}
+    return out
 
 
 @pytest.fixture
@@ -277,3 +284,157 @@ def test_build_partitions_takes_one_prompt_per_request_and_digests_without_stori
 def test_digest_ignores_order_and_changes_with_content():
     assert H.digest(["a", "b"]) == H.digest(["b", "a"])
     assert H.digest(["a", "b"]) != H.digest(["a", "c"])
+
+
+# ----------------------------------------------------------------------- the two readout arms
+
+def test_the_disjoint_rule_drops_the_commonest_refusal_opener_if_it_ever_opens_a_compliant_reply():
+    refused, complied = {10: 66, 11: 7}, {10: 3, 12: 30}
+    ref, com, dropped = H.token_sets(refused, complied, H.ARM_DISJOINT)
+    assert ref == [11] and com == [12] and dropped == 1
+
+
+def test_the_purity_rule_admits_it_at_the_declared_threshold():
+    refused, complied = {10: 66, 11: 7}, {10: 3, 12: 30}
+    ref, com, dropped = H.token_sets(refused, complied, H.ARM_PURITY)
+    assert ref == [10, 11] and com == [12] and dropped == 0
+    assert H.PURITY_THRESHOLD == 0.9
+
+
+def test_the_purity_rule_drops_a_token_below_the_threshold_either_way():
+    ref, com, dropped = H.token_sets({1: 8}, {1: 2}, H.ARM_PURITY)       # 0.8 refusals
+    assert (ref, com, dropped) == ([], [], 1)
+    ref, com, dropped = H.token_sets({1: 9}, {1: 1}, H.ARM_PURITY)       # exactly 0.9
+    assert ref == [1] and dropped == 0
+
+
+def test_tokens_below_the_count_floor_are_ignored_by_both_arms():
+    for arm in (H.ARM_DISJOINT, H.ARM_PURITY):
+        assert H.token_sets({1: 1}, {2: 1}, arm) == ([], [], 0)
+
+
+def test_an_unknown_arm_is_refused_by_the_rule_and_the_subject():
+    with pytest.raises(A.AttributionError, match="not a readout arm"):
+        H.token_sets({}, {}, "clever")
+    with pytest.raises(A.AttributionError, match="not a readout arm"):
+        H.HFSubject(StubModel(), StubTok(), arm="clever")
+
+
+def test_the_arms_declare_when_they_were_added_and_the_artefact_carries_it(subject):
+    assert H.ARM_DECLARATIONS[H.ARM_DISJOINT]["declared"].startswith("before")
+    assert H.ARM_DECLARATIONS[H.ARM_PURITY]["declared"].startswith("after")
+    subject.prepare(_parts())
+    sets = subject.agreement_detail["token_sets"]
+    assert sets["arm"] == H.ARM_DISJOINT and sets["declared"].startswith("before")
+    purity = H.HFSubject(StubModel(), StubTok(), batch=8, arm=H.ARM_PURITY, log=lambda *_: None)
+    purity.prepare(_parts())
+    assert purity.agreement_detail["token_sets"]["declared"].startswith("after")
+    assert purity.agreement_detail["token_sets"]["refusal_set_covers_fit_refusals"] == 1.0
+
+
+def test_uncovered_openers_are_recorded_as_decoded_single_tokens(subject):
+    parts = _parts()
+    subject.prepare(parts)
+    subject.comply_ids = torch.tensor([COMPLY_B])
+    subject.readout_agreement(parts["search"]["harmful"].prompts,
+                              parts["search"]["harmless"].prompts)
+    assert subject.agreement_detail["uncovered_openers"] == {f"tok{COMPLY_A}": 40}
+
+
+# ------------------------------------------------------------------ the predictive check
+
+class _Wire(Block):
+    """Converts the harm marker into a refusal signal on axis 0, so removing it stops refusals."""
+
+    def forward(self, hidden_states):
+        out = super().forward(hidden_states)
+        out = out.clone()
+        out[..., 0] = out[..., 0] + 5.0 * hidden_states[..., 2]
+        return out
+
+
+def _wired_model():
+    model = StubModel(n=3)
+    with torch.no_grad():
+        model.embed.weight[ord("#"), 0] = 0.0
+        model.embed.weight[ord("#"), 2] = 1.0
+        model.embed.weight[ord("@"), 0] = 0.0
+        model.model.layers[1] = _Wire(1)
+    return model
+
+
+def _axis0():
+    d = torch.zeros(W)
+    d[0] = 1.0
+    return d
+
+
+def test_refusal_flags_follow_the_condition_the_replies_were_written_under():
+    subject = H.HFSubject(_wired_model(), StubTok(), batch=8, log=lambda *_: None)
+    prompts = [f"bad {i}" for i in range(10)]
+    assert all(subject.refusal_flags(prompts))
+    assert not any(subject.refusal_flags(prompts, _axis0(), [1]))
+    assert all(subject.refusal_flags(prompts, _axis0(), [0, 2]))
+
+
+def test_the_predictive_check_is_supported_when_the_claimed_block_is_the_one_that_matters():
+    subject = H.HFSubject(_wired_model(), StubTok(), batch=8, log=lambda *_: None)
+    parts = _parts(confirm=True)
+    result = H.predictive_check(subject, parts, [1], _axis0(), [1, 0, 2], seed=0,
+                                conv=dataclasses.replace(A.DEFAULT, resamples=200))
+    assert result["ran"] and result["supported"] is True
+    rates = result["harmful_refusal_rate"]
+    assert rates["none"] == 1.0 and rates["claimed"] == 0.0 and rates["random_same_size_mean"] == 1.0
+    assert result["contrast"]["ci"][0] > 0
+    assert set(result["harmless_refusal_rate"]) == {"none", "claimed", "all_blocks"}
+
+
+def test_the_predictive_check_is_not_supported_when_the_claim_names_the_wrong_block():
+    subject = H.HFSubject(_wired_model(), StubTok(), batch=8, log=lambda *_: None)
+    result = H.predictive_check(subject, _parts(confirm=True), [0], _axis0(), [0, 1, 2], seed=0,
+                                conv=dataclasses.replace(A.DEFAULT, resamples=200))
+    assert result["ran"] and result["supported"] is False
+
+
+def test_the_predictive_check_says_why_it_did_not_run():
+    subject = H.HFSubject(_wired_model(), StubTok(), batch=8, log=lambda *_: None)
+    assert "no fresh requests" in H.predictive_check(subject, _parts(), [1], _axis0(), [1])["why"]
+    assert "too few others" in H.predictive_check(subject, _parts(confirm=True), [0, 1],
+                                                  _axis0(), [0, 1, 2])["why"]
+    assert not H.predictive_check(subject, _parts(confirm=True), [], _axis0(), [])["ran"]
+
+
+def test_confirm_requests_are_disjoint_from_the_measure_requests(monkeypatch, tmp_path):
+    from senbonzakura import track
+    rows = [f"Explain how to thing{i}" for i in range(60)]
+    split = {"fit": rows[:10], "search": rows[10:20], "measure": rows[20:]}
+    monkeypatch.setattr(track, "load_partitions", lambda _p: (split, split))
+    parts, digests = H.build_partitions(tmp_path, n_measure=15, n_confirm=10, seed=2)
+    measure, confirm = parts["measure"]["harmful"], parts["confirm"]["harmful"]
+    assert len(confirm.prompts) == 10 and not set(measure.groups) & set(confirm.groups)
+    assert "confirm" in digests
+
+
+# --------------------------------------------------------- a standing edit, and the style control
+
+def test_a_standing_edit_applies_to_every_later_call_and_clears_the_reply_cache(subject):
+    parts = _parts()
+    subject.prepare(parts)
+    before = subject.readout(parts["measure"]["harmful"].prompts)
+    subject.edit_standing(_axis0(), range(subject.n_blocks))
+    assert not subject._replies
+    after = subject.readout(parts["measure"]["harmful"].prompts)
+    assert not torch.allclose(before, after)
+
+
+def test_the_length_direction_control_runs_on_text_and_is_reported_beside_the_total():
+    def arm(prefix, base):
+        prompts = [f"{prefix} request {i} " + "x" * (i % base) for i in range(40)]
+        return A.arm(prompts, [f"{prefix}{i}" for i in range(40)])
+    parts = {k: {"harmful": arm("bad", 7), "harmless": arm("fine", 5)}
+             for k in ("fit", "search", "measure")}
+    result = A.attribute(H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None),
+                         parts, seed=0, conv=FAST)
+    style = result["controls"]["style_direction"]
+    assert style["ran"] is True and style["flag_ratio"] == A.STYLE_FLAG_RATIO
+    assert set(style) >= {"total", "max_single", "flagged"}

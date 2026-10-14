@@ -80,7 +80,7 @@ def test_the_same_seed_gives_the_same_artefact():
 
 # ------------------------------------------------------------------------------- tint_allowed
 
-def _supported(subject, parts, blocks, direction):
+def _supported(subject, parts, blocks, direction, ranking):
     return {"ran": True, "supported": True, "blocks": list(blocks)}
 
 
@@ -350,9 +350,9 @@ def test_resampling_whole_requests_widens_the_interval_compared_with_resampling_
     drops = torch.randn(30, generator=gen).repeat_interleave(7).unsqueeze(0).double()
     zeros = torch.zeros_like(drops)
     grouped = tuple(i // 7 for i in range(210))
-    _, by_request = A._bootstrap_effects(drops, zeros, grouped, grouped, 400,
+    _, by_request = A.bootstrap_effects(drops, zeros, grouped, grouped, 400,
                                          torch.Generator().manual_seed(1))
-    _, by_row = A._bootstrap_effects(drops, zeros, tuple(range(210)), tuple(range(210)), 400,
+    _, by_row = A.bootstrap_effects(drops, zeros, tuple(range(210)), tuple(range(210)), 400,
                                      torch.Generator().manual_seed(1))
     assert float(by_request.std()) > 1.8 * float(by_row.std())
 

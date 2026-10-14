@@ -17,13 +17,13 @@ reply and no prompt set ever reaches it, which `tools/ci/check_prompt_artefacts.
 """
 from __future__ import annotations
 
-import argparse
 import datetime as _dt
 import json
 import sys
 import time
 from pathlib import Path
 
+from . import argresolve
 from . import attribution as A
 from ._version import __version__
 
@@ -245,7 +245,8 @@ def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(
+    p = argresolve.ParserThatNamesUnknownFlags(
+        allow_abbrev=False,
         prog="senbonzakura attribute",
         description="Say which blocks of a model carry refusal, as a measurement with its own "
                     "controls. It measures the unedited model; where an edit wrote is not "
@@ -256,16 +257,19 @@ def build_parser():
     p.add_argument("--out", required=True, help="directory to write attribution.json into")
     p.add_argument("--device", default="cuda", help="cuda or cpu (default: cuda)")
     p.add_argument("--revision", default=None, help="model revision to pin")
-    p.add_argument("--n-measure", type=int, default=400,
-                   help="requests per arm to measure effects on (default: 400)")
-    p.add_argument("--n-confirm", type=int, default=150,
+    p.add_argument("--n-measure", type=argresolve.whole_number(
+        "--n-measure", minimum=A.DEFAULT.min_prompts), default=400,
+        help="requests per arm to measure effects on (default: 400; at least "
+             f"{A.DEFAULT.min_prompts}, below which a rate is not reported)")
+    p.add_argument("--n-confirm", type=argresolve.whole_number("--n-confirm"), default=150,
                    help="fresh requests per arm for the generation check (default: 150)")
-    p.add_argument("--seed", type=int, default=0,
+    p.add_argument("--seed", type=argresolve.whole_number("--seed"), default=0,
                    help="seed for every resample, shuffle and random choice (default: 0)")
-    p.add_argument("--batch", type=int, default=16,
+    p.add_argument("--batch", type=argresolve.whole_number("--batch", minimum=1), default=16,
                    help="prompts per forward pass; results are reproducible only at a fixed "
                         "batch size (default: 16)")
-    p.add_argument("--budget-minutes", type=float, default=110.0,
+    p.add_argument("--budget-minutes", type=argresolve.real_number("--budget-minutes", minimum=0),
+                   default=110.0,
                    help="refuse to start if the readout work alone is projected to exceed this")
     p.add_argument("--force", action="store_true",
                    help="redo arms that already have a result for these exact inputs")
@@ -433,9 +437,6 @@ def _behaviour_removed(model, tok, parts, args, conv, log):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if args.n_measure < A.DEFAULT.min_prompts or args.n_confirm < 0:
-        raise SystemExit(f"--n-measure must be at least {A.DEFAULT.min_prompts}; below that a "
-                         f"rate is not reported.")
     try:
         run(args)
     except A.AttributionError as e:

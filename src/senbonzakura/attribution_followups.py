@@ -199,21 +199,31 @@ START_SCHEMA = "senbonzakura-attribution-start/1"
 
 
 def build_parser():
-    import argparse
-    p = argparse.ArgumentParser(
+    from . import argresolve
+    from . import attribution as A
+    p = argresolve.ParserThatNamesUnknownFlags(
+        allow_abbrev=False,
         prog="python -m senbonzakura.attribution_followups",
-        description="Run the two declared follow-ups against a finished attribution run.")
-    p.add_argument("model")
-    p.add_argument("--track", required=True)
-    p.add_argument("--artefact", required=True, help="the attribution.json the run produced")
-    p.add_argument("--out", required=True, help="directory to write followups.json into")
-    p.add_argument("--n-measure", type=int, default=400)
-    p.add_argument("--n-confirm", type=int, default=150)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--batch", type=int, default=16)
-    p.add_argument("--device", default="cuda")
-    p.add_argument("--n-fresh", type=int, default=150,
-                   help="requests no earlier step used, for the where-it-starts test")
+        description="Run the declared follow-ups against a finished attribution run. Prefix the "
+                    "arguments with `start` for the where-it-starts test instead.")
+    p.add_argument("model", help="the model the original run measured, as it named it")
+    p.add_argument("--track", required=True, help="the track directory the original run used")
+    p.add_argument("--artefact", required=True,
+                   help="the attribution.json the original run produced; the inputs must match it")
+    p.add_argument("--out", required=True, help="directory to write the result file into")
+    p.add_argument("--n-measure", type=argresolve.whole_number(
+        "--n-measure", minimum=A.DEFAULT.min_prompts), default=400,
+        help="requests per arm the original run measured on (default: 400)")
+    p.add_argument("--n-confirm", type=argresolve.whole_number("--n-confirm"), default=150,
+                   help="fresh requests per arm the original run set aside (default: 150)")
+    p.add_argument("--seed", type=argresolve.whole_number("--seed"), default=0,
+                   help="the seed the original run used (default: 0)")
+    p.add_argument("--batch", type=argresolve.whole_number("--batch", minimum=1), default=16,
+                   help="prompts per forward pass; use the original run's value (default: 16)")
+    p.add_argument("--device", default="cuda", help="cuda or cpu (default: cuda)")
+    p.add_argument("--n-fresh", type=argresolve.whole_number("--n-fresh", minimum=1), default=150,
+                   help="requests no earlier step used, for the where-it-starts test "
+                        "(default: 150)")
     return p
 
 

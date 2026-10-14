@@ -145,3 +145,65 @@ def test_a_checkpoint_naming_both_layouts_reports_neither_count():
 def test_no_inventory_means_no_observed_experts_rather_than_an_empty_answer():
     d = modelmap.describe(config=INDEX["config"])
     assert d.observed_experts is None
+
+
+def _prefix(name):
+    return "blk" if name.startswith("blk.") else "model.layers"
+
+
+def _role_counts(inventory, block):
+    counts = {}
+    for t in inventory["tensors"]:
+        name = t["name"]
+        if modelmap.block_of(name, _prefix(name)) != block:
+            continue
+        role = modelmap.tensor_role(name)
+        counts[role] = counts.get(role, 0) + 1
+    return counts
+
+
+def test_every_block_tensor_in_every_real_fixture_has_a_role():
+    for inventory in (QWEN3, ABL4B, GGUF, INDEX):
+        for t in inventory["tensors"]:
+            name = t["name"]
+            if modelmap.block_of(name, _prefix(name)) is not None:
+                assert modelmap.tensor_role(name) != "unclassified", name
+
+
+@pytest.mark.parametrize("inventory", [QWEN3, ABL4B], ids=["qwen3-1.7b", "abl-4b"])
+def test_dense_block_zero_roles_are_attention_norms_mlp_and_norm(inventory):
+    assert _role_counts(inventory, 0) == {
+        "attention": 4, "attention_norm": 2, "mlp": 3, "norm": 2}
+
+
+def test_the_two_moe_layouts_give_the_same_non_expert_roles_for_block_zero():
+    """The map's spine: one architecture, two storage layouts, one answer to what a tensor is."""
+    gguf = _role_counts(GGUF, 0)
+    index = _role_counts(INDEX, 0)
+    for role in ("attention", "attention_norm", "norm", "router"):
+        assert gguf[role] == index[role], role
+    assert gguf["expert_mlp"] == 3
+    assert index["expert_mlp"] == 384
+
+
+def test_a_dense_gated_mlp_is_an_mlp_and_a_routed_gate_is_a_router():
+    assert modelmap.classify("mlp.gate_proj.weight") == "mlp"
+    assert modelmap.classify("mlp.gate.weight") == "router"
+
+
+def test_an_expert_path_is_an_expert_even_though_it_also_names_an_mlp():
+    assert modelmap.classify("mlp.experts.12.up_proj.weight") == "expert_mlp"
+
+
+def test_a_name_no_rule_covers_is_unclassified_rather_than_defaulted():
+    assert modelmap.classify("frobnicator.weight") == "unclassified"
+
+
+def test_a_name_outside_every_block_has_no_block_role():
+    assert modelmap.tensor_role("model.embed_tokens.weight") is None
+    assert modelmap.tensor_role("output_norm.weight") is None
+
+
+def test_collapse_expert_index_folds_the_index_and_nothing_else():
+    assert (modelmap.collapse_expert_index("mlp.experts.127.down_proj.weight")
+            == "mlp.experts.{e}.down_proj.weight")

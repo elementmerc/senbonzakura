@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import enum
 import itertools
+import re
 from dataclasses import dataclass, field
 
 from .writers import ATTN_BLOCKS, MIXER_BLOCKS, MLP_BLOCKS
@@ -886,6 +887,97 @@ def heads(cfg):
 # ----------------------------------------------------------------------------------------------
 # Reading a live model. `getattr` only, so this module still imports nothing heavy.
 # ----------------------------------------------------------------------------------------------
+
+
+#: Path segments that name each mechanism. Whole segments only: a substring match on "gate" would
+#: call every dense gated MLP's `mlp.gate_proj` a router.
+ATTENTION_SEGMENTS = ("self_attn", "attn", "attention", "self_attention", "cross_attn")
+MLP_SEGMENTS = ("mlp", "ffn", "feed_forward", "block_sparse_moe", "moe", "feed_forward_w2")
+ROUTER_SEGMENTS = ("gate", "router", "router_gate", "gating")
+CONV_SEGMENTS = ("conv", "shortconv", "short_conv", "conv1d", "causal_conv1d")
+SSM_SEGMENTS = ("mamba", "ssm", "mixer")
+NORM_MARKERS = ("norm", "layernorm", "layer_norm", "ln_1", "ln_2", "ln_f", "ln_attn", "ln_mlp")
+
+#: A GGUF block's tensors, after the `blk.N.` prefix, mapped into the same role vocabulary the
+#: safetensors names resolve to. The stacked expert tensors are `expert_mlp` for the same reason
+#: the per-expert names are: both hold a block's experts, and only the storage differs.
+GGUF_BLOCK_ROLES = {
+    "attn_q.weight": "attention", "attn_k.weight": "attention",
+    "attn_v.weight": "attention", "attn_output.weight": "attention",
+    "attn_q_norm.weight": "attention_norm", "attn_k_norm.weight": "attention_norm",
+    "attn_norm.weight": "norm", "ffn_norm.weight": "norm",
+    "ffn_gate_inp.weight": "router",
+    "ffn_gate_exps.weight": "expert_mlp", "ffn_up_exps.weight": "expert_mlp",
+    "ffn_down_exps.weight": "expert_mlp",
+    "ffn_gate.weight": "mlp", "ffn_up.weight": "mlp", "ffn_down.weight": "mlp",
+    "ffn_gate_shexp.weight": "mlp", "ffn_up_shexp.weight": "mlp", "ffn_down_shexp.weight": "mlp",
+}
+
+_GGUF_BLOCK_NAME = re.compile(r"^blk\.\d+\.(.+)$")
+_SAFETENSORS_BLOCK_NAME = re.compile(r"(?:^|\.)(?:layers|h|blocks?)\.\d+\.(.+)$")
+
+
+def segments(path):
+    """A dotted module path split into whole segments, the only safe unit to match on."""
+    return path.split(".")
+
+
+def _is_norm(path):
+    """Whether a path names a normalisation tensor, by marker rather than by position."""
+    low = path.lower()
+    return any(marker in low for marker in NORM_MARKERS)
+
+
+def classify(path):
+    """The mechanism a tensor inside a block belongs to, from its path with the block removed.
+
+    Ordered first-match, and the order is the finding: `experts` must beat `mlp` because an expert
+    tensor's path contains both, and the router test must match `gate` as a whole segment, because
+    a routed block's router is `mlp.gate.weight` while a dense gated block's first projection is
+    `mlp.gate_proj.weight`. A substring match on "gate" reports a router in every dense Llama, and
+    that is the single easiest mistake to make here. Never returns a silent default: a name no rule
+    covers is "unclassified", which is a finding to look at.
+    """
+    parts = segments(path)
+    leaf = parts[-1]
+    body = parts[:-1] if leaf in ("weight", "bias", "scales", "blocks", "biases") else parts
+    if "experts" in parts:
+        return "expert_mlp"
+    if any(p in ROUTER_SEGMENTS for p in body) and any(p in MLP_SEGMENTS for p in body):
+        return "router"
+    if any(p in ROUTER_SEGMENTS and p != "gate" for p in body):
+        return "router"
+    if any(p in ATTENTION_SEGMENTS for p in parts):
+        return "attention_norm" if _is_norm(path) else "attention"
+    if any(p in CONV_SEGMENTS or p.startswith("conv") for p in body):
+        return "conv"
+    if any(p in SSM_SEGMENTS for p in body) or leaf in ("A_log", "D", "dt_bias"):
+        return "ssm"
+    if any(p in MLP_SEGMENTS for p in parts):
+        return "mlp"
+    if _is_norm(path):
+        return "norm"
+    return "unclassified"
+
+
+def collapse_expert_index(path):
+    """An expert tensor's path with its index replaced by `{e}`, so 128 experts read as one row."""
+    return re.sub(r"(?<=experts\.)\d+(?=\.|$)", "{e}", path)
+
+
+def tensor_role(name):
+    """The role of one tensor name, whichever layout it is stored in.
+
+    A block tensor resolves through `classify` (safetensors) or `GGUF_BLOCK_ROLES` (GGUF). A name
+    outside every block resolves to None, because it has no block role to report.
+    """
+    m = _GGUF_BLOCK_NAME.match(name)
+    if m:
+        return GGUF_BLOCK_ROLES.get(m.group(1), "unclassified")
+    m = _SAFETENSORS_BLOCK_NAME.search(name)
+    if m:
+        return classify(m.group(1))
+    return None
 
 
 def block_of(name, prefix):

@@ -106,7 +106,7 @@ def provenance_block(source=_DETECT):
 
 #: Absolute paths in a recorded command. The bake records its own argv, so a path given on the command line
 #: would otherwise travel into every recipe, and a recipe is meant to leave the machine that made it.
-_ABSOLUTE_PATH = re.compile(r"^(/|~|[A-Za-z]:[\\/])")
+LOCAL_PATH = re.compile(r"^(/|~|[A-Za-z]:[\\/])")
 
 
 def public_command(command):
@@ -118,9 +118,9 @@ def public_command(command):
     words = []
     for word in shlex.split(command):
         flag, sep, value = word.partition("=")
-        if sep and _ABSOLUTE_PATH.match(value):
+        if sep and LOCAL_PATH.match(value):
             words.append(f"{flag}={pathlib.PurePath(value.replace(chr(92), '/')).name or value}")
-        elif not sep and _ABSOLUTE_PATH.match(word):
+        elif not sep and LOCAL_PATH.match(word):
             words.append(pathlib.PurePath(word.replace(chr(92), "/")).name or word)
         else:
             words.append(word)

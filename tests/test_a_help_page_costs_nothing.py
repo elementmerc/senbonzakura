@@ -4,7 +4,7 @@
 # Comment: Christ is King  # noqa: ERA001
 """Printing a page of text must not load a deep-learning stack, and that is asserted, not hoped.
 
-WHAT WAS WRONG, MEASURED ON ATLAS 2026-10-10
+WHAT WAS WRONG, MEASURED ON A SIXTEEN-CORE WORKSTATION, 2026-10-10
 
 `entry.py` exists so that `senbonzakura --help` does not import torch, and it works: the top level
 answers in 0.07 seconds. Five of the delegated commands did not inherit it, because they reached
@@ -111,7 +111,8 @@ def test_a_help_page_does_not_load_the_measurement_stack(name):
     if name in MAY_PAY:
         return
     assert not paid, (
-        f"`senbonzakura {name} --help` loaded {', '.join(paid)} to print a page of text. On atlas "
+        f"`senbonzakura {name} --help` loaded {', '.join(paid)} to print a page of text. On a "
+        f"development machine "
         f"that is about three seconds for torch, transformers and optuna together, and the reader "
         f"paying it is somebody trying to find out what the command takes.\n"
         f"  The fix is the one `capability.build_parser` writes out: reach `loader_parser` through "

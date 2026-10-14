@@ -177,7 +177,7 @@ def test_recipe_from_senbonzakura_applied_by_the_reference_applier_matches_the_b
     assert worst <= FLOAT32_TOL
 
 
-def test_bfloat16_outputs_agree_within_one_unit_in_the_last_place(tmp_path):
+def test_bfloat16_outputs_are_bit_identical_to_the_bake(tmp_path):
     model = tmp_path / "model"
     make_checkpoint(model, dtype="BF16")
     dirs = tmp_path / "directions.safetensors"
@@ -192,12 +192,10 @@ def test_bfloat16_outputs_agree_within_one_unit_in_the_last_place(tmp_path):
         assert baked[name][0] == applied[name][0], name
         if baked[name][0] != "BF16":
             continue
-        # One bfloat16 ulp at the value's magnitude: the two sides round the same float32, so any
-        # disagreement is a single unit, never a systematic offset.
-        ref = baked[name][1]
-        got = applied[name][1]
-        ulp = np.maximum(np.abs(ref), 1e-30) * 2.0**-7
-        assert (np.abs(ref - got) <= ulp).all(), name
+        # Exact, not within a tolerance. Both sides round the same float32 to bfloat16, and a
+        # tolerance of one unit would accept truncation in place of rounding, which is a different
+        # edit. Measured on this fixture: zero elements differ.
+        assert np.array_equal(baked[name][1], applied[name][1]), name
 
 
 def test_the_recipe_senbonzakura_writes_records_what_the_bake_did(tmp_path):

@@ -1,0 +1,50 @@
+{
+  "base": {
+    "id": "senbonzakura/conformance-tiny",
+    "revision": "fixture",
+    "weights_sha256": "8b319e9edb7e97c4280f6706fb0d3724ad570df3d7badb9dcf690cdcd5a57a75"
+  },
+  "edit": {
+    "directions": {
+      "directions_found": 3,
+      "directions_found_per_position": [
+        0,
+        2,
+        1
+      ],
+      "encoding": "safetensors",
+      "file": "directions.safetensors",
+      "sha256": "6d564616262fb3ba0c433079dce2973b088ba7d717a58b5c61e7be004b8729e1",
+      "shape": [
+        3,
+        2,
+        8
+      ]
+    },
+    "dtype": "float32",
+    "layers": {
+      "from": 0,
+      "to": 1
+    },
+    "method": "projection",
+    "projection_side": "output",
+    "restore_norms": true,
+    "sign_convention": "projection",
+    "strength": 1.0,
+    "targets": [
+      "model.layers.*.self_attn.o_proj.weight",
+      "model.layers.*.mlp.down_proj.weight"
+    ],
+    "tensor_naming": "huggingface"
+  },
+  "measured": {
+    "status": "not_measured",
+    "why": "conformance fixture: a weight check, not a behaviour measurement"
+  },
+  "name": "conformance-tiny",
+  "reproduce": {
+    "command": "senbonzakura stream-bake --model MODEL --directions DIRS --out OUT",
+    "tool": "senbonzakura"
+  },
+  "schema": "abliteration-recipe/1"
+}

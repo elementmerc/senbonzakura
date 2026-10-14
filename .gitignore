@@ -202,3 +202,8 @@ Thumbs.db
 
 # The Rust crate builds here. Generated, large, and per-toolchain.
 rust/target/
+
+# The recipe conformance fixture is a few kilobytes of toy tensors, built to be read, and the
+# reference applier's output has to be checkable by anyone. This exception is that one directory
+# and nothing wider; real weights stay ignored everywhere else.
+!recipes/conformance/**/*.safetensors

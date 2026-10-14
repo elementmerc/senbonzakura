@@ -50,6 +50,16 @@ def _refused(world, recipe_path, match):
         applier.apply(recipe_path, world["model"], world["dirs"], world["tmp"] / "out", log=lambda *_: None)
 
 
+def test_bfloat16_rounds_to_nearest_with_ties_to_even_and_does_not_truncate():
+    # Exact halfway points between two bfloat16 values, where the rule is unambiguous. Truncation
+    # would return the lower value in both cases; round-to-nearest-even returns the even one.
+    x = np.array([1.0 + 2.0**-8, 1.0 + 3 * 2.0**-8], dtype=np.float32)
+    rounded = np.frombuffer(applier.encode(x, "BF16"), dtype="<u2").astype(np.uint32) << 16
+    values = rounded.view(np.float32)
+    assert values[0] == np.float32(1.0)
+    assert values[1] == np.float32(1.0 + 2.0**-6)
+
+
 def test_a_clean_recipe_is_accepted_in_check_mode(world):
     summary = applier.apply(world["recipe"], world["model"], world["dirs"], None, check_only=True, log=lambda *_: None)
     assert summary["tensors_to_edit"] == 2 * LAYERS

@@ -36,9 +36,16 @@ import audit_flags  # noqa: E402
 
 
 def analyse_source(tmp_path, **modules):
-    """Write `name=source` modules to a tree and run the audit over it."""
+    """Write `name=source` modules to a tree and run the audit over it.
+
+    A name may carry a directory (`a__cli` is written as `a/cli.py` when the tree is built with
+    `a/cli`), so two modules can share a leaf name in different packages. Double underscores stand in
+    for the slash because a keyword argument cannot contain one.
+    """
     for name, src in modules.items():
-        (tmp_path / f"{name}.py").write_text(textwrap.dedent(src), encoding="utf-8")
+        path = tmp_path / f"{name.replace('__', '/')}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(src), encoding="utf-8")
     declared, read, _splat, _n = audit_flags.analyse(tmp_path)
     return audit_flags.findings(declared, read)
 
@@ -131,6 +138,120 @@ def test_a_module_that_imports_a_parser_inherits_its_promises(tmp_path):
         """,
         runner="""
             from .parser import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.other          # --thing inherited and dropped
+        """,
+        elsewhere="""
+            def go(args):
+                return args.thing
+        """)
+    assert [(d, m) for d, m, _l, _f, _mods in unkept] == [("thing", "runner.py")]
+
+
+def test_two_modules_sharing_a_leaf_name_do_not_share_their_parsers(tmp_path):
+    """The defect the auditor was keying into, in miniature.
+
+    `a/cli.py` and `b/cli.py` are different modules that each define `build_parser`. Keyed by leaf
+    name, both collapsed to `cli.py`, so `c/main.py`, which imports only `a`'s parser, inherited
+    `b`'s `--beta` as well and was reported for dropping a flag it was never handed. This is the
+    shape the real tree produced: one module's flags reported against an unrelated importer.
+    """
+    dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        a__cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--alpha", default="")
+                return ap
+
+            def run(args):
+                return args.alpha
+        """,
+        b__cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--beta", default="")
+                return ap
+
+            def run(args):
+                return args.beta
+        """,
+        c__main="""
+            from ..a.cli import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.alpha
+        """)
+    assert not dead, dead
+    assert not unkept, f"c/main.py imports only a's parser, so it may not answer for b's: {unkept}"
+
+
+def test_a_flag_nothing_reads_is_still_caught_when_another_module_shares_its_leaf_name(tmp_path):
+    """The other half of that fix: distinguishing the two modules must not hide a genuinely dead flag."""
+    dead, _inspected, _unkept = analyse_source(
+        tmp_path,
+        a__cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--gone", default="")
+                ap.add_argument("--kept", default="")
+                return ap
+
+            def run(args):
+                return args.kept
+        """,
+        b__cli="""
+            def run(args):
+                return args.other
+        """)
+    assert [d for d, _ in dead] == ["gone"]
+
+
+def test_an_import_from_another_distribution_inherits_nothing_from_a_same_named_module(tmp_path):
+    """The real defect, reduced. `check.py` imports `senbonzakura_check.cli`, a module in another
+    distribution that this tree does not audit, and the audit matched it by its leaf name `cli.py` to
+    the first-party `cli.py` and inherited that parser's flags. It is answerable for none of them.
+    """
+    _dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--root", default="")
+                ap.add_argument("--mode", default="")
+                return ap
+
+            def run(args):
+                return args.root, args.mode
+        """,
+        check="""
+            from senbonzakura_check.cli import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.mode
+        """)
+    assert not unkept, f"check.py imports another distribution's parser, not this one: {unkept}"
+
+
+def test_an_absolute_import_of_this_package_inherits_exactly_as_a_relative_one_does(tmp_path):
+    """Absolute imports name the package the tree is, and must resolve to the same module a
+    relative import would. The real package uses both spellings.
+    """
+    _dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        parser="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--thing", default="")
+                ap.add_argument("--other", default="")
+                return ap
+        """,
+        runner=f"""
+            from {tmp_path.name}.parser import build_parser
 
             def main(argv=None):
                 args = build_parser().parse_args(argv)

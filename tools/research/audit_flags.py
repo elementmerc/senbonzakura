@@ -31,6 +31,24 @@ Run it directly to see the findings:
     python tools/research/audit_flags.py
 
 Exit status is 0 when clean and 1 when a flag is unkept, so it works as a gate.
+
+MODULE IDENTITY IS THE PATH UNDER THE ROOT, NOT THE LEAF NAME
+
+Two modules that share a leaf name are different modules. The package has `cli.py` at its top and
+`workbench/cli.py` beside the workbench, and an importer of `senbonzakura_check.cli` (a different
+distribution entirely) was attributed to the first-party one because all three answer to `cli.py`.
+Keying by the leaf made every such import inherit whatever parser the other module declared, and
+the audit then reported those flags as dropped by modules that were never handed them.
+
+So a module is named by its path under the root (`workbench/cli.py`), and an import is resolved to
+the file it names, the way Python resolves it:
+
+  - a relative import counts up from the importer's own package by its level;
+  - an absolute import must begin with the package this tree is, and resolves under the root;
+  - anything else belongs to another distribution, and the importer inherits nothing from this tree;
+  - a name that matches no file under the root resolves to nothing rather than to a guess.
+
+Where a package directory and a module share a name, the package wins, as it does for Python.
 """
 import argparse
 import ast
@@ -124,11 +142,14 @@ class _Walk(ast.NodeVisitor):
         self._fn = []
 
     def visit_ImportFrom(self, node):
-        # `from .parser import build_parser` makes this module answerable for those flags.
+        # `from .parser import build_parser` makes this module answerable for those flags. The level
+        # is kept, because `.` and `..` name different packages and resolving the leaf alone is the
+        # defect this file was rewritten to stop. `from . import parser` names a submodule rather
+        # than a parser, and is not followed: a parser is only ever imported by name from its module.
         if node.module:
             for alias in node.names:
                 self.imports.setdefault(self.module, set()).add(
-                    (node.module.split(".")[-1], alias.name))
+                    (node.level, node.module, alias.name))
         self.generic_visit(node)
 
     def _here(self):
@@ -179,19 +200,56 @@ class _Walk(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def resolve_import(importer, level, module, package, known):
+    """The file under the root that `from <level dots><module> import ...` names, or None.
+
+    `importer` and every entry in `known` are paths under the root, with `/` separators. A relative
+    import counts up from the importer's own package: a module's package is its directory, and a
+    package's `__init__.py` is its own package, so both start from the directory the file sits in.
+    An absolute import must begin with `package`, the name this tree is, and resolves from the root.
+    Anything else is another distribution's module, and resolves to nothing.
+    """
+    if not module:
+        return None
+    here = importer.split("/")[:-1]
+    names = module.split(".")
+    if level:
+        if level - 1 > len(here):
+            return None
+        base = here[:len(here) - (level - 1)]
+    else:
+        if names[0] != package:
+            return None
+        base, names = [], names[1:]
+    stem = "/".join(base + names)
+    if not stem:
+        return "__init__.py" if "__init__.py" in known else None
+    for candidate in (f"{stem}/__init__.py", f"{stem}.py"):
+        if candidate in known:
+            return candidate
+    return None
+
+
 def analyse(root):
-    """Return (declared, read, splat, parsed_count) for every first-party module under `root`."""
+    """Return (declared, read, splat, parsed_count) for every first-party module under `root`.
+
+    Modules are named by their path under `root`, so two modules that share a leaf name stay two
+    modules. The package name is the root's own name, which is what its absolute imports begin with.
+    """
+    root = pathlib.Path(root)
+    package = root.name
+    paths = [p for p in sorted(root.rglob("*.py")) if not any(s in str(p) for s in SKIP_DIRS)]
+    known = {p.relative_to(root).as_posix() for p in paths}
     declared, read, splat, parsed, imports, forwards = {}, {}, [], 0, {}, set()
     switched_off = {}
-    for path in sorted(pathlib.Path(root).rglob("*.py")):
-        if any(s in str(path) for s in SKIP_DIRS):
-            continue
+    for path in paths:
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError as exc:
             raise SystemExit(f"audit_flags: cannot parse {path}: {exc}") from exc
         parsed += 1
-        _Walk(path.name, declared, read, splat, imports, forwards, switched_off).visit(tree)
+        rel = path.relative_to(root).as_posix()
+        _Walk(rel, declared, read, splat, imports, forwards, switched_off).visit(tree)
 
     # Attribute a parser's declarations to the modules that IMPORT that specific parser.
     #
@@ -199,14 +257,17 @@ def analyse(root):
     # own `build_parser`, and matching on the bare name attributed `quantise`'s flags to `cli`
     # because both import something called `build_parser`. That is a name standing in for the
     # thing, which is the exact error this tool was written after.
-    parser_defs = {}                      # (module, function) -> {dest, ...}
+    parser_defs = {}                      # (module path, function) -> {dest, ...}
     for dest, sites in declared.items():
         for module, _lineno, fn in sites:
             parser_defs.setdefault((module, fn), set()).add(dest)
     for module, names in imports.items():
         off = switched_off.get(module, set())
-        for src_module, imported in names:
-            for dest in parser_defs.get((f"{src_module}.py", imported), ()):
+        for level, src_module, imported in names:
+            target = resolve_import(module, level, src_module, package, known)
+            if target is None:
+                continue
+            for dest in parser_defs.get((target, imported), ()):
                 # The importer asked this parser for a version without that flag, so it never
                 # offered it and cannot have dropped it.
                 if (imported, dest) in off:

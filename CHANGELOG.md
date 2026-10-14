@@ -33,6 +33,10 @@ surface it changed, and will carry a version heading when it ships.
   to is us
 
 ### Report
+- `senbonzakura report --overrefusal` takes a run on harmless prompts and adds an over-refusal
+  section to the card, with its count and interval. Without it the card says that side was not
+  measured, because a refusal rate on its own cannot tell a model that refuses what it should from
+  one that refuses everything
 - `senbonzakura head-to-head report` takes `--out` and writes the comparison as a machine readable
   summary. It declares itself a summary, stamps no figure of its own, carries each arm's own
   recorded conditions word for word, and lists the conditions the arms differ on, so a reader can
@@ -51,6 +55,9 @@ A hotfix. No new features: security, and the defects that leave somebody worse o
 they ran the command.
 
 ### Security
+- The compiled part of the tool is built on PyO3 0.29.0, which fixes two advisories against 0.27: an
+  out of bounds read when iterating a list or tuple, and a missing thread-safety bound on closures.
+  The tool's own code does not reach either path, but the library it ships is now the fixed one
 - `diff` and `budget` could be ended by a crafted checkpoint header. A file of about 200 KB was
   enough. Both now refuse it and say why
 - The wheel no longer carries a RunPod client that read an API key from your environment and could

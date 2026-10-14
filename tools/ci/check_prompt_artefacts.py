@@ -441,6 +441,13 @@ IGNORED_KINDS = frozenset({
     ".1", ".bib", ".cff", ".css", ".cuda", ".dockerignore", ".gif", ".gitignore", ".gitkeep",
     ".heretic", ".ico", ".in", ".jinja", ".js", ".lock", ".mjs", ".npmrc", ".png", ".py", ".rb",
     ".rs", ".senbonzakura", ".sh", ".source-header-floor", ".svg", ".tape", ".template", ".tool",
+    # `.jsx` added 2026-10-14, beside `.tsx` which was already here. It is the same decision rather
+    # than a new one: JSX is JavaScript, and its TypeScript twin was recorded long ago, so the
+    # omission was an accident of which extension the tree happened to hold first. The risk a
+    # source file carries, a generation pasted into a string literal, is the one `.js` and `.tsx`
+    # already accept; it is recorded in DEFERRED.md as a gap across the whole JavaScript family and
+    # is not made worse by naming the sibling extension.
+    ".jsx",
     ".toml", ".ts", ".tsx", ".ttf", ".webmanifest", ".yaml", ".yml",
     "Dockerfile", "LICENSE", "NOTICE",
 })

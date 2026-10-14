@@ -941,7 +941,7 @@ def _is_norm(path):
     return any(marker in low for marker in NORM_MARKERS)
 
 
-def classify(path):
+def classify_block_path(path):
     """The mechanism a tensor inside a block belongs to, from its path with the block removed.
 
     Ordered first-match, and the order is the finding: `experts` must beat `mlp` because an expert
@@ -981,7 +981,7 @@ def collapse_expert_index(path):
 def tensor_role(name):
     """The role of one tensor name, whichever layout it is stored in.
 
-    A block tensor resolves through `classify` (safetensors) or `GGUF_BLOCK_ROLES` (GGUF). A name
+    A block tensor resolves through `classify_block_path` (safetensors) or `GGUF_BLOCK_ROLES` (GGUF). A name
     outside every block resolves to None, because it has no block role to report.
     """
     m = _GGUF_BLOCK_NAME.match(name)
@@ -989,7 +989,7 @@ def tensor_role(name):
         return GGUF_BLOCK_ROLES.get(m.group(1), "unclassified")
     m = _SAFETENSORS_BLOCK_NAME.search(name)
     if m:
-        return classify(m.group(1))
+        return classify_block_path(m.group(1))
     return None
 
 

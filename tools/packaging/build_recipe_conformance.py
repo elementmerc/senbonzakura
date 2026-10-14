@@ -16,6 +16,7 @@ so a change shows up as a change to the fixture rather than as silent drift.
 It writes into `recipes/conformance/`. Nothing else is touched.
 """
 
+import copy
 import json
 import pathlib
 import shutil
@@ -30,11 +31,23 @@ sys.path.insert(0, str(REPO / "recipes"))
 
 import apply_recipe  # noqa: E402  (the reference applier, found beside this repo's recipes)
 
+from senbonzakura import __version__, streambake  # noqa: E402
 from senbonzakura import recipe as recipe_mod  # noqa: E402
-from senbonzakura import streambake  # noqa: E402
 
 FIXTURE = REPO / "recipes" / "conformance"
 HIDDEN, INTER, VOCAB, LAYERS, KV = 8, 12, 16, 2, 4
+
+#: Fixed, not read from a checkout. A commit in here would make the fixture change on every commit, and
+#: the fixture is meant to change only when the format or the bake does.
+FIXTURE_PROVENANCE = {
+    "tool": {"name": "senbonzakura", "version": __version__},
+    "source": {
+        "commit": None,
+        "dirty": None,
+        "via": None,
+        "reason": "conformance fixture: rebuilt from a fixed definition, so it does not record a checkout",
+    },
+}
 
 
 def build_model(root):
@@ -106,6 +119,36 @@ def _sha(path):
     return apply_recipe.sha256_file(path)
 
 
+def _toy_measured(edit):
+    """A complete measured block for the fixture.
+
+    Its n is 4 and its intervals span the whole scale, so no figure here can be read as a result. It exists
+    to show the format's rules, not to report anything.
+    """
+    return {
+        "status": "measured",
+        "instrument": {
+            "scorer": "conformance fixture: a fixed toy scorer",
+            "corpus": {"id": "conformance-tiny", "revision": "fixture"},
+            "partition": "none",
+            "seed": 0,
+        },
+        "refusal_before": {"point": 0.5, "n": 4, "ci": [0.0, 1.0]},
+        "refusal_after": {"point": 0.5, "n": 4, "ci": [0.0, 1.0]},
+        "kl": {"point": 0.0, "n": 4, "ci": [0.0, 0.0]},
+        "capability": [
+            {
+                "name": "toy benchmark",
+                "before": {"point": 0.5, "n": 4, "ci": [0.0, 1.0]},
+                "after": {"point": 0.5, "n": 4, "ci": [0.0, 1.0]},
+            }
+        ],
+        "self_invalidated": None,
+        "limits": ["These figures are a toy fixture for checking the format. They say nothing about any model."],
+        "edit_sha256": apply_recipe.edit_sha256(edit),
+    }
+
+
 def main():
     work = pathlib.Path(tempfile.mkdtemp(prefix="senbon-conformance-"))
     try:
@@ -124,7 +167,8 @@ def main():
             name="conformance-tiny",
             model_dir=model,
             model_id="senbonzakura/conformance-tiny",
-            revision="fixture",
+            revision=None,
+            revision_reason="conformance fixture: a fixed definition, not a hub checkpoint",
             directions_path=directions,
             layer_count=LAYERS,
             strength=1.0,
@@ -135,6 +179,7 @@ def main():
             },
             residual=residual,
             command="senbonzakura stream-bake --model MODEL --directions DIRS --out OUT",
+            provenance=FIXTURE_PROVENANCE,
         )
 
         FIXTURE.mkdir(parents=True, exist_ok=True)
@@ -170,7 +215,7 @@ def write_cases(valid, work):
         if expect == "refused":
             entry["code"] = code
         if output:
-            entry["output"] = output
+            entry["expected_checkpoint"] = output
         if ignored:
             entry["ignored_extensions"] = ignored
         if directions:
@@ -178,7 +223,8 @@ def write_cases(valid, work):
         cases.append(entry)
 
     def set_(path, value):
-        return {"op": "set", "path": path, "value": value}
+        # Copied, because a later operation in the same patch edits the value in place.
+        return {"op": "set", "path": path, "value": copy.deepcopy(value)}
 
     def delete(path):
         return {"op": "delete", "path": path}
@@ -259,6 +305,73 @@ def write_cases(valid, work):
             )
         ],
     )
+
+    add("provenance-missing", expect="refused", code="provenance-missing", patch=[delete(["provenance"])])
+    add(
+        "provenance-version-missing",
+        expect="refused",
+        code="provenance-invalid",
+        patch=[delete(["provenance", "tool", "version"])],
+    )
+    add(
+        "provenance-commit-unexplained",
+        expect="refused",
+        code="provenance-invalid",
+        patch=[set_(["provenance", "source"], {"commit": None, "dirty": None, "via": None})],
+    )
+    add("base-revision-unexplained", expect="refused", code="base-invalid", patch=[delete(["base", "revision_reason"])])
+
+    # The measured block. Each defective case first gives the recipe a complete, valid measured block and
+    # then breaks one thing in it, so the refusal can only be about that one thing.
+    toy = _toy_measured(valid["edit"])
+    add("measured-valid-applies", expect="applied", output="expected", patch=[set_(["measured"], toy)])
+    add(
+        "capability-not-measured-allowed",
+        expect="applied",
+        output="expected",
+        patch=[
+            set_(["measured"], toy),
+            set_(["measured", "capability"], {"status": "not_measured", "why": "conformance fixture: no benchmark"}),
+        ],
+    )
+
+    def defective(case_id, code, *defect):
+        add(case_id, expect="refused", code=code, patch=[set_(["measured"], toy), *defect])
+
+    defective("measured-instrument-missing", "measured-invalid", delete(["measured", "instrument"]))
+    defective(
+        "measured-corpus-unpinned",
+        "measured-invalid",
+        set_(["measured", "instrument", "corpus"], {"id": "conformance-tiny"}),
+    )
+    defective("measured-seed-missing", "measured-invalid", delete(["measured", "instrument", "seed"]))
+    defective("measured-figure-without-n", "measured-invalid", delete(["measured", "refusal_after", "n"]))
+    defective(
+        "measured-interval-excludes-point",
+        "measured-invalid",
+        set_(["measured", "refusal_before", "ci"], [0.6, 0.9]),
+    )
+    defective("measured-rate-below-zero", "measured-invalid", set_(["measured", "refusal_before", "ci"], [-0.5, 1.0]))
+    defective("measured-self-invalidated-missing", "measured-invalid", delete(["measured", "self_invalidated"]))
+    defective("measured-limits-empty", "measured-invalid", set_(["measured", "limits"], []))
+    defective("measured-capability-missing", "measured-invalid", delete(["measured", "capability"]))
+    defective(
+        "measured-capability-figure-without-interval",
+        "measured-invalid",
+        set_(
+            ["measured", "capability"],
+            [
+                {
+                    "name": "toy benchmark",
+                    "before": {"point": 0.5, "n": 4, "ci": [0.0, 1.0]},
+                    "after": {"point": 0.5, "n": 4},
+                }
+            ],
+        ),
+    )
+    defective("measured-for-another-edit", "measured-mismatch", set_(["measured", "edit_sha256"], "0" * 64))
+    # The figures were measured at strength 1.0, and the recipe now says 0.5: a figure moved onto a different edit.
+    defective("measured-edit-changed-after-measuring", "measured-mismatch", set_(["edit", "strength"], 0.5))
 
     # A direction set whose layer-0 row is scaled. The recipe pins this file's own hash, so the only
     # defect is the basis: the orthonormality check must be what refuses it.

@@ -99,6 +99,9 @@ def test_the_fixture_stays_small_enough_to_read(tmp_path):
     # Counts the fixture and both harness scripts: two checkpoints of about 7 kB each, the directions,
     # the valid and defective recipes as patches, and the harness and checker source. Excludes the
     # untracked stale copies the operator has yet to clear, and any cache directory.
+    # The ceiling rose from 48 kB to 80 kB when the provenance and measured cases arrived. Each measured
+    # defect carries a complete valid block, so that its refusal can only be about the one thing it
+    # breaks, and that is most of the growth. The fixture is still one sitting's reading.
     tracked = [
         p
         for p in FIXTURE.rglob("*")
@@ -107,7 +110,7 @@ def test_the_fixture_stays_small_enough_to_read(tmp_path):
         and p.relative_to(FIXTURE).as_posix() not in ("config.json", "model.safetensors")
     ]
     total = sum(p.stat().st_size for p in tracked)
-    assert total < 48 * 1024, total
+    assert total < 80 * 1024, total
 
 
 def test_the_applier_output_is_bit_identical_on_every_run(tmp_path):

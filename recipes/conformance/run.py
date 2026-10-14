@@ -69,7 +69,8 @@ def _apply_patch(doc, ops):
         for key in op["path"][:-1]:
             node = node[key]
         if op["op"] == "set":
-            node[op["path"][-1]] = op["value"]
+            # Copied: a later operation in the same patch edits the value in place.
+            node[op["path"][-1]] = copy.deepcopy(op["value"])
         elif op["op"] == "delete":
             del node[op["path"][-1]]
         else:
@@ -133,13 +134,13 @@ def run_case(template, case, tmp):
             f"expected ignored extensions {case.get('ignored_extensions', [])}, the tool reported {ignored}"
         )
         return result
-    if case.get("output"):
+    if case.get("expected_checkpoint"):
         if not out.is_dir():
             result["problem"] = f"the tool reported success but did not create {out}"
             return result
         try:
             actual = check.read_tensors(out)
-            expected = check.read_tensors(HERE / case["output"])
+            expected = check.read_tensors(HERE / case["expected_checkpoint"])
         except Exception as e:  # reported, never hidden: an unreadable output is a failed case
             result["problem"] = f"could not read the output checkpoint: {e}"
             return result

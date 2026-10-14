@@ -4,7 +4,7 @@
       "id": "valid",
       "expect": "applied",
       "patch": [],
-      "output": "expected"
+      "expected_checkpoint": "expected"
     },
     {
       "id": "descriptive-extension-ignored",
@@ -24,7 +24,7 @@
           ]
         }
       ],
-      "output": "expected",
+      "expected_checkpoint": "expected",
       "ignored_extensions": [
         "x_example_notes"
       ]
@@ -247,7 +247,1249 @@
           }
         }
       ],
-      "output": "expected"
+      "expected_checkpoint": "expected"
+    },
+    {
+      "id": "provenance-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "delete",
+          "path": [
+            "provenance"
+          ]
+        }
+      ],
+      "code": "provenance-missing"
+    },
+    {
+      "id": "provenance-version-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "delete",
+          "path": [
+            "provenance",
+            "tool",
+            "version"
+          ]
+        }
+      ],
+      "code": "provenance-invalid"
+    },
+    {
+      "id": "provenance-commit-unexplained",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "provenance",
+            "source"
+          ],
+          "value": {
+            "commit": null,
+            "dirty": null,
+            "via": null
+          }
+        }
+      ],
+      "code": "provenance-invalid"
+    },
+    {
+      "id": "base-revision-unexplained",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "delete",
+          "path": [
+            "base",
+            "revision_reason"
+          ]
+        }
+      ],
+      "code": "base-invalid"
+    },
+    {
+      "id": "measured-valid-applies",
+      "expect": "applied",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        }
+      ],
+      "expected_checkpoint": "expected"
+    },
+    {
+      "id": "capability-not-measured-allowed",
+      "expect": "applied",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "capability"
+          ],
+          "value": {
+            "status": "not_measured",
+            "why": "conformance fixture: no benchmark"
+          }
+        }
+      ],
+      "expected_checkpoint": "expected"
+    },
+    {
+      "id": "measured-instrument-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "delete",
+          "path": [
+            "measured",
+            "instrument"
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-corpus-unpinned",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "instrument",
+            "corpus"
+          ],
+          "value": {
+            "id": "conformance-tiny"
+          }
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-seed-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "delete",
+          "path": [
+            "measured",
+            "instrument",
+            "seed"
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-figure-without-n",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "delete",
+          "path": [
+            "measured",
+            "refusal_after",
+            "n"
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-interval-excludes-point",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "refusal_before",
+            "ci"
+          ],
+          "value": [
+            0.6,
+            0.9
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-rate-below-zero",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "refusal_before",
+            "ci"
+          ],
+          "value": [
+            -0.5,
+            1.0
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-self-invalidated-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "delete",
+          "path": [
+            "measured",
+            "self_invalidated"
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-limits-empty",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "limits"
+          ],
+          "value": []
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-capability-missing",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "delete",
+          "path": [
+            "measured",
+            "capability"
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-capability-figure-without-interval",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "capability"
+          ],
+          "value": [
+            {
+              "name": "toy benchmark",
+              "before": {
+                "point": 0.5,
+                "n": 4,
+                "ci": [
+                  0.0,
+                  1.0
+                ]
+              },
+              "after": {
+                "point": 0.5,
+                "n": 4
+              }
+            }
+          ]
+        }
+      ],
+      "code": "measured-invalid"
+    },
+    {
+      "id": "measured-for-another-edit",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "measured",
+            "edit_sha256"
+          ],
+          "value": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "code": "measured-mismatch"
+    },
+    {
+      "id": "measured-edit-changed-after-measuring",
+      "expect": "refused",
+      "patch": [
+        {
+          "op": "set",
+          "path": [
+            "measured"
+          ],
+          "value": {
+            "status": "measured",
+            "instrument": {
+              "scorer": "conformance fixture: a fixed toy scorer",
+              "corpus": {
+                "id": "conformance-tiny",
+                "revision": "fixture"
+              },
+              "partition": "none",
+              "seed": 0
+            },
+            "refusal_before": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "refusal_after": {
+              "point": 0.5,
+              "n": 4,
+              "ci": [
+                0.0,
+                1.0
+              ]
+            },
+            "kl": {
+              "point": 0.0,
+              "n": 4,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            },
+            "capability": [
+              {
+                "name": "toy benchmark",
+                "before": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                },
+                "after": {
+                  "point": 0.5,
+                  "n": 4,
+                  "ci": [
+                    0.0,
+                    1.0
+                  ]
+                }
+              }
+            ],
+            "self_invalidated": null,
+            "limits": [
+              "These figures are a toy fixture for checking the format. They say nothing about any model."
+            ],
+            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+          }
+        },
+        {
+          "op": "set",
+          "path": [
+            "edit",
+            "strength"
+          ],
+          "value": 0.5
+        }
+      ],
+      "code": "measured-mismatch"
     },
     {
       "id": "directions-not-orthonormal",
@@ -260,7 +1502,7 @@
             "directions",
             "sha256"
           ],
-          "value": "c086a8626ecdbff2e23b639c3467f6e0d4bcb132910ce9104ee767c2bdc9b90a"
+          "value": "fa16fc119a673a568bd4d7f9eb509ec059e2c814eaaf323d3872008787714a91"
         }
       ],
       "code": "directions-not-orthonormal",

@@ -56,6 +56,12 @@ CONVENTIONS
     tensors, measured on the input (`before`) and the output (`after`), in float64. It is required.
     It may say `"not_measured"` with a reason. When measured, this applier recomputes the figures and
     refuses a recipe whose recorded figures disagree.
+  - `provenance` is required. It names the tool and version that wrote the recipe and the commit it ran
+    from, or says why the commit is unknown.
+  - `measured` is required. It either says `"not_measured"` with a reason, or names its instrument
+    (scorer, pinned corpus, partition, seed), gives every figure its `n` and an interval, lists what the
+    figures do not say, and carries `edit_sha256`, the hash of the `edit` block it was measured on. The
+    applier checks that hash, so a figure cannot be attached to an edit it did not come from.
 
 The directions file is a safetensors file holding one float32 tensor named `dirs_per_position`, with
 shape [positions, K, hidden].
@@ -288,8 +294,63 @@ def load_recipe(path):
     for key in ("name", "base", "edit", "measured", "extensions"):
         if key not in recipe:
             raise RecipeError("recipe-invalid", f"the recipe has no {key!r} field, which the format requires.")
-    check_measured(recipe["measured"])
+    if "provenance" not in recipe:
+        raise RecipeError(
+            "provenance-missing",
+            "the recipe has no `provenance` block. A recipe must say which tool and version wrote it, "
+            "so a stranger can tell what produced it.",
+        )
+    check_provenance(recipe["provenance"])
+    check_measured(recipe["measured"], recipe["edit"])
     return recipe
+
+
+def _text(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def edit_sha256(edit):
+    """SHA-256 of the `edit` block in canonical JSON: sorted keys, no spaces, no NaN or infinity.
+
+    A measured block carries this hash so that its figures are bound to the exact edit they were
+    taken from. Copying a figure onto a recipe with a different strength or target fails here.
+    """
+    text = json.dumps(edit, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def check_provenance(provenance):
+    """Which tool wrote the recipe, and from which commit, or why the commit is unknown."""
+    if not isinstance(provenance, dict):
+        raise RecipeError("provenance-invalid", "`provenance` must be an object.")
+    tool = provenance.get("tool")
+    if not isinstance(tool, dict) or not _text(tool.get("name")) or not _text(tool.get("version")):
+        raise RecipeError(
+            "provenance-invalid",
+            "`provenance.tool` must name the tool and its version, so a reader can find the code that wrote it.",
+        )
+    source = provenance.get("source")
+    if not isinstance(source, dict):
+        raise RecipeError(
+            "provenance-invalid", "`provenance.source` must say which commit the tool ran from, or why it cannot."
+        )
+    commit = source.get("commit")
+    if commit is None:
+        if not _text(source.get("reason")):
+            raise RecipeError(
+                "provenance-invalid", "`provenance.source` has no commit, so it must say why in `reason`."
+            )
+    elif not _text(commit) or not _text(source.get("via")):
+        raise RecipeError(
+            "provenance-invalid",
+            "`provenance.source.commit` must be a commit, and `via` must say where it was read from.",
+        )
+    if source.get("dirty") not in (True, False, None):
+        raise RecipeError("provenance-invalid", "`provenance.source.dirty` must be true, false or null.")
 
 
 def check_extensions(recipe):
@@ -326,21 +387,103 @@ def check_extensions(recipe):
     return ignored
 
 
-def check_measured(measured):
-    """A measured block must say it was measured, or say why it was not, with `n` on each figure."""
+def check_measured(measured, edit):
+    """A measured block says it was measured, with its instrument and figures, or says why not.
+
+    Every figure carries its sample size `n` and an interval that contains the point. A rate must sit
+    between 0 and 1. The block must name the instrument precisely enough to rerun it, and it must be
+    bound to this edit by `edit_sha256`, so a figure cannot be attached to a recipe it did not measure.
+    """
     if not isinstance(measured, dict) or measured.get("status") not in ("measured", "not_measured"):
         raise RecipeError("measured-invalid", '`measured.status` must be "measured" or "not_measured".')
     if measured["status"] == "not_measured":
-        if not isinstance(measured.get("why"), str) or not measured["why"].strip():
+        if not _text(measured.get("why")):
             raise RecipeError("measured-invalid", "a `not_measured` recipe must say why in `measured.why`.")
         return
-    for key in ("refusal_before", "refusal_after", "kl"):
-        figure = measured.get(key)
-        if not isinstance(figure, dict) or not isinstance(figure.get("n"), int):
+    _check_instrument(measured.get("instrument"))
+    _check_figure(measured.get("refusal_before"), "measured.refusal_before", rate=True)
+    _check_figure(measured.get("refusal_after"), "measured.refusal_after", rate=True)
+    _check_figure(measured.get("kl"), "measured.kl", rate=False)
+    _check_capability(measured.get("capability"))
+    if "self_invalidated" not in measured:
+        raise RecipeError(
+            "measured-invalid",
+            "`measured.self_invalidated` must be present: null when the producing run did not invalidate "
+            "itself, otherwise the reason it did.",
+        )
+    if measured["self_invalidated"] is not None and not _text(measured["self_invalidated"]):
+        raise RecipeError("measured-invalid", "`measured.self_invalidated` must be null or a reason.")
+    limits = measured.get("limits")
+    if not isinstance(limits, list) or not limits or not all(_text(item) for item in limits):
+        raise RecipeError(
+            "measured-invalid",
+            "`measured.limits` must list, in plain words, what the figures do not say. It cannot be empty.",
+        )
+    if measured.get("edit_sha256") != edit_sha256(edit):
+        raise RecipeError(
+            "measured-mismatch",
+            "`measured.edit_sha256` is not the hash of this recipe's `edit` block. These figures were not "
+            "measured on this edit, so they cannot be attached to it.",
+        )
+
+
+def _check_instrument(instrument):
+    if not isinstance(instrument, dict):
+        raise RecipeError("measured-invalid", "`measured.instrument` must name the scorer, corpus, partition and seed.")
+    for key in ("scorer", "partition"):
+        if not _text(instrument.get(key)):
+            raise RecipeError("measured-invalid", f"`measured.instrument.{key}` must be named.")
+    corpus = instrument.get("corpus")
+    if not isinstance(corpus, dict) or not _text(corpus.get("id")) or not _text(corpus.get("revision")):
+        raise RecipeError(
+            "measured-invalid",
+            "`measured.instrument.corpus` must hold a pinned `id` and `revision`. A corpus that can change "
+            "under the same name cannot back a figure.",
+        )
+    seed = instrument.get("seed")
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise RecipeError(
+            "measured-invalid", "`measured.instrument.seed` must be a whole number, so the run can be repeated."
+        )
+
+
+def _check_figure(figure, where, *, rate):
+    if not isinstance(figure, dict):
+        raise RecipeError("measured-invalid", f"`{where}` must be an object holding point, n and ci.")
+    point, n, ci = figure.get("point"), figure.get("n"), figure.get("ci")
+    if not _finite(point):
+        raise RecipeError("measured-invalid", f"`{where}.point` must be a finite number.")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+        raise RecipeError(
+            "measured-invalid",
+            f"`{where}` has no sample size `n` of one or more. A figure without `n` cannot be read as a measurement.",
+        )
+    if not isinstance(ci, list) or len(ci) != 2 or not all(_finite(v) for v in ci) or not ci[0] <= point <= ci[1]:
+        raise RecipeError("measured-invalid", f"`{where}.ci` must be [low, high] and must contain the point.")
+    if rate and not (ci[0] >= 0 and ci[1] <= 1 and point >= 0 and point <= 1):
+        raise RecipeError(
+            "measured-invalid", f"`{where}` is a rate, so its point and interval must lie between 0 and 1."
+        )
+
+
+def _check_capability(capability):
+    if isinstance(capability, dict):
+        if capability.get("status") != "not_measured" or not _text(capability.get("why")):
             raise RecipeError(
                 "measured-invalid",
-                f"`measured.{key}` has no sample size `n`. A figure without `n` cannot be read as a measurement.",
+                "`measured.capability` must be a list of benchmark figures, or say `not_measured` with a reason.",
             )
+        return
+    if not isinstance(capability, list) or not capability:
+        raise RecipeError(
+            "measured-invalid",
+            "`measured.capability` must be a list of benchmark figures, or say `not_measured` with a reason.",
+        )
+    for entry in capability:
+        if not isinstance(entry, dict) or not _text(entry.get("name")):
+            raise RecipeError("measured-invalid", "each capability entry must name its benchmark.")
+        _check_figure(entry.get("before"), f"capability {entry['name']!r} before", rate=True)
+        _check_figure(entry.get("after"), f"capability {entry['name']!r} after", rate=True)
 
 
 def _finite_nonnegative(value, where):
@@ -658,6 +801,17 @@ def check_base(recipe, model_dir):
     base = recipe["base"]
     if not isinstance(base, dict):
         raise RecipeError("recipe-invalid", "`base` must be an object.")
+    if not _text(base.get("id")):
+        raise RecipeError("base-invalid", "`base.id` must name the base checkpoint.")
+    if base.get("revision") is None:
+        if not _text(base.get("revision_reason")):
+            raise RecipeError(
+                "base-invalid",
+                "`base.revision` is null and `base.revision_reason` does not say why. A local checkpoint has "
+                "no hub revision, so the reason must say what identifies it instead.",
+            )
+    elif not _text(base.get("revision")):
+        raise RecipeError("base-invalid", "`base.revision` must be a hub revision or a git sha, or null with a reason.")
     recorded = base.get("weights_sha256")
     if recorded is None:
         reason = base.get("weights_sha256_reason")

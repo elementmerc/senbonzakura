@@ -1,7 +1,8 @@
 {
   "base": {
     "id": "senbonzakura/conformance-tiny",
-    "revision": "fixture",
+    "revision": null,
+    "revision_reason": "conformance fixture: a fixed definition, not a hub checkpoint",
     "weights_sha256": "8b319e9edb7e97c4280f6706fb0d3724ad570df3d7badb9dcf690cdcd5a57a75"
   },
   "edit": {
@@ -23,7 +24,7 @@
       ],
       "encoding": "safetensors",
       "file": "directions.safetensors",
-      "sha256": "55dd39736fca94626377c2966a6550dcb114ca1fd138279a2d19b56153d20584",
+      "sha256": "e4c751beed31aee595096a8ec1737ddb3846f0e89ff268dc2bbd5e00d99c8465",
       "shape": [
         3,
         2,
@@ -53,6 +54,18 @@
   },
   "name": "conformance-tiny",
   "profile": "core/1",
+  "provenance": {
+    "source": {
+      "commit": null,
+      "dirty": null,
+      "reason": "conformance fixture: rebuilt from a fixed definition, so it does not record a checkout",
+      "via": null
+    },
+    "tool": {
+      "name": "senbonzakura",
+      "version": "0.5.1"
+    }
+  },
   "reproduce": {
     "command": "senbonzakura stream-bake --model MODEL --directions DIRS --out OUT",
     "tool": "senbonzakura"

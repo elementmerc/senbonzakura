@@ -23,8 +23,10 @@ standard edit. Sparsity and rounds are the two that exist in this tool and not i
 
 import hashlib
 import json
+import math
 import pathlib
 import re
+import shlex
 
 from . import crashsafe, streambake
 
@@ -50,7 +52,79 @@ RESIDUAL_DEFINITION = (
 
 
 class RecipeError(Exception):
-    """A recipe that cannot be written honestly, with a sentence a person can act on."""
+    """A recipe that cannot be written honestly, with a sentence a person can act on.
+
+    `code` is the same stable refusal code the reference applier uses for the same defect, so the two
+    implementations can be held to the same answers by a test.
+    """
+
+    def __init__(self, message, code="recipe-invalid"):
+        super().__init__(message)
+        self.code = code
+
+
+def _text(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def edit_sha256(edit):
+    """The same canonical hash the reference applier computes. The two must not drift apart."""
+    text = json.dumps(edit, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+#: Asks `provenance_block` to find the commit itself. A distinct object, because `None` already means
+#: "the commit could not be found", and the two must not be confused.
+_DETECT = object()
+
+
+def provenance_block(source=_DETECT):
+    """Which tool wrote the recipe, and the commit it ran from, or why that is unknown.
+
+    Deliberately narrower than `crashsafe.provenance`. A recipe is a small file people copy and diff, so it
+    carries no platform, package list or device, which would make two identical edits differ by machine.
+    """
+    from . import __version__
+
+    if source is _DETECT:
+        source = crashsafe.git_commit()
+    if source is None:
+        commit = {
+            "commit": None,
+            "dirty": None,
+            "via": None,
+            "reason": "no source knew which commit this tool ran from",
+        }
+    else:
+        commit = {"commit": source["commit"], "dirty": source["dirty"], "via": source["source"]}
+    return {"tool": {"name": "senbonzakura", "version": __version__}, "source": commit}
+
+
+#: Absolute paths in a recorded command. The bake records its own argv, so a path given on the command line
+#: would otherwise travel into every recipe, and a recipe is meant to leave the machine that made it.
+_ABSOLUTE_PATH = re.compile(r"^(/|~|[A-Za-z]:[\\/])")
+
+
+def public_command(command):
+    """The command with each absolute path reduced to its last component.
+
+    The recipe says what was run, and the names of the files are enough to rerun it beside those files.
+    Where a path sits in a `--flag=value` token, only the value is reduced.
+    """
+    words = []
+    for word in shlex.split(command):
+        flag, sep, value = word.partition("=")
+        if sep and _ABSOLUTE_PATH.match(value):
+            words.append(f"{flag}={pathlib.PurePath(value.replace(chr(92), '/')).name or value}")
+        elif not sep and _ABSOLUTE_PATH.match(word):
+            words.append(pathlib.PurePath(word.replace(chr(92), "/")).name or word)
+        else:
+            words.append(word)
+    return shlex.join(words)
 
 
 def _sha256(path):
@@ -159,18 +233,160 @@ def measure_residual(source_dir, baked_dir, directions_path, *, layer_count, tar
     }
 
 
+# ── the checks the reference applier makes on the blocks this writer creates ─────────────────
+# The applier is the reader of record. These mirror its rules for provenance, base identity and the
+# measured block, with the same refusal codes, so a writer cannot produce a block the applier would
+# refuse. `tests/test_recipe_writer.py` runs both over the same defective recipes and holds them to
+# the same answers.
+
+
+def validate_document(doc):
+    """Refuses a recipe document whose provenance, base identity or measured block the applier would refuse."""
+    if not isinstance(doc, dict):
+        raise RecipeError("a recipe is a JSON object.")
+    if "provenance" not in doc:
+        raise RecipeError(
+            "the recipe has no `provenance` block. It must say which tool and version wrote it.",
+            code="provenance-missing",
+        )
+    _check_provenance(doc["provenance"])
+    _check_base_identity(doc.get("base"))
+    _check_measured(doc.get("measured"), doc.get("edit"))
+
+
+def _check_provenance(provenance):
+    if not isinstance(provenance, dict):
+        raise RecipeError("`provenance` must be an object.", code="provenance-invalid")
+    tool = provenance.get("tool")
+    if not isinstance(tool, dict) or not _text(tool.get("name")) or not _text(tool.get("version")):
+        raise RecipeError("`provenance.tool` must name the tool and its version.", code="provenance-invalid")
+    source = provenance.get("source")
+    if not isinstance(source, dict):
+        raise RecipeError(
+            "`provenance.source` must say which commit the tool ran from, or why not.", code="provenance-invalid"
+        )
+    commit = source.get("commit")
+    if commit is None:
+        if not _text(source.get("reason")):
+            raise RecipeError(
+                "`provenance.source` has no commit, so it must say why in `reason`.", code="provenance-invalid"
+            )
+    elif not _text(commit) or not _text(source.get("via")):
+        raise RecipeError(
+            "`provenance.source.commit` must be a commit, with `via` naming its origin.", code="provenance-invalid"
+        )
+    if source.get("dirty") not in (True, False, None):
+        raise RecipeError("`provenance.source.dirty` must be true, false or null.", code="provenance-invalid")
+
+
+def _check_base_identity(base):
+    if not isinstance(base, dict) or not _text(base.get("id")):
+        raise RecipeError("`base.id` must name the base checkpoint.", code="base-invalid")
+    if base.get("revision") is None:
+        if not _text(base.get("revision_reason")):
+            raise RecipeError(
+                "`base.revision` is null and `base.revision_reason` does not say why.", code="base-invalid"
+            )
+    elif not _text(base.get("revision")):
+        raise RecipeError(
+            "`base.revision` must be a hub revision or a git sha, or null with a reason.", code="base-invalid"
+        )
+
+
+def _check_measured(measured, edit):
+    if not isinstance(measured, dict) or measured.get("status") not in ("measured", "not_measured"):
+        raise RecipeError('`measured.status` must be "measured" or "not_measured".', code="measured-invalid")
+    if measured["status"] == "not_measured":
+        if not _text(measured.get("why")):
+            raise RecipeError("a `not_measured` recipe must say why in `measured.why`.", code="measured-invalid")
+        return
+    _check_instrument(measured.get("instrument"))
+    _check_figure(measured.get("refusal_before"), "measured.refusal_before", rate=True)
+    _check_figure(measured.get("refusal_after"), "measured.refusal_after", rate=True)
+    _check_figure(measured.get("kl"), "measured.kl", rate=False)
+    _check_capability(measured.get("capability"))
+    if "self_invalidated" not in measured:
+        raise RecipeError("`measured.self_invalidated` must be present, null or a reason.", code="measured-invalid")
+    if measured["self_invalidated"] is not None and not _text(measured["self_invalidated"]):
+        raise RecipeError("`measured.self_invalidated` must be null or a reason.", code="measured-invalid")
+    limits = measured.get("limits")
+    if not isinstance(limits, list) or not limits or not all(_text(item) for item in limits):
+        raise RecipeError(
+            "`measured.limits` must list what the figures do not say. It cannot be empty.", code="measured-invalid"
+        )
+    if measured.get("edit_sha256") != edit_sha256(edit):
+        raise RecipeError(
+            "`measured.edit_sha256` is not the hash of this recipe's `edit` block, so these figures were not "
+            "measured on this edit.",
+            code="measured-mismatch",
+        )
+
+
+def _check_instrument(instrument):
+    if not isinstance(instrument, dict):
+        raise RecipeError(
+            "`measured.instrument` must name the scorer, corpus, partition and seed.", code="measured-invalid"
+        )
+    for key in ("scorer", "partition"):
+        if not _text(instrument.get(key)):
+            raise RecipeError(f"`measured.instrument.{key}` must be named.", code="measured-invalid")
+    corpus = instrument.get("corpus")
+    if not isinstance(corpus, dict) or not _text(corpus.get("id")) or not _text(corpus.get("revision")):
+        raise RecipeError(
+            "`measured.instrument.corpus` must hold a pinned `id` and `revision`.", code="measured-invalid"
+        )
+    seed = instrument.get("seed")
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise RecipeError("`measured.instrument.seed` must be a whole number.", code="measured-invalid")
+
+
+def _check_figure(figure, where, *, rate):
+    if not isinstance(figure, dict):
+        raise RecipeError(f"`{where}` must be an object holding point, n and ci.", code="measured-invalid")
+    point, n, ci = figure.get("point"), figure.get("n"), figure.get("ci")
+    if not _finite(point):
+        raise RecipeError(f"`{where}.point` must be a finite number.", code="measured-invalid")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+        raise RecipeError(f"`{where}` has no sample size `n` of one or more.", code="measured-invalid")
+    if not isinstance(ci, list) or len(ci) != 2 or not all(_finite(v) for v in ci) or not ci[0] <= point <= ci[1]:
+        raise RecipeError(f"`{where}.ci` must be [low, high] and must contain the point.", code="measured-invalid")
+    if rate and not (ci[0] >= 0 and ci[1] <= 1 and point >= 0 and point <= 1):
+        raise RecipeError(f"`{where}` is a rate, so it must lie between 0 and 1.", code="measured-invalid")
+
+
+def _check_capability(capability):
+    if isinstance(capability, dict):
+        if capability.get("status") != "not_measured" or not _text(capability.get("why")):
+            raise RecipeError(
+                "`measured.capability` must be a list of figures, or `not_measured` with a reason.",
+                code="measured-invalid",
+            )
+        return
+    if not isinstance(capability, list) or not capability:
+        raise RecipeError(
+            "`measured.capability` must be a list of figures, or `not_measured` with a reason.", code="measured-invalid"
+        )
+    for entry in capability:
+        if not isinstance(entry, dict) or not _text(entry.get("name")):
+            raise RecipeError("each capability entry must name its benchmark.", code="measured-invalid")
+        _check_figure(entry.get("before"), f"capability {entry['name']!r} before", rate=True)
+        _check_figure(entry.get("after"), f"capability {entry['name']!r} after", rate=True)
+
+
 def build(
     *,
     name,
     model_dir,
     model_id,
-    revision,
     directions_path,
     layer_count,
     strength,
     restore_norms,
     measured,
     command,
+    revision=None,
+    revision_reason=None,
+    provenance=None,
     edit_tensors=("attn", "mlp"),
     sparsity=0.0,
     rounds=0,
@@ -218,6 +434,8 @@ def build(
 
     sha, reason = base_hash(model_dir)
     base = {"id": str(model_id), "revision": revision, "weights_sha256": sha}
+    if revision is None:
+        base["revision_reason"] = revision_reason
     if sha is None:
         base["weights_sha256_reason"] = reason
 
@@ -237,11 +455,12 @@ def build(
     else:
         residual_block = residual
 
-    return {
+    doc = {
         "schema": SCHEMA,
         "profile": PROFILE,
         "name": str(name),
         "base": base,
+        "provenance": provenance if provenance is not None else provenance_block(),
         "extensions": [],
         "edit": {
             "method": "projection",
@@ -264,8 +483,10 @@ def build(
             },
         },
         "measured": measured_block,
-        "reproduce": {"tool": "senbonzakura", "command": str(command)},
+        "reproduce": {"tool": "senbonzakura", "command": public_command(str(command))},
     }
+    validate_document(doc)
+    return doc
 
 
 def write(path, recipe):
@@ -275,6 +496,10 @@ def write(path, recipe):
         fh.write(text)
     return pathlib.Path(path)
 
+
+#: A bake reads a local directory, which has no hub revision. The weights hash is what identifies it, so the
+#: recipe says so rather than writing a placeholder that looks like a revision.
+LOCAL_REVISION_REASON = "a local checkpoint directory has no hub revision, so weights_sha256 identifies it"
 
 #: The reason recorded when the operator skips the residual measurement. Named so a reader of the
 #: recipe can tell a choice from an omission.
@@ -360,7 +585,8 @@ def write_for_bake(
             name=pathlib.Path(out).name,
             model_dir=model,
             model_id=pathlib.Path(model).name,
-            revision="local",
+            revision=None,
+            revision_reason=LOCAL_REVISION_REASON,
             directions_path=directions,
             layer_count=layer_count,
             strength=strength,

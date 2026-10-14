@@ -141,3 +141,26 @@ def test_a_bake_that_edits_a_tensor_the_targets_do_not_name_gets_no_recipe(tmp_p
     assert _bake(model, dirs, out) == 0
     assert not (out / "recipe.json").exists()
     assert "linear_attn.out_proj" in capsys.readouterr().out
+
+
+def test_the_recipe_a_bake_writes_names_no_absolute_path(bake_inputs, tmp_path):
+    model, dirs = bake_inputs
+    out = tmp_path / "out"
+    _bake(model, dirs, out)
+    recipe = json.loads((out / "recipe.json").read_text(encoding="utf-8"))
+    assert str(tmp_path) not in json.dumps(recipe)
+    assert recipe["reproduce"]["command"] == (
+        "senbonzakura stream-bake --model model --directions directions.safetensors --out out"
+    )
+
+
+def test_the_recipe_a_bake_writes_says_it_has_no_hub_revision_and_what_identifies_it(bake_inputs, tmp_path):
+    model, dirs = bake_inputs
+    out = tmp_path / "out"
+    _bake(model, dirs, out)
+    recipe = json.loads((out / "recipe.json").read_text(encoding="utf-8"))
+    assert recipe["base"]["revision"] is None
+    assert "weights_sha256" in recipe["base"]["revision_reason"]
+    assert recipe["base"]["weights_sha256"]
+    assert recipe["provenance"]["tool"]["name"] == "senbonzakura"
+    assert recipe["provenance"]["source"]["commit"] or recipe["provenance"]["source"]["reason"]

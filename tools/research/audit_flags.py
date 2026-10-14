@@ -100,6 +100,12 @@ def is_namespace(node):
     return False
 
 
+def _is_parse_call(node):
+    """True for `<anything>.parse_args(...)`, whatever the parser was built from."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "parse_args")
+
+
 def dest_of(call):
     """Mirror argparse's own dest derivation for an add_argument call."""
     for kw in call.keywords:
@@ -128,6 +134,13 @@ class _Walk(ast.NodeVisitor):
     def __init__(self, module, declared, read, splat, imports, forwards, switched_off=None):
         self.module, self.declared, self.read, self.splat = module, declared, read, splat
         self.imports, self.forwards = imports, forwards
+        # NAMESPACES BY BINDING, NOT BY NAME. A name is a parsed namespace in the scope where it was
+        # bound from a `parse_args(...)` call, whatever it is called: `chosen = build().parse_args(...)`
+        # makes `chosen.trials` a read of `--trials`. Each scope maps a name to True (bound from a
+        # parse) or to None (bound or passed as anything else, which shadows an outer binding and falls
+        # back to NAMESPACE_NAMES). Scopes are lexical, so a name bound in one function says nothing
+        # about a name of the same spelling in another.
+        self._scopes = [{}]
         # A SHARED PARENT PARSER CAN BE ASKED FOR LESS THAN ALL OF IT. `loader_parser` takes
         # `chat_template=True` and `model_required=True`, and a caller passing False gets a parser
         # that does not declare that flag at all. Without this, attributing the parent's whole
@@ -155,10 +168,51 @@ class _Walk(ast.NodeVisitor):
     def _here(self):
         return self._fn[-1] if self._fn else "<module>"
 
+    def _is_namespace_here(self, node):
+        """True when `node` is a parsed namespace at this point in the walk.
+
+        A bound name answers for itself, and an unbound one falls back to the name convention. The
+        convention is kept because a parameter is named by its caller (`def run(args)`), and nothing
+        in the function binds it to anything the walker could see.
+        """
+        if isinstance(node, ast.Name):
+            for scope in reversed(self._scopes):
+                if node.id in scope:
+                    if scope[node.id]:
+                        return True
+                    break
+        return is_namespace(node)
+
     def visit_FunctionDef(self, node):
         self._fn.append(node.name)
+        # Parameters shadow whatever an outer scope bound under the same name. They are not
+        # parse results, so they are recorded as None and keep the name convention.
+        params = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        params += [a for a in (node.args.vararg, node.args.kwarg) if a is not None]
+        self._scopes.append({a.arg: None for a in params})
         self.generic_visit(node)
+        self._scopes.pop()
         self._fn.pop()
+
+    def _bind(self, targets, value):
+        bound = True if _is_parse_call(value) else None
+        for target in targets:
+            if isinstance(target, ast.Name):
+                self._scopes[-1][target.id] = bound
+
+    def visit_Assign(self, node):
+        # The value is read before the target is bound, so `x = f(x.attr)` reads the old `x`.
+        self.visit(node.value)
+        self._bind(node.targets, node.value)
+        for target in node.targets:
+            self.visit(target)
+
+    def visit_AnnAssign(self, node):
+        if node.value is not None:
+            self.visit(node.value)
+            self._bind([node.target], node.value)
+        self.visit(node.target)
+        self.visit(node.annotation)
 
     # ast.NodeVisitor dispatches on the node's class name, so this spelling is the stdlib's
     # contract rather than a naming choice of ours.
@@ -170,7 +224,7 @@ class _Walk(ast.NodeVisitor):
         # itself, so `cli` (which forwards to `run_parsed` and also reads dozens of flags) stays
         # answerable and the original `--chat-template` catch survives.
         for arg in list(node.args) + [kw.value for kw in node.keywords]:
-            if isinstance(arg, ast.Name) and arg.id in NAMESPACE_NAMES:
+            if isinstance(arg, ast.Name) and self._is_namespace_here(arg):
                 self.forwards.add(self.module)
         f = node.func
         if isinstance(f, ast.Attribute) and f.attr == "add_argument":
@@ -186,16 +240,16 @@ class _Walk(ast.NodeVisitor):
                 if (kw.arg and isinstance(kw.value, ast.Constant)
                         and kw.value.value is False):
                     self.switched_off.setdefault(self.module, set()).add((f.id, kw.arg))
-            if f.id == "getattr" and len(node.args) >= 2 and is_namespace(node.args[0]):
+            if f.id == "getattr" and len(node.args) >= 2 and self._is_namespace_here(node.args[0]):
                 key = node.args[1]
                 if isinstance(key, ast.Constant) and isinstance(key.value, str):
                     self.read.setdefault(key.value, set()).add((self.module, self._here()))
-            elif f.id == "vars" and node.args and is_namespace(node.args[0]):
+            elif f.id == "vars" and node.args and self._is_namespace_here(node.args[0]):
                 self.splat.append((self.module, node.lineno))
         self.generic_visit(node)
 
     def visit_Attribute(self, node):
-        if isinstance(node.ctx, ast.Load) and is_namespace(node.value):
+        if isinstance(node.ctx, ast.Load) and self._is_namespace_here(node.value):
             self.read.setdefault(node.attr, set()).add((self.module, self._here()))
         self.generic_visit(node)
 

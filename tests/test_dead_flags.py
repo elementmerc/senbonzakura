@@ -433,3 +433,72 @@ def test_a_module_that_reads_one_real_flag_is_still_answerable(tmp_path):
     assert "device" in dropped, (
         "parser.py reads `trials`, so it is not a pure declarer and must answer for `device`, "
         f"which it declares and never reads. Got: {unkept}")
+
+
+# ── a parsed namespace is recognised by what bound it, not by what it is called ──────────────────
+def test_a_name_bound_to_a_parse_is_a_namespace_whatever_it_is_called(tmp_path):
+    """The binding is the evidence, not the spelling. `zzq` is on no list anywhere, and the read of
+    `--thing` through it is still a read. A name list here would fix this spelling and leave the next
+    author's `chosen` or `opts` reported dead.
+    """
+    dead, _inspected, unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def run(argv):
+            zzq = build_parser().parse_args(argv)
+            return zzq.thing
+    """)
+    assert not dead and not unkept, (dead, unkept)
+
+
+def test_a_name_rebound_to_something_else_stops_being_a_namespace(tmp_path):
+    """A parse result that is rebound to something else is no longer the namespace, so a read of
+    `--thing` through the new value is not a read of the flag.
+    """
+    dead, _inspected, _unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def run(argv):
+            zzq = build_parser().parse_args(argv)
+            zzq = load_config()
+            return zzq.thing
+    """)
+    assert [d for d, _ in dead] == ["thing"]
+
+
+def test_a_parse_result_is_not_a_namespace_in_another_function(tmp_path):
+    """Scopes are lexical. `zzq` is bound from a parse in one function and is an unrelated name in
+    the next, so reading `.thing` there is not a read of the flag.
+    """
+    dead, _inspected, _unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def first(argv):
+            zzq = build_parser().parse_args(argv)
+            return zzq.kept
+
+        def second(tok):
+            return zzq.thing
+    """)
+    assert "thing" in [d for d, _ in dead]
+
+
+def test_a_parameter_shadows_an_outer_parse_result(tmp_path):
+    """A parameter is a new name in its function, even when an enclosing scope bound the same name
+    to a parse. Reads through it are not reads through the outer namespace.
+    """
+    dead, _inspected, _unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def outer(argv):
+            n = build_parser().parse_args(argv)
+
+            def inner(n):
+                return n.thing
+            return inner
+    """)
+    assert [d for d, _ in dead] == ["thing"]

@@ -121,6 +121,13 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # nobody can run is the same claim made by assertion, which is what the format exists to
     # replace.
     "prereg": ("prereg", "main"),
+    # THE SIXTH THAT NEEDS NOTHING, and the only one with a user interface. It starts a page on
+    # the loopback address that draws artefacts this tool has already written: no torch, no model,
+    # no network, and nothing outside the standard library on either side of it. That is a
+    # property the install is tested for rather than told, because a chart library or a web
+    # framework arriving through a transitive dependency would quietly kill the checker's "no
+    # torch" promise one release later.
+    "workbench": ("workbench.cli", "main"),
     # THE FIFTH THAT NEEDS NOTHING, and the one that answers a question people ask before they
     # install anything: will this model fit on my machine, and how long would it take? It reads
     # the checkpoint's safetensors headers, measures the card, the memory, the disk and whether

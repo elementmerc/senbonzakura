@@ -290,10 +290,41 @@ site having been built.
 asking a renderer to embolden the regular, which smears outlines rather than selecting a drawn
 weight.
 
-**Not shipped in the wheel.** These files are build-time inputs for the brand assets. They are not
-packaged, not imported, and reach no user through PyPI, so they carry no notice obligation into
-the distributed artefact. The obligation they do carry, redistribution of the font within this
-repository, is met by `OFL.txt` sitting next to them.
+**Now shipped in the wheel as well, since the workbench viewer.** This section used to end by
+saying these files were build-time inputs that reached no user through PyPI. That stopped being
+true when the viewer began setting its page in the project's own typeface: both cuts and `OFL.txt`
+are copied into `src/senbonzakura/workbench/core/static/` and are package data, so a user who
+installs from PyPI receives them.
+
+The obligation is the same one and it is met the same way, by `OFL.txt` sitting beside them in
+both places. It is recorded here because a notice that quietly stops describing the artefact is
+worse than no notice: the sentence was accurate when it was written and would have gone on being
+read as accurate.
+
+**Why vendored rather than fetched.** The viewer loads nothing from a network, by design and by
+content security policy, so a page that asked a font service for a face would show a system
+fallback on a machine with no network and fail its own promise to work offline.
+
+## Lucide icons, vendored as drawings for the workbench viewer
+
+**What it is and where it sits.** Seventeen of Lucide's icons, as the node data that draws them,
+in `src/senbonzakura/workbench/core/static/icons.js`. Each one is a handful of coordinates for a
+24 by 24 stroke drawing. No Lucide code is included: the function that turns the data into an
+element is this project's own, and is in the same file above the data.
+
+**Licence: ISC.** Copyright (c) for portions of Lucide are held by Lucide Contributors, 2022; the
+set derives from Feather (copyright (c) 2013 to 2017 Cole Bemis), also ISC. The ISC licence
+permits use and redistribution with the copyright notice and permission notice retained, which is
+what this section is.
+
+**Why the drawings and not the package.** The sister project this icon set is inherited from is a
+desktop application with a node toolchain, where `lucide-react` is one line in a manifest. The
+viewer ships inside a Python wheel, has no build step, and loads nothing from a network, so the
+choice was between vendoring the coordinates and acquiring a front-end toolchain for the sake of
+seventeen pictures. The coordinates are a few kilobytes of data and cannot execute anything.
+
+**Shipped in the wheel**, unlike the vendored font above: the viewer's static files are package
+data, so a user who installs from PyPI receives these drawings and this notice travels with them.
 
 ## Licence reach, and why this file stops where it does
 

@@ -29,6 +29,16 @@ Senbonzakura is for people aged 18 and over. The models it produces will talk ab
 including violence, self-harm and sexual content, with no filter in the way. That isn't
 something children should be handed, and it isn't something you should hand them either.
 
+It isn't only about what the models say. One ordinary run unpacks thousands of harmful prompts
+onto the machine it runs on. If that machine is administered by somebody else, or the account is
+shared with somebody under 18, the corpus lands there too.
+
+Nothing in the tool checks your age. This is a condition of use, not a control.
+
+Writing simply is not the same as writing for children. The documentation here explains things
+plainly because somebody meeting a method for the first time deserves plain language, not because
+the audience is young.
+
 If you're under 18, please don't use it. If you're an adult sharing a model made with it, the
 rule above applies twice: say what it is, and keep it away from anyone who shouldn't be
 reading its answers.
@@ -100,8 +110,19 @@ Security issues, licence problems, and misuse of anything this project publishes
 at the repository, or contact the maintainer. If the report is sensitive, say so and do not put
 the detail in the issue.
 
-## No warranty
+## No warranty, and where responsibility sits
 
 This software comes with no warranty of any kind, on its correctness, its fitness for any
 purpose, or the accuracy of any number it produces. Responsibility for what is done with it, and
 with any model modified or measured using it, sits with whoever does it.
+
+That is worth spelling out, because the thing this tool produces is a model that will answer
+requests the original declined. **You are the one who runs it, you are the one who decides what to
+ask the result, and you are the one answerable for what comes out.** Neither the project nor its
+maintainer is a party to your use of it, reviews what you generate, or carries liability for it.
+To the extent the law where you are allows, that liability is excluded; where it does not, it is
+limited to the minimum that law permits.
+
+Nothing here is legal advice, and nothing here changes the AGPL-3.0-or-later terms the software is
+under. Sections 15 and 16 of that licence are the warranty and liability terms that govern; this
+section says in plainer words what they already say.

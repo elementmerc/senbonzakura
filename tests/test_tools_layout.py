@@ -45,6 +45,7 @@ GROUPS = {
     "dev": "a convenience for somebody working on the tool, run by hand",
     "hooks": "the body of a git hook, wired in by a symlink under .githooks/",
     "research": "a diagnostic or experiment, usually needing a model and a GPU",
+    "workbench": "serves or checks the workbench viewer, and holds the assets it draws with",
 }
 
 _ROOT_FROM_FILE = re.compile(r"Path\(__file__\)\.resolve\(\)\.parents\[(\d+)\]")

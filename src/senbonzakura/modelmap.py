@@ -194,6 +194,23 @@ SHARED_EXPERT_WIDTH_KEYS = ("shared_expert_intermediate_size", "moe_shared_exper
 DENSE_PREFIX_KEY = "num_dense_layers"
 DENSE_INDEX_KEY = "mlp_only_layers"
 
+#: GGUF metadata spellings, after the architecture prefix is stripped. A GGUF names its keys
+#: `<architecture>.<key>`, so `qwen3moe.expert_count` and `llama.block_count` are the same question
+#: asked of two families. Each entry maps a GGUF suffix to the config key it answers, so the rest of
+#: this module reads a GGUF exactly as it reads a config. Checked against Qwen3-30B-A3B-Instruct-2507:
+#: the GGUF metadata values equal the values in the safetensors config of the same model.
+GGUF_METADATA_SPELLINGS = {
+    "block_count": "num_hidden_layers",
+    "expert_count": "num_local_experts",
+    "expert_used_count": "num_experts_per_tok",
+    "expert_feed_forward_length": "moe_intermediate_size",
+    "embedding_length": "hidden_size",
+    "attention.head_count": "num_attention_heads",
+    "attention.head_count_kv": "num_key_value_heads",
+    "feed_forward_length": "intermediate_size",
+    "context_length": "max_position_embeddings",
+}
+
 #: Where the decoder stack hangs, as a dotted attribute path, MOST SPECIFIC FIRST AND BARE LAST.
 #:
 #: THE ORDER IS LOAD-BEARING AND IT IS THE WHOLE SAFETY STORY OF THIS LIST. Get it wrong on a
@@ -468,6 +485,8 @@ class ModelMap:
     #: Where a multi-token prediction head sits, when tensor names were supplied. Unknown with a
     #: reason otherwise, because the config's count says whether one exists and never where.
     prediction_head: PredictionHead | None = None
+    #: Expert storage read from the tensor names and shapes. None when no tensor inventory was given.
+    observed_experts: ObservedExperts | None = None
     #: Why the residual stream's actual path is not in this record. Always populated.
     residual_path_why: str = ""
     #: How many blocks share one attention residual, where a config declares cross-layer sharing.
@@ -705,6 +724,82 @@ def _mechanisms_from_strings(raw, key):
     kinds = [MECHANISM_BY_VALUE.get(value, BlockKind.UNKNOWN) for value in raw]
     unmapped = sorted({v for v in raw if v not in MECHANISM_BY_VALUE})
     return Mechanisms(kinds=Resolved(value=kinds, source=key), raw=raw, unmapped=tuple(unmapped))
+
+
+@dataclass(frozen=True)
+class ObservedExperts:
+    """Where a checkpoint's experts are stored, read from its tensor names and shapes.
+
+    `storage` is "per_expert" when each expert is its own tensor (the safetensors layout), "stacked"
+    when every expert of a block sits in one tensor (the GGUF layout), and None when no expert
+    tensor was seen. `count` is the number of experts in one block, taken from the names for
+    per-expert storage and from the leading shape axis for stacked storage. A stacked tensor whose
+    shape is not known gives no count, and the reason says so rather than reporting zero.
+    """
+
+    storage: str | None
+    count: int | None
+    why: str | None = None
+
+
+def observed_experts(tensor_shapes):
+    """Expert storage and count from `{name: shape-or-None}`, in torch axis order.
+
+    The per-expert form is recognised from `.experts.<n>.` in a name, and the count is one more
+    than the largest index seen in a single block. The stacked form is recognised from an
+    `_exps.weight` name, and its count is the leading axis of the shape. GGUF writes that shape
+    fastest-moving axis first, so the reader must have reversed it before calling this.
+    """
+    per_block = {}
+    stacked_counts = []
+    stacked_unknown = 0
+    for name, shape in tensor_shapes.items():
+        if ".experts." in name:
+            stem, rest = name.split(".experts.", 1)
+            index = rest.split(".", 1)[0]
+            if index.isdigit():
+                per_block.setdefault(stem, set()).add(int(index))
+        if name.endswith("_exps.weight"):
+            if shape:
+                stacked_counts.append(int(shape[0]))
+            else:
+                stacked_unknown += 1
+    if per_block and stacked_counts:
+        return ObservedExperts(storage=None, count=None, why=(
+            "this checkpoint names experts both one tensor each and stacked, which no single "
+            "layout describes, so neither count is reported"))
+    if per_block:
+        counts = {1 + max(indices) for indices in per_block.values()}
+        if len(counts) > 1:
+            return ObservedExperts(storage="per_expert", count=None, why=(
+                f"the blocks disagree on how many experts they hold: {sorted(counts)}"))
+        return ObservedExperts(storage="per_expert", count=counts.pop())
+    if stacked_counts:
+        if len(set(stacked_counts)) > 1:
+            return ObservedExperts(storage="stacked", count=None, why=(
+                f"the stacked expert tensors disagree on their leading axis: {sorted(set(stacked_counts))}"))
+        return ObservedExperts(storage="stacked", count=stacked_counts[0])
+    if stacked_unknown:
+        return ObservedExperts(storage="stacked", count=None, why=(
+            "the stacked expert tensors carry no shape in this inventory, so their count is unknown"))
+    return ObservedExperts(storage=None, count=None, why="no expert tensor is named in this checkpoint")
+
+
+def gguf_config(metadata):
+    """A config-shaped dict from GGUF metadata, spelled the way `GGUF_METADATA_SPELLINGS` says.
+
+    The architecture prefix is taken from `general.architecture` and stripped, so the same table
+    serves every GGUF family. Keys the table does not know are left out rather than guessed.
+    """
+    arch = metadata.get("general.architecture")
+    if not isinstance(arch, str):
+        return {}
+    cfg = {"model_type": arch}
+    for suffix, key in GGUF_METADATA_SPELLINGS.items():
+        value = metadata.get(f"{arch}.{suffix}")
+        if value is not None:
+            cfg[key] = value
+    return cfg
 
 
 def experts(cfg):
@@ -1325,7 +1420,7 @@ def _config_dict(cfg):
     return {}
 
 
-def describe(model=None, config=None, *, count_mixers=True, tensor_names=None):
+def describe(model=None, config=None, *, count_mixers=True, tensor_names=None, tensor_shapes=None):
     """One `ModelMap` from a config, a live model, or both.
 
     Giving both is the useful case and the reason `disagreements` exists: the config's claim and
@@ -1408,6 +1503,8 @@ def describe(model=None, config=None, *, count_mixers=True, tensor_names=None):
     # record built from a safetensors index alone can still answer the question. The first version
     # only used the module tree, which meant the index-only case, the one a probe actually has,
     # silently reported "no stack prefix was given".
+    if tensor_shapes is not None and tensor_names is None:
+        tensor_names = list(tensor_shapes)
     names_prefix = stack_path.value if stack_path.known else None
     if names_prefix is None and tensor_names:
         names_prefix, _ = stack_prefix_from_names(tensor_names)
@@ -1444,6 +1541,8 @@ def describe(model=None, config=None, *, count_mixers=True, tensor_names=None):
         final_norm_name=norm_name,
         module_kinds=module_kinds,
         prediction_head=head,
+        observed_experts=(observed_experts(tensor_shapes)
+                          if tensor_shapes is not None else None),
         residual_path_why=RESIDUAL_PATH_WHY,
         attention_residual_group=attention_residual_group(config),
         disagreements=tuple(disagreements))

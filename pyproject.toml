@@ -441,7 +441,17 @@ senbonzakura = ["data/*.bin", "data/*.jsonl", "data/templates/*.jinja",
                 # code beside it did not, which is the one omission an auditor can check
                 # in ten seconds. `vendor/bin/*/*` already sweeps this directory; it is
                 # named here so a reader can see the obligation being met on purpose.
-                "vendor/bin/*/LICENSE"]
+                "vendor/bin/*/LICENSE",
+                # THE VIEWER'S OWN PAGE. `senbonzakura workbench` serves these off the installed
+                # package through `importlib.resources`, so a wheel without them installs, starts
+                # the server, and answers every request with "this install is missing a file".
+                # Listed by extension rather than as `static/*`, so a new KIND of file has to be
+                # added here deliberately rather than swept in.
+                "workbench/core/static/*.html", "workbench/core/static/*.css",
+                "workbench/core/static/*.js", "workbench/core/static/*.svg",
+                # Hanken Grotesk, the project's own typeface, with the licence the SIL Open Font
+                # License requires to travel beside it. See THIRD-PARTY-NOTICES.md.
+                "workbench/core/static/*.ttf", "workbench/core/static/OFL.txt"]
 
 [tool.setuptools.data-files]
 "share/man/man1" = ["man/senbonzakura.1"]

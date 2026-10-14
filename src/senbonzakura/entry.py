@@ -123,6 +123,8 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # the laptop is plugged in, and refuses a run that cannot finish. Headers only, so it costs
     # about a second on a 61 GB model and never holds a weight.
     "budget": ("streaming", "main"),
+    # The read-only viewer for a run directory: a graph of the runs, their parts and figures.
+    "workbench": ("workbench.cli", "main"),
 }
 
 

@@ -149,6 +149,15 @@ def test_the_other_track_branches_also_exit_zero_from_a_real_process(tmp_path, m
     assert "Traceback" not in proc.stderr
 
 
+#: Commands that are SERVERS when run with no arguments, so they never exit and the no-argument
+#: form cannot be used here. `workbench` serves the current directory until it is stopped. These are
+#: checked with `--help` instead, which still answers in both forms, so the agreement is tested and
+#: nothing waits for five minutes on a server that is working as designed.
+SERVES_UNTIL_STOPPED = {
+    "workbench",  # the read-only viewer; with no arguments it serves the current directory forever
+}
+
+
 @pytest.mark.parametrize("command", sorted(entry.DELEGATED))
 def test_the_two_invocation_forms_agree_about_failure(command):
     """`python -m senbonzakura.<module>` and `senbonzakura <command>` must report the same thing.
@@ -164,14 +173,15 @@ def test_the_two_invocation_forms_agree_about_failure(command):
     legitimately, and a test that pinned each exit code would be a copy of the implementation.
     """
     module, _attr = entry.DELEGATED[command]
+    extra = ["--help"] if command in SERVES_UNTIL_STOPPED else []
 
     def rc(args):
         return subprocess.run(
             [sys.executable, *args], capture_output=True, text=True,
             cwd=str(ROOT), timeout=300, check=False).returncode
 
-    package_form = rc(["-m", "senbonzakura", command])
-    module_form = rc(["-m", f"senbonzakura.{module}"])
+    package_form = rc(["-m", "senbonzakura", command, *extra])
+    module_form = rc(["-m", f"senbonzakura.{module}", *extra])
     assert module_form == package_form, (
         f"'python -m senbonzakura.{module}' exits {module_form} where "
         f"'senbonzakura {command}' exits {package_form}. A script gating on the module form "
@@ -210,15 +220,17 @@ def test_no_delegated_module_runs_silently(command):
     nothing, prints nothing and exits 0, and either assertion catches it on its own.
     """
     module, _attr = entry.DELEGATED[command]
+    extra = ["--help"] if command in SERVES_UNTIL_STOPPED else []
     proc = subprocess.run(
-        [sys.executable, "-m", f"senbonzakura.{module}"],
+        [sys.executable, "-m", f"senbonzakura.{module}", *extra],
         capture_output=True, text=True, cwd=str(ROOT), timeout=300, check=False)
     printed = (proc.stdout + proc.stderr).strip()
 
     assert printed, (
         f"'python -m senbonzakura.{module}' printed nothing at all. A module with no `__main__` "
         f"guard imports, runs nothing, prints nothing and exits 0, and this is what catches it.")
-    if command in NEEDS_NO_ARGUMENTS:
+    if command in NEEDS_NO_ARGUMENTS or command in SERVES_UNTIL_STOPPED:
+        # A server answering --help exits 0 by design; the printed-something rule above still holds.
         return
     assert proc.returncode != 0, (
         f"'python -m senbonzakura.{module}' exited 0 with no arguments. If this command genuinely "

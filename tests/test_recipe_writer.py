@@ -63,6 +63,7 @@ def _measured_for(edit, **overrides):
             }
         ],
         "self_invalidated": None,
+        "ci_level": 0.95,
         "limits": ["Measured on one corpus partition only."],
         "edit_sha256": recipe_mod.edit_sha256(edit),
     }

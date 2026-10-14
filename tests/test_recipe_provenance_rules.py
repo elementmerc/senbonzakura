@@ -43,6 +43,7 @@ def _valid_document():
             }
         ],
         "self_invalidated": None,
+        "ci_level": 0.95,
         "limits": ["Measured on one corpus partition only."],
         "edit_sha256": recipe_mod.edit_sha256(doc["edit"]),
     }
@@ -114,6 +115,9 @@ DEFECTS = [
     ("ci-excludes-point", _measured("refusal_before", "ci", [0.6, 0.9]), "measured-invalid"),
     ("rate-above-one", _measured("refusal_before", "ci", [0.3, 1.5]), "measured-invalid"),
     ("kl-interval-excludes-point", _measured("kl", "ci", [0.5, 0.6]), "measured-invalid"),
+    ("ci-level-absent", _delete("measured", "ci_level"), "measured-invalid"),
+    ("ci-level-as-a-percentage", _measured("ci_level", 95), "measured-invalid"),
+    ("ci-level-is-a-flag", _measured("ci_level", True), "measured-invalid"),
     ("self-invalidated-absent", _delete("measured", "self_invalidated"), "measured-invalid"),
     ("self-invalidated-blank", _measured("self_invalidated", " "), "measured-invalid"),
     ("limits-not-a-list", _measured("limits", "none"), "measured-invalid"),

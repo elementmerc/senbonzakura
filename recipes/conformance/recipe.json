@@ -24,7 +24,7 @@
       ],
       "encoding": "safetensors",
       "file": "directions.safetensors",
-      "sha256": "e4c751beed31aee595096a8ec1737ddb3846f0e89ff268dc2bbd5e00d99c8465",
+      "sha256": "a98b658f5de57b71f48eff4d746020e920c4039a8abf5b8e81e67654aeed1acb",
       "shape": [
         3,
         2,

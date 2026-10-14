@@ -376,10 +376,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         }
       ],
@@ -451,10 +452,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -537,10 +539,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -619,10 +622,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -705,10 +709,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -788,10 +793,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -871,10 +877,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -958,10 +965,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1045,10 +1053,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1127,10 +1136,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1210,10 +1220,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1292,10 +1303,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1391,10 +1403,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1474,10 +1487,11 @@
               }
             ],
             "self_invalidated": null,
+            "ci_level": 0.95,
             "limits": [
               "These figures are a toy fixture for checking the format. They say nothing about any model."
             ],
-            "edit_sha256": "312d608f565cfa2fe69b8a47b9a38a37c8c486114be03e823b9809c159300151"
+            "edit_sha256": "70a5abdc34343e0092af88aa60953c1a79b0bce8f917f81ede4987fdeea2c2ec"
           }
         },
         {
@@ -1502,7 +1516,7 @@
             "directions",
             "sha256"
           ],
-          "value": "fa16fc119a673a568bd4d7f9eb509ec059e2c814eaaf323d3872008787714a91"
+          "value": "e96b9a79a0eb6cfc1e1dbb448ab059892462b67fbd84d428cd5d346dbc4b427a"
         }
       ],
       "code": "directions-not-orthonormal",

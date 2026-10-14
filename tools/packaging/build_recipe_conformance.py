@@ -144,6 +144,7 @@ def _toy_measured(edit):
             }
         ],
         "self_invalidated": None,
+        "ci_level": 0.95,
         "limits": ["These figures are a toy fixture for checking the format. They say nothing about any model."],
         "edit_sha256": apply_recipe.edit_sha256(edit),
     }

@@ -309,6 +309,11 @@ def _check_measured(measured, edit):
         raise RecipeError("`measured.self_invalidated` must be present, null or a reason.", code="measured-invalid")
     if measured["self_invalidated"] is not None and not _text(measured["self_invalidated"]):
         raise RecipeError("`measured.self_invalidated` must be null or a reason.", code="measured-invalid")
+    level = measured.get("ci_level")
+    if not _finite(level) or not 0 < level < 1:
+        raise RecipeError(
+            "`measured.ci_level` must be the level of every interval, between 0 and 1.", code="measured-invalid"
+        )
     limits = measured.get("limits")
     if not isinstance(limits, list) or not limits or not all(_text(item) for item in limits):
         raise RecipeError(

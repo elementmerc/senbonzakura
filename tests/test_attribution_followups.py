@@ -301,3 +301,18 @@ def test_fresh_requests_exclude_what_was_used_and_leave_other_draws_alone(monkey
     assert again.groups == arm.groups
     with pytest.raises(A.AttributionError, match="fewer than the 30 asked for"):
         H.fresh_requests(tmp_path, used, n=30, seed=0)
+
+
+def test_the_follow_up_parser_applies_the_same_bounds_and_names_a_mistyped_flag(capsys):
+    argv = ["m", "--track", "t", "--artefact", "a", "--out", "o"]
+    for bad, fragment in ((["--batch", "0"], "cannot be below 1"),
+                          (["--n-fresh", "0"], "cannot be below 1"),
+                          (["--n-measure", "3"], "cannot be below 30"),
+                          (["--seed", "-1"], "--seed is -1"),
+                          (["--n-confirm", "-2"], "--n-confirm is -2")):
+        with pytest.raises(SystemExit):
+            F.build_parser().parse_args([*argv, *bad])
+        assert fragment in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        F.build_parser().parse_args([*argv, "--n-fres", "5"])
+    assert "--n-fres" in capsys.readouterr().err

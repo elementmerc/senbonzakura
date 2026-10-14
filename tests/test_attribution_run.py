@@ -69,9 +69,29 @@ def test_the_parser_defaults_are_the_approved_sample_sizes():
     assert (args.n_measure, args.n_confirm, args.budget_minutes) == (400, 150, 110.0)
 
 
-def test_a_sample_below_the_reporting_floor_is_refused_before_anything_loads(capsys):
-    with pytest.raises(SystemExit, match="at least 30"):
-        R.main(["m", "--track", "t", "--out", "o", "--n-measure", "5"])
+@pytest.mark.parametrize(("argv", "fragment"), [
+    (["--n-measure", "5"], "--n-measure is 5, and it cannot be below 30"),
+    (["--n-measure", "-5"], "cannot be below 30"),
+    (["--n-confirm", "-1"], "--n-confirm is -1, and it cannot be below 0"),
+    (["--batch", "0"], "--batch is 0, and it cannot be below 1"),
+    (["--seed", "-3"], "--seed is -3"),
+    (["--budget-minutes", "-1"], "--budget-minutes is -1"),
+    (["--budget-minutes", "nan"], "not a finite number"),
+    (["--batch", "many"], "wants a whole number"),
+])
+def test_a_count_that_cannot_be_right_is_refused_where_it_is_read(argv, fragment, capsys):
+    with pytest.raises(SystemExit) as stop:
+        R.main(["m", "--track", "t", "--out", "o", *argv])
+    assert stop.value.code == 2 and fragment in capsys.readouterr().err
+
+
+def test_a_mistyped_or_abbreviated_flag_is_named_and_never_guessed(capsys):
+    with pytest.raises(SystemExit):
+        R.build_parser().parse_args(["m", "--out", "o", "--trak", "t"])
+    assert "--trak" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        R.build_parser().parse_args(["m", "--track", "t", "--out", "o", "--n-meas", "40"])
+    assert "--n-meas" in capsys.readouterr().err
 
 
 def test_the_command_reports_a_stopped_run_with_its_reason(monkeypatch, capsys):
@@ -172,8 +192,6 @@ def test_a_tensor_is_written_as_a_list():
 def test_a_finished_run_exits_zero_and_a_negative_confirm_sample_is_refused(monkeypatch):
     monkeypatch.setattr(R, "run", lambda *_a, **_k: {})
     assert R.main(["m", "--track", "t", "--out", "o"]) == 0
-    with pytest.raises(SystemExit, match="at least 30"):
-        R.main(["m", "--track", "t", "--out", "o", "--n-confirm", "-1"])
 
 
 def test_the_stub_runs_leave_no_partial_files_beside_the_artefact(monkeypatch, tmp_path):

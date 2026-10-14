@@ -11,7 +11,7 @@ of defective recipes, each with the refusal code a conforming applier must give.
 change to the bake, the direction format, the recipe writer or the profile, then commit the result,
 so a change shows up as a change to the fixture rather than as silent drift.
 
-    python tools/recipe/build_conformance.py
+    python tools/packaging/build_recipe_conformance.py
 
 It writes into `recipes/conformance/`. Nothing else is touched.
 """

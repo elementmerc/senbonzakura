@@ -782,11 +782,13 @@ def main(argv=None):
     # provenance said it described every one of them.
     pinned_shared = {"model": model, "tok": tok, "load_in_4bit": a.load_in_4bit}
     _stamp_arms(res, attack, benign,
+                # DECODING IS GREEDY and the interval is a Wilson score on the count, so neither
+                # has a seed. Recorded as NO_SEED rather than left out: see `stamps.NO_SEED`.
                 attack_pinned=stamps.pinned(
-                    prompts=attack_prompts, **pinned_shared,
+                    prompts=attack_prompts, **pinned_shared, seeds=stamps.NO_SEED,
                     partition=stamps.head_partition(a.n, attack_corpus.rows)),
                 benign_pinned=(None if benign_prompts is None else stamps.pinned(
-                    prompts=benign_prompts, **pinned_shared,
+                    prompts=benign_prompts, **pinned_shared, seeds=stamps.NO_SEED,
                     partition=stamps.head_partition(a.benign_n, benign_corpus.rows))))
 
     # AFTER THE STAMP, because the comparison is between the two stamped blocks: the pinned fields

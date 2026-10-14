@@ -625,9 +625,10 @@ def main(argv=None):
     res["prose"] = metrics.prose_degradation(gens)
     # The prompts as scored, after --skip and --n, so the digest describes the rows the number was
     # actually taken on rather than the file they were drawn from.
+    # THE REFUSAL INTERVAL IS A WILSON SCORE on the count: no sampling, no seed.
     _stamp_refusal(res, stamps.pinned(prompts=prompts, model=model, tok=tok,
                                       load_in_4bit=a.load_in_4bit, skip=a.skip,
-                                      verified=boundary_verified))
+                                      verified=boundary_verified, seeds=stamps.NO_SEED))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "

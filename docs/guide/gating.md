@@ -176,6 +176,7 @@ A baseline carries the conditions it was taken under, and all of these have to m
 | `prompt_format` | Three copies of the prompt renderer drifted once, and a table was published across the gap |
 | `precision` | A 4-bit reading and a bfloat16 reading of the same model are different measurements |
 | `tool_version` | The edit and the scorer both live in this package |
+| `seeds` | The random seeds a sampled figure was drawn over, so two runs on different seed sets are not compared. A method that draws no samples says so (`no-seed`), which is a different statement from a missing field |
 
 What a refusal looks like:
 

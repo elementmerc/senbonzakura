@@ -1214,8 +1214,10 @@ def main(argv=None):
     # training half, and a figure claiming to describe the whole corpus would compare equal to one
     # that genuinely did. Unverified rather than `measure`, because the boundary is this command's
     # own `--train-n` and no track manifest confirms it.
+    # THE RECOVERY FIGURES ARE SEEDED PAIRED BOOTSTRAPS over a.seed (see `arm_figures`).
     pinned = stamps.pinned(prompts=eval_prompts, model=None, tok=None,
                            load_in_4bit=a.load_in_4bit, skip=len(train_prompts), verified=False,
+                           seeds=[a.seed],
                            prompt_format=edited["prompt_format"],
                            precision=recipe.dtype)
     res["refusal_eval"] = {

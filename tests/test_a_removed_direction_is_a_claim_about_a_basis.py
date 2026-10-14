@@ -229,7 +229,7 @@ def _findings(doc):
 #: ones, because what these tests assert is that every pinned field REACHES the artefact, and a
 #: derived digest would make the assertion depend on the deriving.
 PINNED = {"input_digest": "f00dcafe", "partition": "measure", "prompt_format": "chat-template",
-          "precision": "float32", "tool_version": "0.4.1"}
+          "precision": "float32", "tool_version": "0.4.1", "seeds": "no-seed"}
 
 
 def _report(output):

@@ -385,6 +385,7 @@ def stamp_report(doc, report):
                       prompt_format=report.pinned["prompt_format"],
                       precision=report.pinned["precision"],
                       tool_version=report.pinned["tool_version"],
+                      seeds=report.pinned["seeds"],
                       basis=PRE_NORM_BASIS, measured_at=AT_POSITION,
                       per_position=list(report.leak_per_position),
                       positions=report.positions)
@@ -397,6 +398,7 @@ def stamp_report(doc, report):
                           prompt_format=report.pinned["prompt_format"],
                           precision=report.pinned["precision"],
                           tool_version=report.pinned["tool_version"],
+                          seeds=report.pinned["seeds"],
                           basis=POST_NORM_BASIS, measured_at=AT_OUTPUT,
                           norm_condition_number=out.norm_condition_number,
                           norm_diagonal_agreement=out.norm_diagonal_agreement,
@@ -925,7 +927,9 @@ def measure_leak(model, tok, prompts, direction, *, log=print):
         if output.refused_because is not None:
             log(f"  residual leak: NO OUTPUT-BASIS FIGURE. {output.refused_because}")
     return LeakReport(positions=NL + 1, leak_per_position=profile, probe_prompts=n,
-                      pinned=stamps.pinned(prompts=prompts, model=model, tok=tok),
+                      # A PROJECTION OF FIXED PROBES: nothing is sampled, so there is no seed.
+                      pinned=stamps.pinned(prompts=prompts, model=model, tok=tok,
+                                           seeds=stamps.NO_SEED),
                       output=output, warnings=tuple(degraded))
 
 

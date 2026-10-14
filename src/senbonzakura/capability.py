@@ -1833,7 +1833,10 @@ def main(argv=None):
                           **stamps.pinned(prompts=prompts, model=model, tok=tok,
                                           load_in_4bit=a.load_in_4bit,
                                           input_digest=result["items_digest"],
-                                          skip=getattr(a, "skip", 0)))
+                                          skip=getattr(a, "skip", 0),
+                                          # THE ACCURACY INTERVAL IS A WILSON SCORE on the count,
+                                          # which draws no samples, so there is no seed to record.
+                                          seeds=stamps.NO_SEED))
     # Atomic, like every other result here. A capability run is a generation pass over hundreds of
     # prompts and a kill partway through the write used to leave a file that exists, is not empty,
     # and is not a result.

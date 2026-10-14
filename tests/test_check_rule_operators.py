@@ -205,3 +205,133 @@ def test_any_entry_is_total_over_shapes_it_did_not_expect(doc):
 def test_a_malformed_any_entry_is_refused_loudly(rule):
     with pytest.raises(CheckError):
         evaluate(rule, {"metrics": {"a": {"value": 0}}})
+
+
+# ── differs_by_more_than ─────────────────────────────────────────────────────────────────────
+#
+# Added for `a-headline-that-its-own-control-does-not-reproduce`. The compass published a headline
+# AUC of 0.9636 beside a canonical control of 0.8132, and no operator could say "these should agree
+# to a stated tolerance". `disagrees` tests equality, which no measurement satisfies, and
+# `differs_in_more_than` counts keys. The boundary is strict: a gap of exactly the tolerance agrees.
+
+_TOL = {"op": "differs_by_more_than", "paths": ["a", "b"], "value": 0.01}
+
+
+@pytest.mark.parametrize(("a", "b", "expected"), [
+    (0.9636, 0.8132, True),      # the broken compass pair: 0.15 apart
+    (0.7263, 0.3663, True),      # the 0.6B pair, below chance on the control
+    (0.9887, 0.98875, False),    # the corrected 1.7B pair, agreeing to 0.00005
+    (0.5, 0.45, True),           # 0.05 apart, well past the tolerance
+    (0.5, 0.55, True),           # the sign of the gap does not matter
+    (0, 0, False),
+])
+def test_differs_by_more_than_compares_how_far_apart_two_numbers_are(a, b, expected):
+    assert evaluate(_TOL, {"a": a, "b": b}) is expected
+
+
+# THE BOUNDARY IS TESTED ON VALUES A BINARY FLOAT REPRESENTS EXACTLY. 0.51 minus 0.5 is not 0.01
+# in IEEE arithmetic, so a boundary case written in decimal would test the float, not the rule.
+@pytest.mark.parametrize(("a", "b", "expected"), [
+    (0.5, 0.75, False),          # exactly the tolerance: agreement, because the comparison is strict
+    (0.5, 0.7500001, True),      # a hair past it
+    (0.75, 0.5, False),          # and the same pair the other way round
+])
+def test_the_differs_by_more_than_boundary_is_strict(a, b, expected):
+    rule = {"op": "differs_by_more_than", "paths": ["a", "b"], "value": 0.25}
+    assert evaluate(rule, {"a": a, "b": b}) is expected
+
+
+@pytest.mark.parametrize("doc", [
+    {},
+    {"a": 0.5},
+    {"b": 0.5},
+    {"a": None, "b": 0.5},
+    {"a": "0.5", "b": 0.9},
+    {"a": True, "b": 0.0},
+    {"a": float("nan"), "b": 0.5},
+    {"a": float("inf"), "b": 0.5},
+    {"a": [0.5], "b": 0.9},
+])
+def test_a_missing_or_non_numeric_side_is_not_a_difference(doc):
+    """Total over unfamiliar shapes: a claim about two recorded numbers needs both recorded."""
+    assert evaluate(_TOL, doc) is False
+
+
+@pytest.mark.parametrize("rule", [
+    {"op": "differs_by_more_than", "paths": ["a"], "value": 0.01},
+    {"op": "differs_by_more_than", "paths": "ab", "value": 0.01},
+    {"op": "differs_by_more_than", "paths": ["a", "b"]},
+    {"op": "differs_by_more_than", "paths": ["a", "b"], "value": -0.01},
+    {"op": "differs_by_more_than", "paths": ["a", "b"], "value": "0.01"},
+    {"op": "differs_by_more_than", "paths": ["a", "b"], "value": True},
+])
+def test_a_differs_by_more_than_without_a_usable_tolerance_is_refused(rule):
+    """A tolerance that is missing, negative or a string would make the check silently fire on
+    everything, or on nothing, so it is refused rather than guessed at.
+    """
+    with pytest.raises(CheckError):
+        evaluate(rule, {"a": 0.5, "b": 0.9})
+
+
+def test_a_tolerance_of_zero_is_allowed_and_means_exact_agreement():
+    assert evaluate({"op": "differs_by_more_than", "paths": ["a", "b"], "value": 0},
+                    {"a": 0.5, "b": 0.5}) is False
+    assert evaluate({"op": "differs_by_more_than", "paths": ["a", "b"], "value": 0},
+                    {"a": 0.5, "b": 0.5000001}) is True
+
+
+# ── totality over shapes the operators did not expect ─────────────────────────────────────────
+#
+# Found by the coverage measurement of 2026-10-14: these were the operator branches no test
+# reached, and they are exactly where an unfamiliar artefact would go. Each expectation below was
+# read from the operator's stated contract, then checked against the code, not taken from it.
+
+def test_any_missing_answers_false_when_the_mapping_is_not_a_mapping():
+    assert evaluate({"op": "any_missing", "path": "p", "field": "f"}, {"p": "x"}) is False
+
+
+def test_any_missing_counts_a_non_object_entry_as_missing_the_field():
+    """An entry that is not an object cannot carry the field, so it is missing it."""
+    assert evaluate({"op": "any_missing", "path": "p", "field": "f"}, {"p": {"a": 3}}) is True
+
+
+def test_any_missing_is_false_when_every_entry_carries_the_field():
+    assert evaluate({"op": "any_missing", "path": "p", "field": "f"},
+                    {"p": {"a": {"f": 1}}}) is False
+
+
+def test_any_outside_answers_false_when_the_mapping_is_not_a_mapping():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0}
+    assert evaluate(rule, {"p": "x"}) is False
+
+
+def test_any_outside_skips_entries_the_when_clause_does_not_select():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0,
+            "when": {"field": "k", "equals": "z"}}
+    assert evaluate(rule, {"p": {"a": {"k": "y", "v": -1}}}) is False
+    assert evaluate(rule, {"p": {"a": {"k": "z", "v": -1}}}) is True
+
+
+def test_any_outside_never_reads_a_boolean_as_a_number():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0}
+    assert evaluate(rule, {"p": {"a": {"v": True}}}) is False
+
+
+def test_any_outside_skips_a_non_object_entry_rather_than_reading_it():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "min": 0}
+    assert evaluate(rule, {"p": {"a": 5}}) is False
+
+
+def test_any_outside_with_only_a_maximum_fires_above_it_and_not_below():
+    rule = {"op": "any_outside", "path": "p", "field": "v", "max": 1}
+    assert evaluate(rule, {"p": {"a": {"v": 2}}}) is True
+    assert evaluate(rule, {"p": {"a": {"v": 0.5}}}) is False
+
+
+def test_intersects_answers_false_for_a_scalar_side_rather_than_comparing_it():
+    """A scalar is not a collection, so it has no members to share with the other side."""
+    assert evaluate({"op": "intersects", "paths": ["s", "t"]}, {"s": 3, "t": [3]}) is False
+
+
+def test_intersects_is_true_when_both_sides_are_collections_that_share_a_member():
+    assert evaluate({"op": "intersects", "paths": ["s", "t"]}, {"s": [3], "t": [3]}) is True

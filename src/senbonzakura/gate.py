@@ -234,7 +234,7 @@ def run(argv=None, log=print):
         # from a gate over everything. So the slice is named: the metric, the partition, the
         # sample size, and the seeds the baseline was taken over.
         log(f"  Checked: {recorded.get('metric')} on the {recorded.get('partition')} partition, "
-            f"n={recorded.get('n')}, seeds {recorded.get('seeds')}, "
+            f"n={recorded.get('n')}, {baseline.describe_seeds(recorded.get('seeds'))}, "
             f"estimator {recorded.get('estimator')!r} at {recorded.get('precision')}.")
         log("  Not checked: every other property, every other partition, and anything this "
             "metric does not measure.")

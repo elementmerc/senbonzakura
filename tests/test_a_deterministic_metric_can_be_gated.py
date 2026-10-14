@@ -20,6 +20,7 @@ have passed while the tool refused everything.
 """
 import pytest
 from senbonzakura_check import measurement
+from senbonzakura_check.measurement import NO_SEED
 
 from senbonzakura import baseline, stamps
 
@@ -34,8 +35,10 @@ def _stamped(metric, value, estimator, **fields):
 
 
 def _pinned_fields(**over):
+    # BOTH FIXTURE WRITERS DRAW NO SAMPLES: the coherence probe is one forward pass and the refusal
+    # rate is a Wilson score on a count. So they stamp NO_SEED, which is what `stamps.pinned` records.
     out = {"input_digest": "abc123def4567890", "partition": "measure", "prompt_format": "raw",
-           "tool_version": "0.4.0", "precision": "bfloat16"}
+           "tool_version": "0.4.0", "precision": "bfloat16", "seeds": NO_SEED}
     out.update(over)
     return out
 
@@ -51,7 +54,7 @@ def _refusal_artefact(value=0.094, interval=(0.06, 0.13)):
 
 
 def test_a_deterministic_artefact_becomes_a_baseline():
-    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
     assert b["deterministic"] is True
     assert b["interval"] is None
     assert b["point"] == pytest.approx(2.4131)
@@ -62,13 +65,13 @@ def test_a_deterministic_artefact_becomes_a_baseline():
 
 
 def test_an_interval_artefact_still_becomes_a_baseline():
-    b = baseline.from_artefact(_refusal_artefact(), "refusal_rate.senbonzakura-ruler", seeds=[0])
+    b = baseline.from_artefact(_refusal_artefact(), "refusal_rate.senbonzakura-ruler", seeds=NO_SEED)
     assert b["deterministic"] is False
     assert b["interval"] == [0.06, 0.13]
 
 
 def test_an_unchanged_deterministic_reading_passes():
-    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
     ok, headline, detail = baseline.verdict(b, 2.4131, None)
     assert ok
     assert "unchanged" in headline
@@ -78,7 +81,7 @@ def test_an_unchanged_deterministic_reading_passes():
 
 
 def test_a_deterministic_reading_that_moved_the_wrong_way_regresses():
-    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
     # Coherence is a negative log likelihood: lower is better, so a rise is the worse direction.
     assert b["direction"] == baseline.LOWER_IS_BETTER
     ok, headline, detail = baseline.verdict(b, 2.5000, None)
@@ -88,7 +91,7 @@ def test_a_deterministic_reading_that_moved_the_wrong_way_regresses():
 
 
 def test_a_deterministic_reading_that_improved_passes_and_says_so():
-    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
     ok, headline, _ = baseline.verdict(b, 2.3000, None)
     assert ok
     assert "improved" in headline
@@ -96,7 +99,7 @@ def test_a_deterministic_reading_that_improved_passes_and_says_so():
 
 def test_the_smallest_possible_move_is_not_swallowed():
     """No tolerance, deliberately. A tolerance here would be an interval nobody measured."""
-    b = baseline.from_artefact(_coherence_artefact(2.4131), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(2.4131), "coherence", seeds=NO_SEED)
     ok, headline, _ = baseline.verdict(b, 2.4131 + 1e-9, None)
     assert not ok, "a deterministic metric that moved at all has either changed or was not deterministic"
     assert "REGRESSED" in headline
@@ -104,12 +107,12 @@ def test_the_smallest_possible_move_is_not_swallowed():
 
 def test_the_bluntness_guard_is_skipped_for_a_deterministic_baseline():
     """It asks whether this run could have SEEN a move. A number with no width always could."""
-    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
     baseline.refuse_if_too_blunt(b, None)
 
 
 def test_the_bluntness_guard_still_fires_for_an_interval_baseline():
-    b = baseline.from_artefact(_refusal_artefact(), "refusal_rate.senbonzakura-ruler", seeds=[0])
+    b = baseline.from_artefact(_refusal_artefact(), "refusal_rate.senbonzakura-ruler", seeds=NO_SEED)
     with pytest.raises(baseline.BaselineError, match="times wider"):
         baseline.refuse_if_too_blunt(b, (0.05, 0.95))
 
@@ -118,7 +121,7 @@ def test_a_metric_with_neither_an_interval_nor_the_flag_is_still_refused():
     """The original refusal has to survive, or the repair has opened the hole it closed."""
     doc = _stamped("coherence", 2.41, "neutral-passage-nll", n=1, **_pinned_fields())
     with pytest.raises(baseline.BaselineError, match="has no interval"):
-        baseline.from_artefact(doc, "coherence", seeds=[0])
+        baseline.from_artefact(doc, "coherence", seeds=NO_SEED)
 
 
 def test_a_metric_claiming_both_is_refused_rather_than_resolved():
@@ -126,27 +129,27 @@ def test_a_metric_claiming_both_is_refused_rather_than_resolved():
     doc = _stamped("coherence", 2.41, "neutral-passage-nll", n=1, deterministic=True,
                    interval=[2.4, 2.5], **_pinned_fields())
     with pytest.raises(baseline.BaselineError, match="deterministic and also carries an interval"):
-        baseline.from_artefact(doc, "coherence", seeds=[0])
+        baseline.from_artefact(doc, "coherence", seeds=NO_SEED)
 
 
 def test_record_refuses_the_same_contradiction():
     with pytest.raises(baseline.BaselineError, match="deterministic and also carries an interval"):
         baseline.record(model=MODEL, metric="coherence", direction=baseline.LOWER_IS_BETTER,
-                        point=2.41, interval=(2.4, 2.5), deterministic=True, seeds=[0], n=1,
+                        point=2.41, interval=(2.4, 2.5), deterministic=True, n=1,
                         estimator="neutral-passage-nll", **_pinned_fields())
 
 
 def test_record_refuses_a_hole_that_claims_nothing():
     with pytest.raises(baseline.BaselineError, match="not declared deterministic"):
         baseline.record(model=MODEL, metric="coherence", direction=baseline.LOWER_IS_BETTER,
-                        point=2.41, interval=None, seeds=[0], n=1,
+                        point=2.41, interval=None, n=1,
                         estimator="neutral-passage-nll", **_pinned_fields())
 
 
 def test_two_instruments_are_not_compared_against_each_other():
     """A baseline with a spread and a run declaring determinism changed instrument between them."""
-    det = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
-    iv = baseline.from_artefact(_refusal_artefact(), "refusal_rate.senbonzakura-ruler", seeds=[0])
+    det = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
+    iv = baseline.from_artefact(_refusal_artefact(), "refusal_rate.senbonzakura-ruler", seeds=NO_SEED)
     with pytest.raises(baseline.BaselineError, match="not produced by the same"):
         baseline.verdict(det, 2.41, (2.4, 2.5))
     with pytest.raises(baseline.BaselineError, match="nothing to compare it against"):
@@ -165,14 +168,14 @@ def test_the_gate_runs_end_to_end_over_a_deterministic_pair(tmp_path):
     gate whose plumbing has never been run.
     """
     from senbonzakura import gate
-    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=[0])
+    b = baseline.from_artefact(_coherence_artefact(), "coherence", seeds=NO_SEED)
     recorded = tmp_path / "baseline.json"
     baseline.write(recorded, b)
 
     for now, expected in ((2.4131, gate.OK), (2.5000, gate.REGRESSED)):
         current = tmp_path / f"now-{now}.json"
         baseline.write(current, baseline.from_artefact(
-            _coherence_artefact(now), "coherence", seeds=[0]))
+            _coherence_artefact(now), "coherence", seeds=NO_SEED))
         lines = []
         argv = ["--baseline", str(recorded), "--measurement", str(current)]
         assert gate.run(argv, log=lines.append) == expected, "\n".join(lines)
@@ -185,7 +188,8 @@ def test_pinned_derives_every_field_a_gate_needs():
     class Tok:
         senbon_chat_template = "qwen"
 
-    got = stamps.pinned(prompts=["a", "b"], model=Model(), tok=Tok(), skip=4, recorded_skip=4)
+    got = stamps.pinned(prompts=["a", "b"], model=Model(), tok=Tok(), skip=4, recorded_skip=4,
+                        seeds=NO_SEED)
     assert set(got) >= set(baseline.PINNED) - {"model", "metric", "estimator"}
     assert got["partition"] == stamps.MEASURE
     assert got["prompt_format"] == "qwen"

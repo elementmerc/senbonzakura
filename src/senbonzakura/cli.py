@@ -5628,6 +5628,10 @@ def _stamp_separation(record, run, args):
         # The number of axes the statistic was computed over, which is the sample this figure
         # rests on. The checker has a rule about rates on samples too small to carry them.
         n=record.get("axes_measured_total"),
+        # THE HELD-OUT SPLIT AND THE NULL FLOOR are drawn over the run's own seed. Each layer's
+        # clustering uses that seed plus its layer index, so the full set is that seed and its
+        # offsets; the base seed is recorded, which is what two runs must share to be comparable.
+        seeds=[args.seed],
         null=record.get("separation_null"),
         threshold=record.get("axis_separation_threshold"),
         # Fitted on half the rows and scored on the other half. Recorded because every

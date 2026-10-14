@@ -37,6 +37,8 @@ import math
 import sys
 from pathlib import Path
 
+from senbonzakura_check.measurement import NO_SEED, normalise_seeds
+
 from . import argresolve, say
 from .crashsafe import atomic_write
 
@@ -133,6 +135,14 @@ PINNED = {
     "prompt_format": "how the prompt was rendered. Three copies of the renderer drifted once and "
                      "a table was published across the gap",
     "tool_version": "the code that produced it, because the edit and the scorer both live here",
+    # ADDED 2026-10-14, and the reason is the hole the gate was run against: a baseline and a run
+    # over DIFFERENT seed sets compared silently, and the output printed the baseline's seeds beside
+    # a result from another set. The interval is built from the seeds it was measured over, so two
+    # seed sets make two different intervals. A method that draws no samples says NO_SEED, which is
+    # not the same claim as a missing field: a missing field is unknown and refuses.
+    "seeds": "the seeds the interval was drawn over, or NO_SEED when the method draws no samples. "
+             "Two runs over different seed sets build different intervals, so they are not the same "
+             "comparison",
     # ADDED 2026-09-21, by two panel reviewers who reached the same hole from opposite sides.
     #
     # THE ESTIMATOR. `measurement.py` opens by arguing that a metric is not its name, it is its
@@ -201,6 +211,15 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
                 "fortnight. Record the interval the measurement reports, or declare the metric "
                 "deterministic if it genuinely does not vary between runs.")
         lo, hi = interval
+        if lo == hi:
+            # A ZERO-WIDTH INTERVAL on a metric that varies is a claim of perfect precision that no
+            # bootstrap produces. Recorded, it would switch off the too-blunt guard, which exists
+            # precisely so that a measurement cannot pass by being imprecise (see `refuse_if_too_blunt`).
+            raise BaselineError(
+                f"interval {interval} has zero width, which says the measurement has no sampling "
+                f"uncertainty at all. A metric that genuinely does not vary between runs is "
+                f"declared deterministic instead; a metric that varies needs the interval it "
+                f"actually reports.")
         # BEFORE THE INTERVAL TEST, so a NaN is named as a NaN. Without this the comparison below
         # is False for one and the writer reported it as a point outside its own interval.
         point = numeric_point(point, side="this baseline")
@@ -231,7 +250,7 @@ def record(*, model, metric, direction, point, interval, input_digest, partition
         "precision": str(precision),
         # Sorted at the boundary so two runs that chose the same seeds in a different order
         # produce byte-identical baselines.
-        "seeds": sorted(int(s) for s in seeds),
+        "seeds": normalise_seeds(seeds),
         "extra": dict(extra or {}),
     }
     built[ADDRESS_FIELD] = address(built)
@@ -603,15 +622,27 @@ def refuse_if_too_blunt(baseline, now_interval):
     lo, hi = float(now_interval[0]), float(now_interval[1])
     base_lo, base_hi = float(baseline["interval"][0]), float(baseline["interval"][1])
     base_width, width = base_hi - base_lo, hi - lo
-    if base_width <= 0 or width <= base_width * MAX_WIDTH_RATIO:
+    if width <= base_width * MAX_WIDTH_RATIO:
         return
+    if base_width <= 0:
+        # A ZERO-WIDTH BASELINE HAS NO RATIO TO TAKE, and this branch existed to avoid a division by
+        # zero, which had quietly become a pass: any run wider than nothing was waved through, and
+        # an overlap with a point is a coincidence. Refused, because the run could not have seen a
+        # move against a baseline that claims none of its own uncertainty. Such a baseline is also
+        # refused at `record`, so this covers a file written before that check existed.
+        raise BaselineError(
+            f"the baseline's interval [{base_lo:.4f}, {base_hi:.4f}] has zero width, so it claims "
+            f"no sampling uncertainty, while this run's interval [{lo:.4f}, {hi:.4f}] has width "
+            f"{width:.4f}. An overlap with a point is a coincidence, not evidence that the "
+            f"property held, so the comparison is refused rather than passed. Record the baseline "
+            f"again at the precision it was actually measured at.")
     raise BaselineError(
         f"this run's interval [{lo:.4f}, {hi:.4f}] is {width / base_width:.1f} times wider than "
         f"the baseline's [{base_lo:.4f}, {base_hi:.4f}], so an overlap between them is not "
         f"evidence that the property held: it is evidence that this run could not have seen it "
         f"move. Measure at the precision the baseline was measured at, or record a new baseline "
         f"at this precision and say in its filename what changed.\n"
-        f"  The baseline was taken on n={baseline.get('n')} with seeds {baseline.get('seeds')}.")
+        f"  The baseline was taken on n={baseline.get('n')}, {describe_seeds(baseline.get('seeds'))}.")
 
 
 def refuse_if_incomparable(baseline, now):
@@ -794,6 +825,17 @@ def _pinned_from(block, doc, metric_key):
     return found
 
 
+def describe_seeds(seeds):
+    """The seeds, in words a reader can check: the list, or what NO_SEED means.
+
+    `NO_SEED` is printed as what it claims rather than as a token, because a reader who meets the
+    word "no-seed" beside a number is left to guess whether a seed was lost.
+    """
+    if seeds == NO_SEED:
+        return "no seed, because the method draws no samples"
+    return "seeds " + ", ".join(str(s) for s in seeds)
+
+
 def from_artefact(doc, metric_key, *, seeds):
     """Build a baseline from a stamped measurement artefact.
 
@@ -860,6 +902,17 @@ def from_artefact(doc, metric_key, *, seeds):
         raise BaselineError(f"{metric_key} records n={n!r}, which is not a sample size.")
 
     pinned = _pinned_from(block, doc, metric_key)
+    # THE STAMP SAYS WHICH SEEDS THE FIGURE RESTS ON, and the caller says which seeds it believes
+    # they were. Those are checked against each other rather than one silently overriding the other:
+    # a baseline that records a seed set the artefact never had is a baseline that compares
+    # measurements it cannot vouch for.
+    stamped_seeds = normalise_seeds(pinned.pop("seeds"))
+    given_seeds = normalise_seeds(seeds)
+    if stamped_seeds != given_seeds:
+        raise BaselineError(
+            f"{metric_key} was stamped as resting on {describe_seeds(stamped_seeds)}, and you said "
+            f"it rests on {describe_seeds(given_seeds)}. A baseline records the seeds the figure was "
+            f"measured over, so the two have to agree. Pass the seeds the artefact was stamped with.")
     higher = block.get("higher_is_better")
     if higher is None:
         raise BaselineError(
@@ -868,7 +921,7 @@ def from_artefact(doc, metric_key, *, seeds):
     return record(
         direction=HIGHER_IS_BETTER if higher else LOWER_IS_BETTER,
         point=block["value"], interval=None if deterministic else tuple(interval),
-        deterministic=deterministic, seeds=seeds, n=n,
+        deterministic=deterministic, seeds=given_seeds, n=n,
         extra={"from_metric_key": metric_key, "units": block.get("units")},
         **pinned)
 
@@ -985,11 +1038,15 @@ def main(argv=None):
               "--measurement.", file=sys.stderr)
         return 2
     a.measurement = measurement
-    try:
-        seeds = [int(s) for s in a.seeds.split(",") if s.strip()]
-    except ValueError:
-        print(f"--seeds must be integers, got {a.seeds!r}", file=sys.stderr)
-        return 2
+    if a.seeds.strip() == NO_SEED:
+        seeds = NO_SEED
+    else:
+        try:
+            seeds = [int(s) for s in a.seeds.split(",") if s.strip()]
+        except ValueError:
+            print(f"--seeds must be integers, or {NO_SEED!r} for a method that draws no samples, "
+                  f"got {a.seeds!r}", file=sys.stderr)
+            return 2
     if not seeds:
         print("--seeds is empty, so nothing says what this figure rests on", file=sys.stderr)
         return 2
@@ -1031,7 +1088,7 @@ def main(argv=None):
               if written["interval"] is None else f"interval {written['interval']}")
     print(f"baseline written to {a.out}: {written['metric']} at {written['point']:.4f}"
           f"{f' {units}' if units else ''} ({spread}) on n={written['n']}, "
-          f"seeds {written['seeds']}")
+          f"{describe_seeds(written['seeds'])}")
     # THE HINT USED TO BE UNFOLLOWABLE. It read `--measurement <new>`, and a reader passed the new
     # run's result artefact, because that is what `--measurement` means on THIS command. `gate`
     # wanted a recorded measurement, so it exited 2 on a schema message. Both steps are named now,

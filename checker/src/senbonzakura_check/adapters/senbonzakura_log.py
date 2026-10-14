@@ -212,6 +212,14 @@ class SenbonzakuraAdapter:
             # commands in the same tool looked at one run and disagreed, and the one that reads like
             # a verdict was the one that was wrong.
             "self_invalidated": doc.get("self_invalidated") or _a_null_beat_the_instrument(doc),
+            # THE VERDICT'S SPLIT, lifted to the flat names the same way. The compass has always
+            # written how often its verdict landed on each side of each arm, and no check read it,
+            # so the 2026-07-30 figures reached a reader with the defect printed in their own files.
+            **_verdict_split(doc),
+            # THE HEADLINE AND ITS CONTROL, lifted for the same reason. The headline took the best
+            # spelling of each verdict word by looking at the logits; the canonical control fixes one
+            # spelling in advance. They should agree, and `differs_by_more_than` compares them.
+            **_headline_and_control(doc),
             # THE BUDGET ITSELF, beside the warning about it, and lifted to a flat name for two
             # reasons. A check reads the normalised vocabulary rather than one producer's nesting,
             # which is the whole point of an adapter. And the record nests it: under
@@ -382,6 +390,35 @@ def _abliteration_metrics(doc) -> dict:
             "metric": metric, "value": value, "estimator": estimator, "units": units,
             "n": None, "higher_is_better": False, "interval": None,
         }
+    return out
+
+
+def _headline_and_control(doc):
+    """The headline AUC and the canonical-token control, each only where the artefact records it.
+
+    Both keys are omitted, not nulled, when absent: a comparison needs both recorded, and an absent
+    key is how the check tells "not recorded" from "recorded as nothing".
+    """
+    controls = doc.get("controls") if isinstance(doc.get("controls"), dict) else {}
+    pairs = (("headline_auc", doc.get("auc")),
+             ("canonical_control_auc", controls.get("canonical_auc")))
+    return {key: value for key, value in pairs
+            if isinstance(value, (int, float)) and not isinstance(value, bool)}
+
+
+def _verdict_split(doc):
+    """The share of each arm's items the verdict put on the harmful side, where the artefact records it.
+
+    A KEY IS OMITTED WHEN THE FIELD IS ABSENT OR NOT A NUMBER, and that is load-bearing rather than
+    tidy. `present` is how a check tells "not recorded" from "recorded", and a null here would read
+    as recorded. A recorded zero is a real answer (a verdict that never fires), so zero is kept.
+    """
+    out = {}
+    for key, source in (("harmful_arm_positive_fraction", "frac_harmful_positive"),
+                        ("harmless_arm_positive_fraction", "frac_harmless_positive")):
+        value = doc.get(source)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = value
     return out
 
 

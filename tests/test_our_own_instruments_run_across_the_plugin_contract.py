@@ -124,7 +124,7 @@ STAMPED = {
     "units": "nats-per-token", "higher_is_better": False, "n": 1, "value": 3.0,
     "n_tokens": 268, "input_digest": "0123456789abcdef", "prompt_format": "raw",
     "partition": "fixed-passage", "precision": "bfloat16", "tool_version": "0.4.0",
-    "interval": [2.9, 3.1],
+    "interval": [2.9, 3.1], "seeds": "no-seed",
 }
 
 
@@ -135,7 +135,7 @@ def test_the_file_an_instrument_wrote_is_read_back_into_the_reply(tmp_path):
         {"label": "arm", "model": "Qwen/Qwen3-1.7B", "metrics": {"coherence": STAMPED}}),
         encoding="utf-8")
     out = tmp_path / "kept.json"
-    inputs = {"argv": ["--measurement", str(source), "--seeds", "42", "--out", str(out)],
+    inputs = {"argv": ["--measurement", str(source), "--seeds", "no-seed", "--out", str(out)],
               "out": str(out)}
     outcome = pluginhost.in_process("baseline").run(plugins.call_for("baseline", inputs))
     assert outcome.result["status"] == 0

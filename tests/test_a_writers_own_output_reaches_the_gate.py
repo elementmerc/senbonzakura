@@ -69,7 +69,8 @@ def _stamped(accuracy=0.82, graded=40, interval=(0.67, 0.92)):
                       n=graded, interval=list(interval) if interval else None,
                       **stamps.pinned(prompts=QUESTIONS, model=None, tok=None,
                                       load_in_4bit=False,
-                                      input_digest=result["items_digest"], skip=0))
+                                      input_digest=result["items_digest"], skip=0,
+                                          seeds=stamps.NO_SEED))
     return result
 
 
@@ -79,10 +80,10 @@ def test_the_writer_produces_a_block_the_reader_accepts():
     A failure here means the gate cannot read what the tool writes, which would make every other
     test of the gate a test of a shape that only exists in test files.
     """
-    made = baseline.from_artefact(_stamped(), "capability", seeds=[42, 43, 44, 45, 46])
+    made = baseline.from_artefact(_stamped(), "capability", seeds=stamps.NO_SEED)
     assert made["point"] == 0.82
     assert made["direction"] == baseline.HIGHER_IS_BETTER
-    assert made["seeds"] == [42, 43, 44, 45, 46]
+    assert made["seeds"] == stamps.NO_SEED, "a Wilson interval records the method has no seed"
 
 
 def test_every_pinned_field_survives_the_crossing():
@@ -92,7 +93,7 @@ def test_every_pinned_field_survives_the_crossing():
     makes the figure comparable with nothing, which is the condition the 2026-09-25 repair
     (`e5b3182`, "the gate accepted nothing this repository could produce") was about.
     """
-    made = baseline.from_artefact(_stamped(), "capability", seeds=[42])
+    made = baseline.from_artefact(_stamped(), "capability", seeds=stamps.NO_SEED)
     missing = [field for field in baseline.PINNED if not made.get(field)]
     assert not missing, (
         f"these pinned fields did not survive from the writer's stamp to the baseline: {missing}. "
@@ -111,14 +112,14 @@ def test_the_model_comes_from_the_top_level_and_not_from_the_block():
     doc = _stamped()
     assert doc["metrics"]["capability"].get("model") is None, (
         "the writer now stamps `model` inside the block; this test's premise needs re-reading")
-    made = baseline.from_artefact(doc, "capability", seeds=[42])
+    made = baseline.from_artefact(doc, "capability", seeds=stamps.NO_SEED)
     assert made["model"] == "Qwen/Qwen3-1.7B"
 
 
 def test_two_runs_of_the_same_exam_are_comparable():
     """The property the whole thing exists for, end to end from the writer rather than field by field."""
-    first = baseline.from_artefact(_stamped(0.82, 40, (0.67, 0.92)), "capability", seeds=[42])
-    second = baseline.from_artefact(_stamped(0.79, 40, (0.63, 0.90)), "capability", seeds=[42])
+    first = baseline.from_artefact(_stamped(0.82, 40, (0.67, 0.92)), "capability", seeds=stamps.NO_SEED)
+    second = baseline.from_artefact(_stamped(0.79, 40, (0.63, 0.90)), "capability", seeds=stamps.NO_SEED)
     reasons = baseline.comparability(first, second)
     assert not reasons, f"two runs of the same exam were refused as incomparable: {reasons}"
 
@@ -129,11 +130,11 @@ def test_a_different_exam_is_refused_rather_than_compared():
     Two runs of equal size over different exams pair item i against a different item i, so a
     length check cannot tell them apart and the digest can.
     """
-    first = baseline.from_artefact(_stamped(), "capability", seeds=[42])
+    first = baseline.from_artefact(_stamped(), "capability", seeds=stamps.NO_SEED)
     other = _stamped()
     other["items_digest"] = capability.items_digest([q.replace("plus", "times") for q in QUESTIONS])
     other["metrics"]["capability"]["input_digest"] = other["items_digest"]
-    second = baseline.from_artefact(other, "capability", seeds=[42])
+    second = baseline.from_artefact(other, "capability", seeds=stamps.NO_SEED)
     reasons = baseline.comparability(first, second)
     assert reasons, "two different exams were accepted as the same measurement"
     assert any("input_digest" in r for r in reasons), reasons
@@ -154,7 +155,7 @@ def test_a_withheld_accuracy_produces_no_block_at_all():
     # The writer's own guard is `if summary.get("accuracy") is not None`, so with None there is no
     # stamp call at all. Reproduced here by asserting the reader's refusal is the loud kind.
     with pytest.raises(baseline.BaselineError, match="interval"):
-        baseline.from_artefact(made, "capability", seeds=[42])
+        baseline.from_artefact(made, "capability", seeds=stamps.NO_SEED)
 
 
 def test_the_one_stamped_artefact_in_the_tree_is_still_refused():
@@ -176,4 +177,4 @@ def test_the_one_stamped_artefact_in_the_tree_is_still_refused():
         pytest.skip(f"{path.name} is no longer where this test expects it")
     doc = json.loads(path.read_text(encoding="utf-8"))
     with pytest.raises(baseline.BaselineError):
-        baseline.from_artefact(doc, "capability", seeds=[42])
+        baseline.from_artefact(doc, "capability", seeds=stamps.NO_SEED)

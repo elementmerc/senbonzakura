@@ -401,7 +401,8 @@ def main(argv=None):
         log=print)
     cand_lp = first_token_logprobs(cand, tok, prompts, batch=a.batch)
     value = kl(base_lp, cand_lp)
-    kl_lo, kl_hi = kl_interval(base_lp, cand_lp, seed=int(getattr(a, "seed", 0) or 0))
+    kl_seed = int(getattr(a, "seed", 0) or 0)
+    kl_lo, kl_hi = kl_interval(base_lp, cand_lp, seed=kl_seed)
 
     dtype_name = logits_dtype_of(cand)
     precise, note = precision_verdict(value, dtype_name)
@@ -476,7 +477,10 @@ def main(argv=None):
                       # row of the file, which is a different claim from a held-out tail.
                       **stamps.pinned(prompts=prompts, model=cand,
                                       load_in_4bit=a.load_in_4bit,
-                                      prompt_format="raw", skip=0))
+                                      prompt_format="raw", skip=0,
+                                      # THE KL INTERVAL IS A SEEDED PROMPT BOOTSTRAP, drawn over the
+                                      # seed this run was given, so that seed is what it rests on.
+                                      seeds=[kl_seed]))
     with atomic_write(a.out) as f:
         json.dump(res, f, indent=2)
     if not precise:

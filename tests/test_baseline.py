@@ -13,6 +13,7 @@ gate is not.
 import json
 
 import pytest
+from senbonzakura_check.measurement import NO_SEED
 
 from senbonzakura import baseline as b
 
@@ -252,6 +253,9 @@ STAMPED = {
     "n_tokens": 268, "input_digest": "0123456789abcdef", "prompt_format": "raw",
     "partition": "fixed-passage", "precision": "bfloat16", "tool_version": "0.4.0",
     "interval": [2.9, 3.1],
+    # THE COHERENCE PROBE DRAWS NO SAMPLES: one forward pass over one fixed passage, so it stamps
+    # NO_SEED, and the baseline built from it has to say the same.
+    "seeds": "no-seed",
 }
 
 
@@ -270,10 +274,10 @@ def test_a_stamped_artefact_becomes_a_baseline():
     The two halves were built a fortnight apart and never met: every writer stamps its identity
     INSIDE the metrics block and `comparability` reads the pinned fields from the TOP level.
     """
-    made = b.from_artefact(_artefact(), "coherence", seeds=[42, 43, 44, 45, 46])
+    made = b.from_artefact(_artefact(), "coherence", seeds=NO_SEED)
     assert made["point"] == 3.0
     assert made["direction"] == b.LOWER_IS_BETTER
-    assert made["seeds"] == [42, 43, 44, 45, 46]
+    assert made["seeds"] == NO_SEED
     for field in b.PINNED:
         assert made.get(field), f"the baseline carries no {field}"
 
@@ -282,8 +286,8 @@ def test_a_baseline_built_from_an_artefact_is_comparable_with_the_next_one():
     """The property the whole thing exists for, asserted end to end rather than field by field:
     two artefacts measured the same way produce baselines `comparability` accepts.
     """
-    first = b.from_artefact(_artefact(), "coherence", seeds=[42])
-    second = b.from_artefact(_artefact(value=3.05, interval=[2.95, 3.15]), "coherence", seeds=[42])
+    first = b.from_artefact(_artefact(), "coherence", seeds=NO_SEED)
+    second = b.from_artefact(_artefact(value=3.05, interval=[2.95, 3.15]), "coherence", seeds=NO_SEED)
     assert b.comparability(first, second) == []
     ok, headline, _ = b.verdict(first, second["point"], tuple(second["interval"]))
     assert ok and "within interval" in headline
@@ -291,8 +295,8 @@ def test_a_baseline_built_from_an_artefact_is_comparable_with_the_next_one():
 
 def test_a_ruler_change_between_the_two_is_caught_now_that_the_estimator_is_pinned():
     """The defect that motivated pinning the estimator, reached through the producer."""
-    ours = b.from_artefact(_artefact(), "coherence", seeds=[42])
-    theirs = b.from_artefact(_artefact(estimator="some-other-nll"), "coherence", seeds=[42])
+    ours = b.from_artefact(_artefact(), "coherence", seeds=NO_SEED)
+    theirs = b.from_artefact(_artefact(estimator="some-other-nll"), "coherence", seeds=NO_SEED)
     fields = [f for f, *_ in b.comparability(ours, theirs)]
     assert "estimator" in fields
 
@@ -306,7 +310,7 @@ def test_an_artefact_missing_any_pinned_field_is_refused_by_name(missing):
     prevent, and the hole would be invisible at the point it mattered.
     """
     with pytest.raises(b.BaselineError, match=missing):
-        b.from_artefact(_artefact(**{missing: None}), "coherence", seeds=[42])
+        b.from_artefact(_artefact(**{missing: None}), "coherence", seeds=NO_SEED)
 
 
 def test_every_missing_field_is_named_at_once():
@@ -315,7 +319,7 @@ def test_every_missing_field_is_named_at_once():
     """
     stripped = _artefact(precision=None, prompt_format=None)
     with pytest.raises(b.BaselineError) as caught:
-        b.from_artefact(stripped, "coherence", seeds=[42])
+        b.from_artefact(stripped, "coherence", seeds=NO_SEED)
     assert "precision" in str(caught.value) and "prompt_format" in str(caught.value)
 
 
@@ -324,13 +328,13 @@ def test_a_figure_with_no_interval_cannot_become_a_baseline():
     a baseline: it would be a gate that fails on noise, which is a gate switched off.
     """
     with pytest.raises(b.BaselineError, match="no interval"):
-        b.from_artefact(_artefact(interval=None), "coherence", seeds=[42])
+        b.from_artefact(_artefact(interval=None), "coherence", seeds=NO_SEED)
 
 
 def test_an_unstamped_artefact_says_so_rather_than_failing_obscurely():
     doc = {"label": "old", "model": "m", "nll": 3.0}
     with pytest.raises(b.BaselineError, match="no `metrics` block"):
-        b.from_artefact(doc, "coherence", seeds=[42])
+        b.from_artefact(doc, "coherence", seeds=NO_SEED)
 
 
 def test_asking_for_a_metric_the_artefact_does_not_carry_lists_what_it_does():
@@ -356,21 +360,21 @@ def test_the_command_writes_a_file_the_gate_accepts(tmp_path, capsys):
     art.write_text(json.dumps(_artefact()), encoding="utf-8")
     out = tmp_path / "base.json"
     assert b.main(["--measurement", str(art), "--metric", "coherence",
-                   "--seeds", "42,43", "--out", str(out)]) == 0
+                   "--seeds", "no-seed", "--out", str(out)]) == 0
     assert out.is_file()
 
     later = tmp_path / "later.json"
     later.write_text(json.dumps(_artefact(value=3.05, interval=[2.95, 3.15])), encoding="utf-8")
     now = tmp_path / "now.json"
     b.main(["--measurement", str(later), "--metric", "coherence",
-            "--seeds", "42,43", "--out", str(now)])
+            "--seeds", "no-seed", "--out", str(now)])
     assert gate.run(["--baseline", str(out), "--measurement", str(now)]) == gate.OK
 
     worse = tmp_path / "worse.json"
     worse.write_text(json.dumps(_artefact(value=4.0, interval=[3.9, 4.1])), encoding="utf-8")
     bad = tmp_path / "bad.json"
     b.main(["--measurement", str(worse), "--metric", "coherence",
-            "--seeds", "42,43", "--out", str(bad)])
+            "--seeds", "no-seed", "--out", str(bad)])
     assert gate.run(["--baseline", str(out), "--measurement", str(bad)]) == gate.REGRESSED
 
 
@@ -394,7 +398,7 @@ class TestTheSummaryLineSaysWhatItMeasured:
         art.write_text(json.dumps(_artefact(**block)), encoding="utf-8")
         out = tmp_path / "base.json"
         assert b.main(["--measurement", str(art), "--metric", "coherence",
-                       "--seeds", "42", "--out", str(out)]) == 0
+                       "--seeds", "no-seed", "--out", str(out)]) == 0
         return " ".join(capsys.readouterr().out.split())
 
     def test_a_deterministic_metric_says_so_instead_of_printing_none(self, tmp_path, capsys):
@@ -428,7 +432,7 @@ def test_an_artefact_with_no_sample_size_is_refused():
     the failure the gate exists to catch is exactly a number whose sample collapsed underneath it.
     """
     with pytest.raises(b.BaselineError, match="not a sample size"):
-        b.from_artefact(_artefact(n=0), "coherence", seeds=[42])
+        b.from_artefact(_artefact(n=0), "coherence", seeds=NO_SEED)
 
 
 def test_an_artefact_that_does_not_say_which_way_is_better_is_refused():
@@ -436,14 +440,14 @@ def test_an_artefact_that_does_not_say_which_way_is_better_is_refused():
     report one of them as the other rather than declining to answer.
     """
     with pytest.raises(b.BaselineError, match="which direction is better"):
-        b.from_artefact(_artefact(higher_is_better=None), "coherence", seeds=[42])
+        b.from_artefact(_artefact(higher_is_better=None), "coherence", seeds=NO_SEED)
 
 
 def test_a_current_interval_far_wider_than_the_baseline_is_refused():
     """The blunt-instrument case. An interval wide enough to overlap anything overlaps the
     baseline too, and reading that overlap as the property holding is reading noise as evidence.
     """
-    base = b.from_artefact(_artefact(), "coherence", seeds=[42])
+    base = b.from_artefact(_artefact(), "coherence", seeds=NO_SEED)
     with pytest.raises(b.BaselineError, match="times wider"):
         b.refuse_if_too_blunt(base, (1.0, 6.0))
 
@@ -488,13 +492,13 @@ def test_a_metric_that_does_not_name_itself_takes_its_name_from_the_key():
     """
     block = {k: v for k, v in STAMPED.items() if k != "metric"}
     doc = {"label": "arm", "model": "Qwen/Qwen3-1.7B", "metrics": {"coherence": block}}
-    assert b.from_artefact(doc, "coherence", seeds=[42])["metric"] == "coherence"
+    assert b.from_artefact(doc, "coherence", seeds=NO_SEED)["metric"] == "coherence"
 
 
 def test_an_inverted_current_interval_is_refused_rather_than_compared():
     """[3.1, 2.9] is not a narrow interval, it is a bug in whatever wrote it, and every containment
     test against it answers the wrong question silently.
     """
-    base = b.from_artefact(_artefact(), "coherence", seeds=[42])
+    base = b.from_artefact(_artefact(), "coherence", seeds=NO_SEED)
     with pytest.raises(b.BaselineError, match="inverted"):
         b.verdict(base, 3.0, (3.1, 2.9))

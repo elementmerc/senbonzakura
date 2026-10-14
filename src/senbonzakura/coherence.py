@@ -126,6 +126,8 @@ def _stamp_coherence(res, precision="unknown"):
     measurement.stamp(
         res, "coherence", res["nll"], "neutral-passage-nll",
         n=1,
+        # ONE FORWARD PASS over one fixed passage: no sampling, so no seed. Stated, not absent.
+        seeds=measurement.NO_SEED,
         n_tokens=res["n_tokens"],
         input_digest=res["input_digest"],
         # Said out loud rather than left to be inferred from the absent flag. This probe renders

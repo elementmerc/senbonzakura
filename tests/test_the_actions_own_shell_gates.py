@@ -282,6 +282,78 @@ class TestTheGatesThreeVerdictsReachTheWorkflow:
         assert "REGRESSED by 0.1900" in res.summary, res.summary
 
 
+class TestTheRealGateThroughTheSameShell:
+    """The stubs above choose the status. These let the real gate choose it.
+
+    A stub proves the step maps the status it is given. It cannot prove that the status the real
+    command returns is one the step's `case` statement knows, so a change to the gate's exit codes
+    would pass every test above and still be wrong on a runner. Here the step's script runs against
+    the real `senbonzakura gate`, reached through the same dispatcher a workflow reaches, and the
+    three verdicts are produced by the measurement rather than by the test.
+    """
+
+    @staticmethod
+    def _wrapper(tmp_path: Path) -> None:
+        # BOTH trees, named from this file rather than from whatever the ambient environment
+        # imports. An install elsewhere on the machine would otherwise answer, and a test of this
+        # tree would be a measurement of that one. Found 2026-10-14: the checker half came from
+        # the main checkout and the gate reported an import error that the test read as a verdict.
+        pythonpath = os.pathsep.join([str(ROOT / "src"), str(ROOT / "checker" / "src")])
+        binaries = tmp_path / "bin"
+        binaries.mkdir(parents=True, exist_ok=True)
+        wrapper = binaries / "senbonzakura"
+        wrapper.write_text(
+            "#!/usr/bin/env bash\n"
+            f"PYTHONPATH={pythonpath!r} exec {sys.executable!r} -c "
+            '"import sys; from senbonzakura.entry import main; sys.exit(main(sys.argv[1:]))" "$@"\n',
+            encoding="utf-8")
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    @staticmethod
+    def _measurements(tmp_path: Path, baseline_seeds, current_seeds, current_point, current_interval):
+        from senbonzakura import baseline as b
+
+        common = dict(model="Qwen/Qwen3-0.6B", metric="refusal_rate", direction=b.LOWER_IS_BETTER,
+                      input_digest="sha256:input", partition="measure",
+                      prompt_format="renderer:v3", tool_version="0.9.0",
+                      estimator="senbonzakura-ruler", precision="bfloat16", n=200)
+        base = tmp_path / "baseline.json"
+        now = tmp_path / "measurement.json"
+        b.write(base, b.record(point=0.094, interval=[0.061, 0.133], seeds=baseline_seeds, **common))
+        b.write(now, b.record(point=current_point, interval=current_interval, seeds=current_seeds,
+                              **common))
+        return {"baseline": str(base), "measurement": str(now)}
+
+    def test_two_runs_inside_the_interval_reach_the_passing_annotation(self, tmp_path):
+        inputs = self._measurements(tmp_path, [42, 1337], [42, 1337], 0.102, [0.068, 0.142])
+        self._wrapper(tmp_path)
+        res = _run_step(GATE_STEP, tmp_path, inputs)
+        assert res.outputs.get("status") == "0", res.log
+        assert "cannot run" not in res.log, res.log
+        assert res.status == 0, res.log
+        assert any("stayed inside its interval" in n for n in res.notices), res.log
+
+    def test_a_regression_reaches_the_regression_annotation_and_no_other(self, tmp_path):
+        inputs = self._measurements(tmp_path, [42, 1337], [42, 1337], 0.5, [0.45, 0.55])
+        self._wrapper(tmp_path)
+        res = _run_step(GATE_STEP, tmp_path, inputs)
+        assert res.outputs.get("status") == "1", res.log
+        assert "cannot run" not in res.log, res.log
+        assert res.status == 0, res.log
+        assert any("moved outside its interval" in e for e in res.errors), res.log
+        assert not any("never comparable" in e for e in res.errors), res.log
+
+    def test_two_incomparable_runs_reach_the_refusal_annotation_and_not_a_regression(self, tmp_path):
+        inputs = self._measurements(tmp_path, [42, 1337], [1, 2, 3], 0.102, [0.068, 0.142])
+        self._wrapper(tmp_path)
+        res = _run_step(GATE_STEP, tmp_path, inputs)
+        assert res.outputs.get("status") == "2", res.log
+        assert "cannot run" not in res.log, res.log
+        assert res.status == 0, res.log
+        assert any("never comparable" in e for e in res.errors), res.log
+        assert not any("moved outside its interval" in e for e in res.errors), res.log
+
+
 class TestAskingForHalfAGate:
     """A half-configured gate is the one outcome that must never be quiet.
 

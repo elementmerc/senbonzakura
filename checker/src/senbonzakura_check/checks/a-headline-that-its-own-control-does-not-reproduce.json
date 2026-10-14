@@ -1,0 +1,28 @@
+{
+  "id": "a-headline-that-its-own-control-does-not-reproduce",
+  "title": "A headline figure and the control computed beside it disagree by more than they should, so the headline depends on a choice",
+  "detects": "A result that reports a headline figure and a control for it, where the control is the same statistic with one free choice removed, and the two differ by more than the stated tolerance. The headline picked the best of several readings by looking at the outcome, and the control fixed one reading in advance. If the two disagree, the headline is at least partly a product of the choice rather than of the thing being measured. The control is the only place the artefact says so, and nothing reads it unless a check does.",
+  "incident": "Ours, 2026-07-30. The first compass file for Qwen3-1.7B reported a headline AUC of 0.9636 beside a canonical-token control of 0.8132, a gap of 0.15. The file for Qwen3-0.6B reported 0.7263 beside 0.3663, which is below chance. The headline had taken the best spelling of each verdict word by reading the logits, and the control used one spelling fixed in advance. The cause was the read position rather than the spelling, and both figures were corrected on the same day in commit 652b4be. Both arms of the corrected files agree with their controls to 0.0001.",
+  "remedy": "Report the control that removes the choice next to the headline, and treat a gap wider than the tolerance as a finding about the measurement, not a rounding difference. If the choice is genuinely needed, state what it was chosen on, and report the figure with the choice fixed in advance. If the gap is real, look for the cause upstream: a headline that moves when one fixed choice is taken away is usually reading something other than what it names.",
+  "confidence": "medium",
+  "severity": "qualifies",
+  "false_positive": "The tolerance is a judgement, and a tight one. A headline that legitimately depends on a choice, such as a prompt template picked on a validation set, will fire when the choice is removed, and that is a correct finding about the headline rather than a false positive, though it may be an acceptable design. A control computed on a different subset of rows than the headline differs from it for sampling reasons alone, and a small sample can move a figure past 0.01 without any defect. The check reads two numbers and cannot tell a choice from a sample, so it fires on both, and the remedy says to read which it was.",
+  "applies_to": {"op": "all_of", "rules": [
+    {"op": "present", "path": "headline_auc"},
+    {"op": "present", "path": "canonical_control_auc"}
+  ]},
+  "rule": {"op": "differs_by_more_than", "paths": ["headline_auc", "canonical_control_auc"], "value": 0.01},
+  "control": {
+    "fires_on": [
+      {"headline_auc": 0.9636, "canonical_control_auc": 0.8132},
+      {"headline_auc": 0.7263, "canonical_control_auc": 0.3663}
+    ],
+    "passes_on": [
+      {"headline_auc": 0.9887, "canonical_control_auc": 0.98875},
+      {"headline_auc": 0.6616, "canonical_control_auc": 0.6616},
+      {"headline_auc": 0.5, "canonical_control_auc": 0.5099},
+      {"headline_auc": 0.9636},
+      {}
+    ]
+  }
+}

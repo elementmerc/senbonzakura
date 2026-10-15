@@ -439,7 +439,7 @@ def test_chunking_gives_the_same_answer_at_every_size_including_the_boundaries(d
     """Chunking must change the bound and not the answer, especially across a chunk edge."""
     xs = [1.0] * size
     ys = [1.5] * size
-    rel, peak, why_not = modeldiff._magnitude(pack(ys), pack(xs), dtype)
+    rel, peak, why_not, _sums = modeldiff._magnitude(pack(ys), pack(xs), dtype)
     assert why_not is None
     assert rel == pytest.approx(0.5, rel=1e-3), f"{dtype} at n={size}"
     assert peak == pytest.approx(0.5, rel=1e-3)
@@ -450,7 +450,7 @@ def test_a_chunk_boundary_cannot_silently_drop_a_tail():
     n = modeldiff.CHUNK_ELEMENTS + 1
     xs = [0.0] * n
     ys = [0.0] * (n - 1) + [4.0]          # the only difference is in the final chunk
-    rel, peak, _ = modeldiff._magnitude(bf16(ys), bf16(xs), "BF16")
+    rel, peak, _, _sums = modeldiff._magnitude(bf16(ys), bf16(xs), "BF16")
     assert peak == pytest.approx(4.0), "the last element was not compared"
 
 

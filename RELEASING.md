@@ -257,33 +257,30 @@ indistinguishable from a correct one right up to the moment it matters.
 
 **Do this before the tests**, since a refreshed binary is a thing the suite should run against.
 
-## The website names this release, and only the release procedure can check it
+## The website names this release, and a job now checks it
 
-**This used to be a test and cannot be one any more.** `test_the_website_names_the_release_that_shipped.py`
-imported `senbonzakura._version` and compared it with `web/lib/release.ts`. The site moved to its
-own repository on 2026-10-15, so neither repository holds both halves: this one has the version and
-not the site, and `senbonzakura-web` has the site and not the version.
+**This was a manual step for about four hours and is now automated**, because a manual step is
+exactly what failed last time: 0.5.0 shipped on 2026-10-13, the site went on advertising 0.4.1,
+and 0.4.1 was then yanked over a token-disclosure advisory.
 
-The site's own repository still checks everything local to it: that the declaration exists, that it
-still looks like a version, that no component hardcodes a tag or a version of its own, and that the
-built output is not stale. **The one thing it cannot check is whether the version it names is the
-one this project actually shipped**, and that is the thing that went wrong before: the live site
-said "0.4.1 on PyPI" for the whole of 0.5.0's life, and 0.4.1 was later yanked over a token
-advisory, so it was pointing readers at a release resolvers now hide.
+`senbonzakura-web` runs `tools/check-version-drift.mjs` daily and on every push. It compares three
+things, because they fail in different ways: **PyPI** (the truth, ignoring yanked releases),
+**`lib/release.ts`** (what the site intends to say) and **the live site** (what a visitor sees).
+The third is the one that failed, and the one a repository-only check cannot see.
 
-So it happens here, as a step, because a release is the one moment both repositories are in hand.
+**What you still do at release time**, because the job tells you AFTER the fact and a release
+should not ship wrong and be corrected the next morning:
 
-1. Read the version this release ships: `python -c "import senbonzakura._version as v; print(v.__version__)"`.
-2. In `senbonzakura-web`, open `lib/release.ts` and check `export const RELEASE` is exactly that,
+1. In `senbonzakura-web`, set `export const RELEASE` in `lib/release.ts` to this release's version,
    with no `v` prefix and no `.devN` suffix.
-3. If it differs, change it there, rebuild the site, and commit before tagging here.
-4. Deploy the site. It is Cloudflare Pages, serving `senbon.dev` and `www.senbon.dev` as proxied
-   CNAMEs to `senbonzakura.pages.dev`. **Confirm the deployment actually ran rather than assuming
-   it did**, because a fix that is committed and not deployed is not a fix.
+2. Commit and push to `main`. **Cloudflare Pages deploys it automatically**; the project is
+   connected to the private GitHub mirror `elementmerc/senbonzakura-web`.
+3. Run `node tools/check-version-drift.mjs` from that repository once PyPI has the new release.
+   It exits non-zero and names the mismatch, or says all three agree.
 
-**Do not solve this by pinning the expected version inside the site's repository.** That turns a
-check into a second thing somebody has to remember and hands a green test to a site that is wrong,
-which is worse than the gap it closes.
+**If the check ever fails and the cause is that nothing deployed**, do not fix it by deploying by
+hand. That was the old path and it was deleted deliberately: two ways to deploy is two things that
+can disagree about what is live.
 
 ## The panel
 

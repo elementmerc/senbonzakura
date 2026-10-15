@@ -25,10 +25,13 @@ REPO = Path(__file__).resolve().parent.parent
 
 #: (lock file, package name, minimum version) for every finding closed by the triage.
 #: Cargo.lock names the package in TOML, the npm lock files name it under node_modules/.
+# The two `web/package-lock.json` floors, `next` 16.3.6 and `undici` 7.29.1, MOVED TO
+# `senbonzakura-web` on 2026-10-15 with the site itself, and pass there. Named here
+# rather than silently deleted: a floor that vanishes from a list looks exactly like a
+# finding that was fixed, and these were still live when they moved. The synthetic
+# cases below keep using the name as a label, which costs nothing and reads the same.
 FLOORS = (
     ("rust/Cargo.lock", "pyo3", "0.29.0"),
-    ("web/package-lock.json", "next", "16.3.6"),
-    ("web/package-lock.json", "undici", "7.29.1"),
     ("docs/package-lock.json", "@vue/server-renderer", "3.5.42"),
     ("docs/package-lock.json", "vue", "3.5.42"),
     ("docs/package-lock.json", "esbuild", "0.25.0"),

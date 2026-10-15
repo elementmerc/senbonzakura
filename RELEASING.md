@@ -257,6 +257,34 @@ indistinguishable from a correct one right up to the moment it matters.
 
 **Do this before the tests**, since a refreshed binary is a thing the suite should run against.
 
+## The website names this release, and only the release procedure can check it
+
+**This used to be a test and cannot be one any more.** `test_the_website_names_the_release_that_shipped.py`
+imported `senbonzakura._version` and compared it with `web/lib/release.ts`. The site moved to its
+own repository on 2026-10-15, so neither repository holds both halves: this one has the version and
+not the site, and `senbonzakura-web` has the site and not the version.
+
+The site's own repository still checks everything local to it: that the declaration exists, that it
+still looks like a version, that no component hardcodes a tag or a version of its own, and that the
+built output is not stale. **The one thing it cannot check is whether the version it names is the
+one this project actually shipped**, and that is the thing that went wrong before: the live site
+said "0.4.1 on PyPI" for the whole of 0.5.0's life, and 0.4.1 was later yanked over a token
+advisory, so it was pointing readers at a release resolvers now hide.
+
+So it happens here, as a step, because a release is the one moment both repositories are in hand.
+
+1. Read the version this release ships: `python -c "import senbonzakura._version as v; print(v.__version__)"`.
+2. In `senbonzakura-web`, open `lib/release.ts` and check `export const RELEASE` is exactly that,
+   with no `v` prefix and no `.devN` suffix.
+3. If it differs, change it there, rebuild the site, and commit before tagging here.
+4. Deploy the site. It is Cloudflare Pages, serving `senbon.dev` and `www.senbon.dev` as proxied
+   CNAMEs to `senbonzakura.pages.dev`. **Confirm the deployment actually ran rather than assuming
+   it did**, because a fix that is committed and not deployed is not a fix.
+
+**Do not solve this by pinning the expected version inside the site's repository.** That turns a
+check into a second thing somebody has to remember and hands a green test to a site that is wrong,
+which is worse than the gap it closes.
+
 ## The panel
 
 A promotion to the release branch needs a multi-persona review artefact covering the promoted

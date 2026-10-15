@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import platform
 import random
 import sys
@@ -219,6 +220,141 @@ def random_pc_directions(fit_residuals, *, replicates, seed):
         pick = (coef / coef.norm()) @ basis
         out.append(pick / pick.norm())
     return out, writes
+
+
+#: THE PRE-REGISTERED GRID. Fixed in `private/plans/23-the-toxicity-channel.md` section 9 before
+#: the first grid run, because positions crossed with rules is a multiple-comparisons machine and
+#: the size of the grid is what sets the correction. Changing either of these two tuples changes
+#: the correction and makes a new pre-registration, not a continuation of this one.
+#:
+#: Positions are FRACTIONS of the stack so that one grid covers architectures from 16 to 28 blocks,
+#: resolving to round(f * n_blocks). Position 0 is never reachable this way, which is deliberate:
+#: no block writes it, so a direction taken there could not be ablated from anything.
+GRID_POSITIONS = (0.25, 0.40, 0.55, 0.70, 1.00)
+GRID_RULES = ("mean-diff", "mean-diff-unit", "lda-shrunk", "probe")
+
+#: Family-wise error rate the grid is corrected to, and the correction. Bonferroni over the cells
+#: within one model and seed: the cells are not independent, since neighbouring positions and
+#: related rules see much the same subspace, and under dependence Bonferroni still controls the
+#: family-wise rate while Holm's advantage over it is small. A conservative screen is the right
+#: error to make when the next step costs GPU hours.
+GRID_ALPHA = 0.05
+
+#: Shrinkage toward the identity when whitening by the pooled covariance. Fixed before the run.
+#: Without it the whitening inverts a covariance estimated from fewer prompts than dimensions,
+#: which is singular, and the "direction" that comes out is noise in the null space.
+LDA_SHRINKAGE = 0.1
+
+#: Logistic-probe fitting, fixed before the run: steps, learning rate and L2 penalty. Plain
+#: gradient descent on the fit partition only, so nothing about the probe sees the measure arms.
+PROBE_STEPS, PROBE_LR, PROBE_L2 = 400, 0.5, 1e-3
+
+
+def extract_direction(rule, fit_h, fit_l, position):
+    """The unit direction one extraction rule gives, at one position, from the FIT partition only.
+
+    `fit_h` and `fit_l` are `[positions, n, width]`. Every rule returns a unit vector, because
+    `attribution.ablating` normalises whatever it is handed and the arms of this grid must differ
+    in direction rather than in magnitude.
+    """
+    import torch
+
+    h = fit_h[position].double()
+    low = fit_l[position].double()
+    if rule == "mean-diff":
+        d = h.mean(0) - low.mean(0)
+    elif rule == "mean-diff-unit":
+        d = (h / h.norm(dim=1, keepdim=True).clamp(min=1e-9)).mean(0) \
+            - (low / low.norm(dim=1, keepdim=True).clamp(min=1e-9)).mean(0)
+    elif rule == "lda-shrunk":
+        pooled = torch.cat([h - h.mean(0), low - low.mean(0)])
+        cov = (pooled.T @ pooled) / max(pooled.shape[0] - 2, 1)
+        trace = float(torch.diagonal(cov).mean())
+        eye = torch.eye(cov.shape[0], dtype=cov.dtype)
+        cov = (1.0 - LDA_SHRINKAGE) * cov + LDA_SHRINKAGE * trace * eye
+        d = torch.linalg.solve(cov, h.mean(0) - low.mean(0))
+    elif rule == "probe":
+        x = torch.cat([h, low])
+        x = (x - x.mean(0)) / x.std(0).clamp(min=1e-9)
+        y = torch.cat([torch.ones(h.shape[0], dtype=torch.float64),
+                       torch.zeros(low.shape[0], dtype=torch.float64)])
+        w = torch.zeros(x.shape[1], dtype=torch.float64, requires_grad=True)
+        b = torch.zeros(1, dtype=torch.float64, requires_grad=True)
+        opt = torch.optim.SGD([w, b], lr=PROBE_LR)
+        for _ in range(PROBE_STEPS):
+            opt.zero_grad()
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(x @ w + b, y) \
+                + PROBE_L2 * (w * w).sum()
+            loss.backward()
+            opt.step()
+        d = w.detach()
+    else:
+        raise RunError(f"{rule!r} is not a declared extraction rule; the grid's rules are "
+                       f"{list(GRID_RULES)}, and adding one is a new pre-registration.")
+    norm = float(d.norm())
+    if not norm > 0.0:
+        raise RunError(f"the {rule!r} rule at position {position} produced a direction of norm "
+                       f"{norm}, so it points nowhere and nothing can be removed along it.")
+    return (d / norm).float()
+
+
+def total_effect(subject, measure, direction, n_blocks, baseline):
+    """How far the readout moves when `direction` is removed from every block, harmful minus harmless.
+
+    The same quantity `attribution.total_and_singles` returns as its total, computed WITHOUT the
+    per-block conditions: that helper also ablates each block singly, which is `n_blocks + 2`
+    forward passes per direction where this tier needs one, and at sixty directions a grid built on
+    it would cost nine times what it has to. The subtraction of the harmless arm is not an
+    optimisation but the measurement: it is what stops damage from tampering with a block being
+    read as the behaviour.
+
+    `baseline` is the unablated readout for both arms, computed once by the caller, because
+    ablating nothing gives the same numbers whatever direction was asked about.
+    """
+    import torch
+
+    out = {}
+    for side in ("harmful", "harmless"):
+        got = torch.as_tensor(
+            subject.readout(list(measure[side].prompts), direction, tuple(range(n_blocks))),
+            dtype=torch.float64)
+        if got.shape != (len(measure[side].prompts),) or not bool(torch.isfinite(got).all()):
+            raise RunError(
+                f"the readout returned {tuple(got.shape)} with non-finite values for the "
+                f"{side} arm where {len(measure[side].prompts)} finite values were expected, so "
+                f"this cell cannot be scored and the run stops rather than record a number it "
+                f"cannot stand behind.")
+        out[side] = got
+    return float((baseline["harmful"] - out["harmful"]).mean()
+                 - (baseline["harmless"] - out["harmless"]).mean())
+
+
+def unablated_readout(subject, measure):
+    """The readout with nothing removed, for both arms. Computed once per model and seed."""
+    import torch
+
+    return {side: torch.as_tensor(subject.readout(list(measure[side].prompts), None, ()),
+                                  dtype=torch.float64)
+            for side in ("harmful", "harmless")}
+
+
+def grid_cells(n_blocks):
+    """Every pre-registered cell as `(name, position, rule)`, in a fixed order.
+
+    Positions resolve by fraction so one grid covers every architecture. Two fractions that land on
+    the same block in a short stack collapse to one cell, which is reported rather than padded: the
+    correction is over the cells actually computed.
+    """
+    seen, out = set(), []
+    for fraction in GRID_POSITIONS:
+        position = max(1, min(n_blocks, round(fraction * n_blocks)))
+        for rule in GRID_RULES:
+            name = f"{rule}@{position}"
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append((name, position, rule))
+    return out
 
 
 def alignment(a, b):
@@ -465,6 +601,141 @@ def stage_causal(subject, parts, direction, controls, *, judge_arm, seed, log):
     }
 
 
+def stage_grid(subject, parts, *, seed, log):
+    """Tier 1: every pre-registered cell against the project's own null, with no generation.
+
+    THE QUANTITY is the one `direction_inert` is decided on: remove the cell's direction from every
+    block's write and measure how far the behaviour readout moves on the measure arms, harmful minus
+    harmless so that damage from tampering is not mistaken for the behaviour. A cell whose effect
+    does not clear what shuffled labels and random directions do has not moved the behaviour.
+
+    THE NULL is built once per model and seed, not per cell, because it is a statement about what
+    this pipeline reports from noise at this sample size and nothing in it depends on which cell is
+    being tested. Twenty shuffled-label replicates and twenty random-direction replicates, the same
+    counts `attribution.Conventions` declares.
+
+    THE THRESHOLD is Bonferroni over the cells: the `1 - alpha/cells` quantile of the pooled null,
+    so running more cells makes the bar higher rather than making a pass likelier. That is the
+    entire reason the grid is fixed in advance.
+    """
+    import torch
+
+    nb = subject.n_blocks
+    measure = parts["measure"]
+    cells = grid_cells(nb)
+    log(f"  grid: {len(cells)} cells over {nb} blocks")
+
+    # THE READOUT IS VALIDATED BEFORE A SINGLE CELL IS SCORED, for the reason
+    # `attribution.attribute` validates it before ranking anything: every number this tier produces
+    # is a move in the readout, so a readout that cannot see the behaviour makes the whole grid a
+    # measurement of nothing. A grid that returns `readout_invalid` is an answer about the model,
+    # not a failure of the run, and it stops here rather than reporting twenty meaningless effects.
+    subject.prepare(parts)
+    agreement = subject.readout_agreement(parts["search"]["harmful"].prompts,
+                                          parts["search"]["harmless"].prompts)
+    agreement = None if agreement is None or not math.isfinite(float(agreement)) else float(agreement)
+    problem = A._readout_problem(agreement, A.DEFAULT)  # noqa: SLF001  # the engine's own rule
+    if problem:
+        log(f"  grid: readout_invalid ({agreement}) -- no cell is scored")
+        return {"status": A.READOUT_INVALID, "status_reason": problem,
+                "readout_agreement": agreement,
+                "readout_agreement_detail": getattr(subject, "agreement_detail", None),
+                "preregistration": "private/plans/23-the-toxicity-channel.md section 9",
+                "verdict": ("the first-token readout cannot stand in for this behaviour on this "
+                            "model, so no grid cell could be scored")}
+
+    res = {k: {s: subject.residuals(list(parts[k][s].prompts)) for s in ("harmful", "harmless")}
+           for k in ("fit", "search")}
+    engine_direction, engine_position, position_aucs = A.fit_direction(
+        res["fit"]["harmful"], res["fit"]["harmless"],
+        res["search"]["harmful"], res["search"]["harmless"])
+
+    # The baseline readout, once: ablating nothing gives the same numbers whatever direction was
+    # asked about, so computing it per cell would double the grid for no information.
+    baseline = unablated_readout(subject, measure)
+
+    # The null, once per model and seed, not per cell: it is a statement about what this pipeline
+    # reports from noise at this sample size, and nothing in it depends on which cell is tested.
+    gen = torch.Generator().manual_seed(seed + 7919)
+    pooled = {k: torch.cat([res[k]["harmful"], res[k]["harmless"]], 1) for k in ("fit", "search")}
+    sizes = {k: (res[k]["harmful"].shape[1], res[k]["harmless"].shape[1]) for k in pooled}
+    groups = {k: tuple(("h", g) for g in parts[k]["harmful"].groups)
+              + tuple(("l", g) for g in parts[k]["harmless"].groups) for k in pooled}
+    shuffled = []
+    for _ in range(A.DEFAULT.shuffled_label_replicates):
+        labels = {}
+        for k in pooled:
+            index, n_groups = A._group_index(groups[k])  # noqa: SLF001  # the engine's own null
+            picked = torch.randperm(n_groups, generator=gen)[
+                :max(1, round(n_groups * sizes[k][0] / sum(sizes[k])))]
+            is_h = torch.isin(index, picked)
+            if bool(is_h.all()) or not bool(is_h.any()):
+                is_h[0] = not bool(is_h[0])
+            labels[k] = is_h
+        d, _, _ = A.fit_direction(pooled["fit"][:, labels["fit"]], pooled["fit"][:, ~labels["fit"]],
+                                  pooled["search"][:, labels["search"]],
+                                  pooled["search"][:, ~labels["search"]])
+        shuffled.append(total_effect(subject, measure, d, nb, baseline))
+    random_dirs, _ = random_pc_directions(res["fit"], replicates=A.DEFAULT.random_direction_replicates,
+                                          seed=seed + 104729)
+    random_totals = [total_effect(subject, measure, d, nb, baseline) for d in random_dirs]
+
+    pooled_null = torch.tensor([abs(v) for v in shuffled + random_totals], dtype=torch.float64)
+    quantile = 1.0 - GRID_ALPHA / len(cells)
+    threshold = float(torch.quantile(pooled_null, quantile))
+    uncorrected = float(torch.quantile(pooled_null, 1.0 - GRID_ALPHA))
+    log(f"  grid: null threshold {threshold:.3f} (Bonferroni at {quantile:.4f}), "
+        f"uncorrected {uncorrected:.3f}")
+
+    rows = {}
+    for name, position, rule in [*cells, ("engine", int(engine_position), "mean-diff")]:
+        direction = (engine_direction if name == "engine"
+                     else extract_direction(rule, res["fit"]["harmful"], res["fit"]["harmless"],
+                                            position))
+        total = total_effect(subject, measure, direction, nb, baseline)
+        held_out = A.auc(res["search"]["harmful"][position].double() @ direction.double(),
+                         res["search"]["harmless"][position].double() @ direction.double())
+        rows[name] = {
+            "rule": rule, "position": position,
+            "held_out_auc": round(float(held_out), 4),
+            "total_effect": round(float(total), 4),
+            "clears_corrected_null": bool(abs(float(total)) > threshold),
+            "clears_uncorrected_null": bool(abs(float(total)) > uncorrected),
+            "cosine_with_engine_direction": alignment(direction, engine_direction),
+            "is_a_grid_cell": name != "engine",
+        }
+        log(f"    {name:22s} auc {rows[name]['held_out_auc']:.3f}  effect "
+            f"{rows[name]['total_effect']:>9.3f}  clears {rows[name]['clears_corrected_null']}")
+
+    passed = sorted(n for n, r in rows.items() if r["is_a_grid_cell"]
+                    and r["clears_corrected_null"])
+    return {
+        "status": "scored",
+        "readout_agreement": round(agreement, 4),
+        "preregistration": "private/plans/23-the-toxicity-channel.md section 9",
+        "positions_as_fractions": list(GRID_POSITIONS), "rules": list(GRID_RULES),
+        "cells": len(cells), "alpha": GRID_ALPHA, "correction": "Bonferroni over cells",
+        "null": {
+            "shuffled_label_replicates": len(shuffled),
+            "random_direction_replicates": len(random_totals),
+            "corrected_threshold": round(threshold, 4),
+            "uncorrected_threshold": round(uncorrected, 4),
+            "shuffled_abs_max": round(max(abs(v) for v in shuffled), 4),
+            "random_abs_max": round(max(abs(v) for v in random_totals), 4),
+        },
+        "engine_choice": {"position": int(engine_position),
+                          "held_out_auc": round(float(position_aucs[engine_position]), 4)},
+        "rows": rows,
+        "cells_clearing_the_corrected_null": passed,
+        "cells_clearing_the_uncorrected_null": sorted(
+            n for n, r in rows.items() if r["is_a_grid_cell"] and r["clears_uncorrected_null"]),
+        "verdict": ("no cell moved the behaviour readout beyond the corrected null"
+                    if not passed else
+                    f"{len(passed)} cell(s) are HYPOTHESES and need the held-out model's "
+                    f"generation test before anything is claimed"),
+    }
+
+
 def stage_nulls(subject, parts, *, seed, log):
     """The project's own nulls, through the shipped instrument with this channel's judge."""
     log("  nulls: running attribution.attribute")
@@ -519,7 +790,7 @@ def build_parser():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", required=True, help="directory for the stage artefacts")
     ap.add_argument("--stages", default="judge,causal,nulls",
-                    help="comma separated: judge, causal, nulls")
+                    help="comma separated: judge, grid, causal, nulls")
     ap.add_argument("--judge-arm", default=toxicity.PRIMARY_ARM,
                     choices=sorted(toxicity.ARM_DECLARATIONS))
     ap.add_argument("--replies-out", default="",
@@ -538,9 +809,10 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     stages = [s.strip() for s in args.stages.split(",") if s.strip()]
-    unknown = [s for s in stages if s not in ("judge", "causal", "nulls")]
+    unknown = [s for s in stages if s not in ("judge", "grid", "causal", "nulls")]
     if unknown:
-        raise SystemExit(f"--stages names {unknown}, and the stages are judge, causal and nulls.")
+        raise SystemExit(
+            f"--stages names {unknown}, and the stages are judge, grid, causal and nulls.")
     preflight(args)
     out = Path(args.out)
     log = print
@@ -638,6 +910,15 @@ def main(argv=None):
                                judge_arm=args.judge_arm, seed=args.seed, log=log)
             (out / "causal.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
             log(f"  causal: supported = {res['supported']}")
+
+    if "grid" in stages:
+        if done("grid"):
+            log("grid: already on disk, skipping (pass --force to re-run)")
+        else:
+            log("stage: grid")
+            res = stage_grid(subject, parts, seed=args.seed, log=log)
+            (out / "grid.json").write_text(json.dumps(res, indent=2), encoding="utf-8")
+            log(f"  grid: {res['verdict']}")
 
     if "nulls" in stages:
         if done("nulls"):

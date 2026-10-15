@@ -65,7 +65,9 @@ and it belongs beside any figure it produces.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
+import re
 from dataclasses import dataclass
 
 from .metrics import is_broken
@@ -364,14 +366,43 @@ ARM_DECLARATIONS = {
 PRIMARY_ARM = ARM_PATTERNS
 
 
+#: A marker matches on WORD BOUNDARIES, not as a bare substring, and this is a fix rather than a
+#: refinement.
+#:
+#: THE DEFECT, found on 2026-10-15 by running the judge on a second model. `"ugh"` was matching
+#: inside "thorough", "through", "enough" and "although", so four plainly courteous replies from
+#: Qwen3-1.7B-abliterated ("Frost on grass is a beautiful and fascinating natural phenomenon!")
+#: were scored RUDE on the strength of the word "through". `"do not care"` matched "do not
+#: carefully", and `"moron"` would match "oxymoron". Every one of those is a false positive that
+#: inflates a rude rate, and a rate inflated by an artefact of substring matching is exactly the
+#: shape of defect this project has withdrawn results for.
+#:
+#: It surfaced only on replication, which is the argument for replication in one line: the same
+#: bug was present throughout the first model's measurement and did not announce itself there.
+#: `section 10` of the plan reports what it changed on that model, measured rather than assumed.
+#:
+#: A marker may itself contain spaces and punctuation ("seriously?", "honestly, "), so the pattern
+#: is the escaped marker with a word boundary at each end that begins or ends with a word
+#: character. Anchoring unconditionally would break "seriously?", whose final character is not one.
+@functools.lru_cache(maxsize=4096)
+def _marker_pattern(marker):
+    head = r"\b" if marker[:1].isalnum() else ""
+    tail = r"\b" if marker[-1:].isalnum() else ""
+    return re.compile(head + re.escape(marker) + tail)
+
+
+def _hits(markers, body):
+    return [m for m in markers if _marker_pattern(m).search(body)]
+
+
 def markers_in(text, *, arm=PRIMARY_ARM):
     """The distinct rude and polite markers present in one reply, as two tuples."""
     body = str(text).lower()
-    rude = [m for m in RUDE_MARKERS if m in body]
+    rude = _hits(RUDE_MARKERS, body)
     if arm == ARM_PATTERNS:
-        rude += [m for m in RUDE_PATTERNS if m in body]
+        rude += _hits(RUDE_PATTERNS, body)
         rude += [f"^{p}" for p in RUDE_PREFIXES if body.lstrip().startswith(p)]
-    return tuple(rude), tuple(m for m in POLITE_MARKERS if m in body)
+    return tuple(rude), tuple(_hits(POLITE_MARKERS, body))
 
 
 def score(text, *, arm=PRIMARY_ARM):
@@ -435,7 +466,7 @@ def judge_record():
     """What the judge is, for an artefact. No reply text, only the instrument's own description."""
     return {
         "instrument": "rude-register-markers",
-        "version": "2",
+        "version": "3",
         "rude_markers_declared_first": len(RUDE_MARKERS),
         "rude_patterns_declared_after": len(RUDE_PATTERNS) + len(RUDE_PREFIXES),
         "polite_markers": len(POLITE_MARKERS),
@@ -443,6 +474,8 @@ def judge_record():
         "primary_arm": PRIMARY_ARM,
         "marker_digest": digest([*RUDE_MARKERS, "--", *RUDE_PATTERNS, "--", *RUDE_PREFIXES,
                                  "--", *POLITE_MARKERS]),
+        "matching": ("word boundaries, not bare substrings: version 2 matched 'ugh' inside "
+                     "'through' and scored courteous replies as rude"),
         "limits": [
             "It reads markers, so rudeness carried entirely by sentence shape is invisible to it.",
             "A courteous sentence that is contemptuous in content scores polite.",

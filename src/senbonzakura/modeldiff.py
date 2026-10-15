@@ -124,9 +124,9 @@ CHUNK_ELEMENTS = 4_096
 #: It is pure Python arithmetic on purpose. numpy would be an order of magnitude faster and is not
 #: a dependency of this package, and torch is, but pulling torch in here would put a multi-second
 #: import in front of a command whose promise is that it is cheap.
-#: MEASURED, not guessed, and re-measured on 2026-10-15 against three real bf16 checkpoints on
-#: atlas: 11 to 15 million elements a second, where this said 4 million. It feeds a "this will take
-#: about N minutes" estimate, so the stale value told people a job would take roughly three times
+#: MEASURED, not guessed, and re-measured on 2026-10-15 against three real bf16 checkpoints on a
+#: sixteen-core server: 11 to 15 million elements a second, where this said 4 million. It feeds a
+#: "this will take about N minutes" estimate, so the stale value told people a job would take three
 #: as long as it does. The conservative end of the measured range is used, because an estimate that
 #: runs short is a worse surprise than one that runs long.
 ELEMENTS_PER_SECOND = 11_000_000

@@ -46,7 +46,6 @@ provenance refusal.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -88,16 +87,6 @@ PRINT_ROWS = 25
 #: perfectly ordinary reason: a full comparison also leaves that field null on a tensor it could
 #: not decode. The tier is a fact about how the report was made, so the report states it.
 READING_RELATIVE, READING_TOUCHED = "relative", "touched"
-
-#: What a BASE FINGERPRINT is: one hash per tensor, with the shape and dtype beside it.
-#:
-#: WHY IT EXISTS. The two channels that compare a model against its base need the base, and the
-#: base is gigabytes. But "which tensors changed" is decided by a BYTE COMPARISON, so a hash per
-#: tensor answers it exactly, and a whole model's worth of hashes is about twenty kilobytes. So the
-#: question "which blocks did this edit touch, and how much of each block did it touch" can be
-#: answered without the base weights ever being present. How FAR each one moved still cannot: that
-#: needs the values, and no hash carries them.
-FINGERPRINT_SCHEMA = "senbonzakura-modelfingerprint/1"
 
 #: What this report IS, declared in the report, because another surface now reads it. The card's
 #: edit-magnitude channel is drawn from these rows, and a reader that guesses at an undeclared
@@ -208,21 +197,6 @@ def _which_side_is_not_finite(a, b, dtype):
     if bad_a and bad_b:
         return "both sides hold"
     return "the candidate holds" if bad_a else "the base holds"
-
-
-def _squared_norm(raw, dtype):
-    """The sum of squares of a tensor's elements, or None where the dtype is not decodable.
-
-    Chunked through the same decoder `_magnitude` uses, so a norm taken here and a norm taken
-    there cannot disagree, and so a single large tensor never has to be held as floats all at once.
-    """
-    if _width(dtype) is None:
-        return None
-    total = 0.0
-    for chunk in _decode_chunks(raw, dtype):
-        for value in chunk:
-            total += value * value
-    return total if math.isfinite(total) else None
 
 
 def _magnitude(a, b, dtype, on_progress=None):
@@ -361,198 +335,18 @@ def _layer_of(name):
     return None
 
 
-def fingerprint(model_dir, *, log=None):
-    """One hash per tensor, so a later comparison can tell what changed without these weights.
-
-    Hashed from the tensor's RAW BYTES, which is the same thing `compare` compares when it decides
-    whether a tensor changed. So a hash mismatch and a byte mismatch are the same fact, and the
-    cheap reading cannot disagree with the full one about WHICH tensors moved. It can only decline
-    to say how far.
-
-    The shape travels with the hash because the cheap reading needs it: "how much of this block
-    changed" is a share of the block's parameters, and a hash alone cannot weigh a bias against a
-    projection.
-
-    EACH TENSOR'S SQUARED NORM TRAVELS WITH IT TOO, and this is the field that makes the expensive
-    reading cheap. A whole-model relative change is the delta norm over the BASE's norm, and the
-    base's norm needs every tensor decoded, including the untouched ones that a comparison
-    deliberately never reads. That is the whole reason the honest whole-model figure cost an order
-    of magnitude more than the fast one.
-
-    Measuring it HERE moves that cost to the base model, where it is paid once and reused by every
-    comparison ever made against it, instead of to the candidate, where it would be paid again on
-    every run. The same field also makes the exactly-correct PER BLOCK reading available, which
-    `compare` could not produce for the same reason.
-
-    So this function is deliberately the expensive one: it decodes everything. It is meant to be
-    run once per base checkpoint and kept.
-    """
-    say_ = log or (lambda m: None)
-    found = index(model_dir)
-    tensors, read, undecodable = {}, 0, 0
-    for n, (name, (shard, t)) in enumerate(sorted(found.items()), 1):
-        raw = streaming.read_tensor(str(shard), t)
-        read += len(raw)
-        entry = {
-            "sha256": hashlib.sha256(raw).hexdigest(),
-            "shape": list(t.shape), "dtype": t.dtype,
-        }
-        # A dtype this command cannot decode gets a hash and no norm. Named as null rather than
-        # left out, and counted below, because a missing norm silently dropped from a denominator
-        # would make the whole-model figure read HIGHER than the truth, which is the direction
-        # that matters: it would overstate the edit.
-        squared = _squared_norm(raw, t.dtype)
-        entry["squared_norm"] = squared
-        if squared is None:
-            undecodable += 1
-        tensors[name] = entry
-        if n % 200 == 0:
-            say_(f"  read {n} of {len(found)} tensors ({read / 1e9:.1f} GB)")
-    total = sum(e["squared_norm"] for e in tensors.values() if e["squared_norm"] is not None)
-    return {
-        "schema": FINGERPRINT_SCHEMA,
-        "model": str(model_dir),
-        "tensors": tensors,
-        "total_squared_norm": total,
-        "tensors_without_a_norm": undecodable,
-        "bytes_read": read,
-        "what_this_does_not_say": (
-            "These are hashes of a checkpoint's tensors. They say whether a tensor is byte for "
-            "byte the same as this one, and nothing about what it contains, what it does, or "
-            "whether either checkpoint is safe."),
-    }
-
-
-def compare_to_fingerprint(cand_dir, base_fingerprint, *, log=None, base_dir=None):
-    """The cheap reading: which tensors changed, from a fingerprint rather than from the weights.
-
-    Returns the same report shape as `compare`, with `reading` set to `touched` and every
-    `relative_change` null. That is not a degraded full comparison with fields missing, it is a
-    different and exact answer to a smaller question, and the `reading` field is what tells a
-    consumer which one it is holding.
-
-    `base_dir` UPGRADES IT TO THE FULL READING AT A FRACTION OF THE COST, and this is the path
-    worth understanding, because the obvious one is slower rather than faster.
-
-    `compare` reads BOTH checkpoints' bytes for every tensor, because a byte comparison is how it
-    decides what changed. Handing it a fingerprint removes the arithmetic on the untouched tensors
-    and leaves the reading, so it still moves twice the bytes and measures no faster: that was
-    measured at 114% of a plain full decode, not an improvement.
-
-    This path decides what changed by hashing the CANDIDATE against the fingerprint, so the base is
-    not read at all for that. Only the tensors that actually differ need the base's values, and an
-    abliteration touches a few per cent of them. Every untouched tensor contributes zero to the
-    numerator and its stored norm to the denominator, so the whole-model figure stays exact. With
-    `base_dir` given, the reading is `relative` and carries everything `compare` would report.
-    """
-    say_ = log or (lambda m: None)
-    declared = base_fingerprint.get("schema")
-    if declared != FINGERPRINT_SCHEMA:
-        raise SystemExit(
-            f"the base fingerprint declares {declared!r} rather than {FINGERPRINT_SCHEMA!r}, so "
-            f"it is not a fingerprint this command can read. Comparing against it would be "
-            f"guessing at somebody else's format.")
-    base = base_fingerprint.get("tensors")
-    if not isinstance(base, dict) or not base:
-        raise SystemExit("the base fingerprint names no tensors, so there is nothing to compare "
-                         "this checkpoint against.")
-    cand = index(cand_dir)
-    only_base = sorted(set(base) - set(cand))
-    only_cand = sorted(set(cand) - set(base))
-    shared = sorted(set(base) & set(cand))
-    source = index(base_dir) if base_dir is not None else None
-    rows, read = [], 0
-    moved_num = moved_base = whole_num = whole_base = 0.0
-    by_block_num: dict[int, float] = {}
-    by_block_base: dict[int, float] = {}
-    for n, name in enumerate(shared, 1):
-        shard, t = cand[name]
-        raw = streaming.read_tensor(str(shard), t)
-        read += len(raw)
-        identical = hashlib.sha256(raw).hexdigest() == base[name].get("sha256")
-        stored = base[name].get("squared_norm")
-        rel = peak = why_not = None
-        if not identical and source is not None and name in source:
-            bshard, bt = source[name]
-            braw = streaming.read_tensor(str(bshard), bt)
-            read += len(braw)
-            rel, peak, why_not, sums = _magnitude(raw, braw, bt.dtype)
-            if sums is not None:
-                moved_num += sums[0]
-                moved_base += sums[1]
-                whole_num += sums[0]
-                whole_base += sums[1]
-                _add(by_block_num, by_block_base, _layer_of(name), sums[0], sums[1])
-        elif identical and stored is not None:
-            whole_base += stored
-            _add(by_block_num, by_block_base, _layer_of(name), 0.0, stored)
-        rows.append({
-            "tensor": name, "layer": _layer_of(name), "dtype": t.dtype,
-            "shape": list(t.shape), "changed": not identical,
-            "relative_change": None if rel is None else round(rel, 6),
-            "largest_element_move": None if peak is None else float(peak),
-            "magnitude_unavailable_because": (
-                why_not if why_not is not None else
-                None if identical or source is not None else
-                "this comparison was made against a fingerprint of the base rather than against "
-                "its weights, so whether the tensor changed is exact and how far it moved is "
-                "not measured"),
-            "is_residual_writer": any(h in name for h in WRITER_HINTS),
-        })
-        if n % 200 == 0:
-            say_(f"  hashed {n} of {len(shared)} tensors ({read / 1e9:.1f} GB read)")
-    changed = [r for r in rows if r["changed"]]
-    layers = sorted({r["layer"] for r in changed if r["layer"] is not None})
-    return {
-        "schema": SCHEMA,
-        "reading": READING_TOUCHED if source is None else READING_RELATIVE,
-        "base": base_fingerprint.get("model"), "candidate": str(cand_dir),
-        "tensors": {"shared": len(shared), "changed": len(changed),
-                    "only_in_base": only_base, "only_in_candidate": only_cand},
-        "changed_layers": layers,
-        "changed_layer_span": None if not layers else [layers[0], layers[-1]],
-        "relative_change_whole_model": (
-            None if whole_base <= 0 else round(math.sqrt(whole_num) / math.sqrt(whole_base), 8)),
-        "blocks": [
-            {"index": layer,
-             "relative_change": (None if by_block_base[layer] <= 0 else
-                                 round(math.sqrt(by_block_num[layer])
-                                       / math.sqrt(by_block_base[layer]), 8))}
-            for layer in sorted(by_block_base)],
-        "relative_change_over_changed_tensors": (
-            None if moved_base <= 0 else round(math.sqrt(moved_num) / math.sqrt(moved_base), 6)),
-        "changed_residual_writers": sum(1 for r in changed if r["is_residual_writer"]),
-        "changed_elsewhere": sum(1 for r in changed if not r["is_residual_writer"]),
-        "bytes_read": read,
-        "rows": sorted(rows, key=lambda r: r["tensor"]),
-        "what_this_does_not_say": (
-            "This says which tensors differ from the base and nothing about how far they moved, "
-            "because it was made from hashes rather than from the base's weights. It is not a "
-            "safety verdict and not a backdoor check."),
-    }
-
-
-def _add(num_by, base_by, layer, num, base):
-    """Accumulate a tensor's numerator and denominator into its block, ignoring unplaced tensors."""
-    if layer is None:
-        return
-    num_by[layer] = num_by.get(layer, 0.0) + num
-    base_by[layer] = base_by.get(layer, 0.0) + base
-
-
-def compare(base_dir, cand_dir, *, log=None, base_norms=None):
+def compare(base_dir, cand_dir, *, log=None):
     """The whole comparison, as a dict ready to serialise. Peak memory is two tensors.
 
-    `base_norms` is an optional fingerprint of the BASE, as `fingerprint` writes it. Given one,
-    this also reports the whole-model relative change and the exact per-block reading, neither of
-    which it can produce on its own.
+    IT REPORTS THE MOVEMENT ACROSS THE TENSORS THAT CHANGED, and deliberately not across the whole
+    model. The whole-model figure divides by the base's norm over every tensor including the ones
+    an edit never touched, which this command never decodes: it settles an unchanged tensor with a
+    byte comparison and moves on. That is where its speed comes from, and it is also why the field
+    name below says which denominator it used. The two differ by about seven times on a realistic
+    edit, so a reader handed the wrong one would be badly misled.
 
-    WHY IT CANNOT PRODUCE THEM ON ITS OWN, since this is the question that keeps being asked. Both
-    figures divide by the base's norm over tensors this command never decodes: it settles an
-    unchanged tensor with a byte comparison and moves on, which is exactly where its speed comes
-    from. Decoding them anyway would cost an order of magnitude to measure the size of weights
-    nobody touched. A fingerprint has already measured them, once, so passing one in buys the
-    expensive figures at no extra cost here.
+    The whole-model figure is a paid capability and the code that produces it is not in this
+    repository. See Q-134.1.
     """
     say_ = log or (lambda m: None)
     base, cand = index(base_dir), index(cand_dir)
@@ -607,16 +401,6 @@ def compare(base_dir, cand_dir, *, log=None, base_norms=None):
     # the honest cheap figure is "across the tensors that changed", and the expensive one is not
     # computed rather than approximated by the cheap one under a name that implies it.
     moved_num = moved_base = 0.0
-    whole_num = whole_base = 0.0
-    by_block_num: dict[int, float] = {}
-    by_block_base: dict[int, float] = {}
-    norms = None
-    if base_norms is not None:
-        if base_norms.get("schema") != FINGERPRINT_SCHEMA:
-            raise SystemExit(
-                f"the base fingerprint declares {base_norms.get('schema')!r} rather than "
-                f"{FINGERPRINT_SCHEMA!r}, so the whole-model figure cannot be taken from it.")
-        norms = base_norms.get("tensors") or {}
     last_beat = time.monotonic()
 
     def beat(done, total):
@@ -638,20 +422,6 @@ def compare(base_dir, cand_dir, *, log=None, base_norms=None):
         if sums is not None:
             moved_num += sums[0]
             moved_base += sums[1]
-        if norms is not None:
-            # The numerator is this tensor's own squared delta, which is zero when it did not move.
-            # The denominator is its base norm, taken from the fingerprint when the tensor was not
-            # decoded here and from the decode when it was. A tensor the fingerprint has no norm
-            # for is left out of BOTH, so it cannot quietly shrink the denominator.
-            whole = norms.get(name, {}).get("squared_norm")
-            if identical and whole is not None:
-                whole_num += 0.0
-                whole_base += whole
-                _add(by_block_num, by_block_base, _layer_of(name), 0.0, whole)
-            elif sums is not None:
-                whole_num += sums[0]
-                whole_base += sums[1]
-                _add(by_block_num, by_block_base, _layer_of(name), sums[0], sums[1])
         rows.append({
             "tensor": name, "layer": _layer_of(name), "dtype": bt.dtype,
             "shape": list(bt.shape), "changed": not identical,
@@ -685,22 +455,6 @@ def compare(base_dir, cand_dir, *, log=None, base_norms=None):
         # whole-model denominator is far bigger and the same edit reads as a far smaller number.
         # Quoting this one as "x% of the weights moved" would overstate it by whatever fraction of
         # the model was left alone.
-        # THE WHOLE-MODEL FIGURE, present only when a base fingerprint was supplied. This is the
-        # one that may honestly be worded "x% of the weights moved": its denominator is every
-        # tensor of the base, not only the ones the edit touched.
-        "relative_change_whole_model": (
-            None if (norms is None or whole_base <= 0)
-            else round(math.sqrt(whole_num) / math.sqrt(whole_base), 8)),
-        # Per block, the same reading: the block's delta norm over the block's own base norm. This
-        # is the exactly-correct per-block number, as opposed to the parameter-weighted
-        # approximation a reader has to fall back on without a fingerprint.
-        "blocks": (
-            None if norms is None else
-            [{"index": layer,
-              "relative_change": (None if by_block_base[layer] <= 0 else
-                                  round(math.sqrt(by_block_num[layer])
-                                        / math.sqrt(by_block_base[layer]), 8))}
-             for layer in sorted(by_block_base)]),
         "relative_change_over_changed_tensors": (
             None if moved_base <= 0 else round(math.sqrt(moved_num) / math.sqrt(moved_base), 6)),
         "changed_residual_writers": sum(1 for r in changed if r["is_residual_writer"]),

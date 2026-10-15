@@ -208,7 +208,7 @@ def overlap(reply_a, reply_b):
     return len(wa & wb) / max(len(wa | wb), 1)
 
 
-def elicitation(subject, pairs, *, log):
+def elicitation(subject, pairs, *, log, is_refusal_contrast=False):
     """Does the instruction change what the model writes? Generation, and no judge anywhere.
 
     Three readings, none of which needs to know what the behaviour IS:
@@ -245,8 +245,15 @@ def elicitation(subject, pairs, *, log):
         "mean_chars_b": round(sum(len(r) for r in b_replies) / len(b_replies), 1),
     }
     out["length_ratio"] = round(out["mean_chars_a"] / max(out["mean_chars_b"], 1.0), 3)
-    refused = max(out["refusal_rate_a"], out["refusal_rate_b"]) > ELICIT_REFUSAL_CEILING
+    # THE REFUSAL CEILING DOES NOT APPLY TO THE REFUSAL CONTRAST, and the first pass got this
+    # wrong. The ceiling exists because a model that declines one arm turns any other contrast
+    # into a refusal contrast by the back door. For refusal itself, declining the harmful arm is
+    # the behaviour being measured, so flagging it would mark the one behaviour this tool ships as
+    # not elicited on exactly the models that do it best.
+    refused = (not is_refusal_contrast
+               and max(out["refusal_rate_a"], out["refusal_rate_b"]) > ELICIT_REFUSAL_CEILING)
     ignored = out["mean_overlap"] > ELICIT_OVERLAP_CEILING
+    out["refusal_ceiling_applies"] = not is_refusal_contrast
     out["elicited"] = bool(not refused and not ignored)
     out["why_not"] = ("the model refuses one arm, so the contrast is substantially a refusal "
                       "contrast" if refused else
@@ -352,7 +359,9 @@ def run_cell(subject, tok, contrast, *, elicit, log):
                             "why": "uninstructed: there is no instruction to rephrase, so a "
                                    "separation score means what the label says without one"}
 
-    cell["elicitation"] = elicitation(subject, pairs, log=log) if elicit else {
+    cell["elicitation"] = elicitation(
+        subject, pairs, log=log,
+        is_refusal_contrast=contrast.external) if elicit else {
         "ran": False, "why": "not requested on this pass"}
     cell["verdict"] = verdict_for(cell)
     return cell

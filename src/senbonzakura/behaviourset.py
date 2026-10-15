@@ -262,8 +262,8 @@ def merge(existing, result, *, behaviour):
         if held and not isinstance(was, dict):
             raise BehaviourSetError(
                 "the set already at this path records no shared identity, so whether this "
-                f"behaviour was measured on the same model cannot be shown. Delete the file and "
-                f"measure the behaviours again, or write this one to a path of its own.")
+                "behaviour was measured on the same model cannot be shown. Delete the file and "
+                "measure the behaviours again, or write this one to a path of its own.")
         for key, entry in held.items():
             if key == behaviour:
                 # THE IDEMPOTENT RE-RUN, and the only entry a merge is allowed to replace. Its old

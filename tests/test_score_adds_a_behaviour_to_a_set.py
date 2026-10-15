@@ -62,9 +62,13 @@ def test_the_compass_stamps_nothing_so_it_cannot_join_a_set(evalset, tmp_path, n
 
 
 def test_the_gguf_path_stamps_nothing_so_it_cannot_join_a_set(evalset, tmp_path, never_loads):
+    from senbonzakura import ggufrun
+
+    # A GGUF is detected by its magic bytes rather than its name, so the fixture needs the bytes.
+    weights = tmp_path / "model.gguf"
+    weights.write_bytes(ggufrun.GGUF_MAGIC + b"\x00" * 16)
     with pytest.raises(SystemExit, match="cannot be used with a GGUF"):
-        run(evalset, tmp_path / "s.json", "--behaviour", "refusal",
-            model=str(tmp_path / "model.gguf"))
+        run(evalset, tmp_path / "s.json", "--behaviour", "refusal", model=str(weights))
 
 
 def test_no_behaviour_flag_leaves_the_check_silent(evalset, tmp_path, monkeypatch, tiny_model,

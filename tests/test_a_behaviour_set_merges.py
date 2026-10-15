@@ -13,9 +13,9 @@ import json
 from pathlib import Path
 
 import pytest
+from senbonzakura_check.measurement import METRICS_KEY
 
 from senbonzakura import behaviourset
-from senbonzakura_check.measurement import METRICS_KEY
 
 
 def result(*, model="org/model", slot="refusal_rate.senbonzakura-ruler", value=0.4, n=120,

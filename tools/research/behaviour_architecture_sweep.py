@@ -296,22 +296,56 @@ def run_cell(subject, tok, contrast, *, elicit, log):
         "sweep_verdict_2026_10_14": contrast.sweep_verdict,
     }
 
-    # The transfer test, for an instructed contrast only: fit on phrasing 0 and score the SAME
-    # direction on the residuals of phrasing 1, over identical subjects.
+    # THE TRANSFER TEST, over EVERY ORDERED PAIR OF PHRASINGS rather than one of them.
+    #
+    # TWO CORRECTIONS, both made after model one's numbers disagreed with the 2026-10-14 sweep on
+    # its two headline cases, and both recorded in the plan because a rule changed mid-flight has
+    # to be. Neither can manufacture a pass: the first makes the comparison harder to flatter and
+    # the second takes the WORST pair rather than the best.
+    #
+    #   1. `across` is scored on the HELD-OUT groups only, exactly as `within` is. It used to be
+    #      scored on every group, so the two numbers being divided were taken over different
+    #      prompt sets and their ratio was not a like-for-like share.
+    #   2. Every ordered pair of phrasings is measured, not just 0 to 1. If a behaviour's verdict
+    #      depends on which paraphrase was written for it, then the verdict is a property of our
+    #      wording rather than of the behaviour, and the only way to see that is to try them all.
+    #      `transfers` is true only when the WEAKEST pair clears the floor.
     if contrast.instructed and contrast.phrasings >= 2:
-        other = contrast.build(phrasing=1)
-        res_a2 = subject.residuals([p.a for p in other])
-        res_b2 = subject.residuals([p.b for p in other])
-        direction, position = directions[SEEDS[0]]
-        across = A.auc((res_a2[position].double() @ direction.double()).tolist(),
-                       (res_b2[position].double() @ direction.double()).tolist())
-        within = per_seed[str(SEEDS[0])]["auc"]
-        retained = ((across - 0.5) / (within - 0.5)) if within > 0.5 else None
+        fit_rows, held_rows = halves(groups, SEEDS[0])
+        res_by_phrasing = {0: (res_a, res_b)}
+        for q in range(1, contrast.phrasings):
+            other = contrast.build(phrasing=q)
+            res_by_phrasing[q] = (subject.residuals([p.a for p in other]),
+                                  subject.residuals([p.b for p in other]))
+        pairs_out, retained_values = {}, []
+        for p in range(contrast.phrasings):
+            fit_a, fit_b = res_by_phrasing[p]
+            direction, position, _ = A.fit_direction(
+                fit_a[:, fit_rows], fit_b[:, fit_rows], fit_a[:, held_rows], fit_b[:, held_rows])
+            within = A.auc((fit_a[position][held_rows].double() @ direction.double()).tolist(),
+                           (fit_b[position][held_rows].double() @ direction.double()).tolist())
+            for q in range(contrast.phrasings):
+                if p == q:
+                    continue
+                score_a, score_b = res_by_phrasing[q]
+                across = A.auc(
+                    (score_a[position][held_rows].double() @ direction.double()).tolist(),
+                    (score_b[position][held_rows].double() @ direction.double()).tolist())
+                keep = ((across - 0.5) / (within - 0.5)) if within > 0.5 else None
+                pairs_out[f"{p}->{q}"] = {
+                    "within": round(float(within), 4), "across": round(float(across), 4),
+                    "retained": None if keep is None else round(float(keep), 4)}
+                if keep is not None:
+                    retained_values.append(float(keep))
+        worst = min(retained_values) if retained_values else None
+        best = max(retained_values) if retained_values else None
         cell["transfer"] = {
-            "within": round(float(within), 4), "across": round(float(across), 4),
-            "retained": None if retained is None else round(float(retained), 4),
-            "floor": TRANSFER_FLOOR,
-            "transfers": bool(retained is not None and retained >= TRANSFER_FLOOR),
+            "phrasings": contrast.phrasings, "pairs": pairs_out,
+            "retained": None if worst is None else round(worst, 4),
+            "retained_best_pair": None if best is None else round(best, 4),
+            "spread_across_pairs": None if worst is None else round(best - worst, 4),
+            "floor": TRANSFER_FLOOR, "rule": "the weakest ordered pair must clear the floor",
+            "transfers": bool(worst is not None and worst >= TRANSFER_FLOOR),
         }
     else:
         cell["transfer"] = {"ran": False,
@@ -342,7 +376,12 @@ def verdict_for(cell):
         reasons.append(f"seed spread {cell['separation_spread']:.3f} is wide")
     transfer = cell.get("transfer") or {}
     if transfer.get("ran") is not False and transfer.get("transfers") is False:
-        reasons.append(f"collapses under paraphrase, retaining {transfer.get('retained')}")
+        reasons.append(f"collapses under paraphrase, weakest pair retaining "
+                       f"{transfer.get('retained')}")
+    if (transfer.get("spread_across_pairs") or 0) > 0.4:
+        reasons.append(f"the transfer verdict depends on which paraphrase is used (spread "
+                       f"{transfer.get('spread_across_pairs')}), so it is a fact about our "
+                       f"wording rather than about the behaviour")
     elicit = cell.get("elicitation") or {}
     if elicit.get("ran") is not False and elicit.get("elicited") is False:
         reasons.append(f"not elicited: {elicit.get('why_not')}")

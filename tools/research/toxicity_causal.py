@@ -374,6 +374,15 @@ def stage_causal(subject, parts, direction, controls, *, judge_arm, seed, log):
     conditions["topic"] = controls["topic"]
     for i, d in enumerate(controls["random"]):
         conditions[f"random:{i}"] = d
+    # THE TIE-BREAK THIS EXISTS BECAUSE OF. `attribution.fit_direction` scores every position and
+    # takes the best, breaking ties toward the EARLIEST (`key=(auc, -p)`). On this corpus the
+    # held-out AUC is 1.000 at fourteen positions out of seventeen, so the position the engine
+    # chose was decided by the tie-break and not by the data. A causal result that held only at
+    # that one position would be an artefact of the tie-break, so the same direction refitted at
+    # other positions runs as extra conditions. They are reported, never chosen: the primary
+    # register condition is the engine's own choice, as it would be in a real run.
+    for name, d in sorted((controls.get("alternative_positions") or {}).items()):
+        conditions[f"register@{name}"] = d
 
     # EVERY JUDGE ARM IS SCORED ON EVERY CONDITION, from the same generations, and that removes a
     # choice that would otherwise be made after the fact. Generation is the whole cost here;
@@ -590,9 +599,24 @@ def main(argv=None):
             res_topic["harmful"], res_topic["harmless"], position)
         random_dirs, _ = random_pc_directions(res_fit, replicates=RANDOM_DIRECTIONS,
                                               seed=args.seed + 7919)
-        controls = {"topic": topic_direction, "random": random_dirs}
+        alternatives, alt_record = {}, {}
+        n_positions = len(position_aucs)
+        for where in sorted({n_positions // 2, n_positions - 1} - {position}):
+            alt, alt_auc = A.fit_direction_at(res_fit["harmful"], res_fit["harmless"],
+                                              res_search["harmful"], res_search["harmless"], where)
+            alternatives[str(where)] = alt
+            alt_record[str(where)] = {"held_out_auc": round(float(alt_auc), 4),
+                                      "cosine_with_chosen": alignment(direction, alt)}
+        controls = {"topic": topic_direction, "random": random_dirs,
+                    "alternative_positions": alternatives}
         fitted = {
-            "position": int(position), "n_positions": len(position_aucs),
+            "position": int(position), "n_positions": n_positions,
+            "alternative_positions": alt_record,
+            "why_alternatives": (
+                "the engine breaks a tie in held-out AUC toward the earliest position, so where "
+                "many positions separate perfectly the choice is the tie-break's rather than the "
+                "data's. These are refits at the middle and the last position, reported as "
+                "robustness and never chosen."),
             "held_out_auc": round(float(position_aucs[position]), 4),
             "held_out_auc_by_position": [round(float(a), 4) for a in position_aucs],
             "topic_control_in_sample_auc": round(float(topic_auc), 4),

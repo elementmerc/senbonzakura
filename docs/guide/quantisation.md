@@ -153,6 +153,24 @@ both the file it read and the file it wrote. `senbonzakura imatrix` writes a `.c
 recording what text the matrix was built from. If you are comparing two files, read those two
 sidecars before you read the numbers.
 
+### Building one as part of the quantisation
+
+You can compute the matrix in the same command, which saves converting the model twice:
+
+```
+senbonzakura quantise model.gguf out.gguf --type Q4_K_M \
+    --imatrix auto --imatrix-file prose.txt
+```
+
+`--imatrix auto` means "make one", where `--imatrix FILE` means "use this one I already have".
+
+**It will not pick the calibration text for you**, and that is deliberate. The matrix keeps the
+precision of whatever the text exercises, so the text is part of the result rather than a setting.
+Broad, ordinary prose is the usual choice. The corpora this tool bundles are refusal-measurement
+sets, and calibrating on those before measuring refusal puts the thing you are measuring into the
+instrument.
+
+
 The two hashes are what let you check that the file in your hand is the file the receipt describes,
 which is the question a receipt exists to answer. They matter most when the source is gone:
 `--prune-source` deletes the halfway file once the output verifies, and without a recorded hash the

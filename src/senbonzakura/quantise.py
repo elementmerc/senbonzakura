@@ -64,6 +64,11 @@ SIZE_HEADROOM = 1.15
 
 
 
+#: The value of `--imatrix` that means "compute one here" rather than "read this file".
+#: A word rather than a separate flag, because a run has one importance matrix and two
+#: flags that both supply one is a conflict waiting to be resolved at every call site.
+AUTO_IMATRIX = "auto"
+
 #: Written beside the output GGUF. Mirrors `imatrix`'s `.calibration.json`: the provenance of a
 #: file lives next to the file, so a figure measured on it can name the toolchain that made it.
 SIDECAR_SUFFIX = ".provenance.json"
@@ -211,11 +216,24 @@ def build_parser():
     ap.add_argument("--allow-requantize", action="store_true",
                     help="quantise an already-quantised source. Lossy on top of lossy, and the "
                          "reason it is off by default")
-    ap.add_argument("--imatrix", default=None, metavar="FILE",
+    ap.add_argument("--imatrix", default=None, metavar="FILE|auto",
                     help="apply an importance matrix, producing the better-quality quantisation "
-                         "llama.cpp names `i1-`. Build one with `senbonzakura imatrix`. An i1 and "
+                         "llama.cpp names `i1-`. Either a matrix you already have, or `auto` to "
+                         "compute one here from --imatrix-corpus or --imatrix-file. An i1 and "
                          "a plain quant of the SAME weights are not comparable, so a comparison "
                          "that mixes them is measuring the quantiser as well as the model")
+    ap.add_argument("--imatrix-corpus", dest="imatrix_corpus", default=None, metavar="NAME",
+                    help="with `--imatrix auto`, the bundled corpus to calibrate on. There is no "
+                         "default and that is deliberate: see the refusal `--imatrix auto` gives "
+                         "when neither this nor --imatrix-file is set")
+    ap.add_argument("--imatrix-file", dest="imatrix_file", default=None, metavar="PATH",
+                    help="with `--imatrix auto`, a plain text file to calibrate on instead of a "
+                         "bundled corpus. Broad prose is the usual choice for a general purpose "
+                         "quantisation")
+    ap.add_argument("--imatrix-chunks", dest="imatrix_chunks",
+                    type=argresolve.whole_number("--imatrix-chunks"), default=0, metavar="N",
+                    help="with `--imatrix auto`, how many chunks of calibration text to process. "
+                         "0 uses the `imatrix` command's own default")
     ap.add_argument("--output-tensor-type", dest="output_tensor_type", default=None,
                     choices=gguf_io.OVERRIDE_TYPES, metavar="TYPE",
                     help="keep the output head at this precision instead of whatever the recipe "
@@ -332,9 +350,59 @@ def _preflight_arguments(a, log=print):
     if cores and a.threads > cores:
         log(f"  WARNING: --threads {a.threads} is above the {cores} cores this machine reports. "
             f"Past the core count the extra workers cost memory and contention rather than speed.")
-    if a.imatrix and not Path(a.imatrix).is_file():
+    # A FLAG THAT DOES NOTHING IS WORSE THAN A MISSING ONE, because the run reports success
+    # having ignored what the user asked for. `--chat-template` was accepted and dropped on the
+    # abliterate path for exactly this reason, so the three calibration flags are refused wherever
+    # they cannot be read rather than being quietly skipped.
+    calibration_flags = [f for f, v in (("--imatrix-corpus", a.imatrix_corpus),
+                                        ("--imatrix-file", a.imatrix_file),
+                                        ("--imatrix-chunks", a.imatrix_chunks)) if v]
+    if calibration_flags and a.imatrix != AUTO_IMATRIX:
+        named = ", ".join(calibration_flags)
+        raise SystemExit(say.refusal_text(
+            f"{named} only means something with `--imatrix auto`.",
+            "Those flags say how to COMPUTE an importance matrix. Without `--imatrix auto` this "
+            "run either applies a matrix you already have, in which case how it was calibrated is "
+            "recorded in its own sidecar, or applies none at all."
+            + ("" if a.imatrix else " This run was given no matrix at all."),
+            "Add `--imatrix auto` to compute one, or drop the flags."))
+    if a.imatrix == AUTO_IMATRIX:
+        # WHY THERE IS NO DEFAULT CORPUS, and why this refuses rather than picking one.
+        #
+        # Of the bundled corpora, five of six are harmful-prompt sets. Calibrating on those keeps
+        # the precision of exactly the weights those prompts exercise, which is not a neutral
+        # choice for a model whose refusal behaviour is about to be measured; `imatrix` says so out
+        # loud every time it is asked to do it. The sixth, `xstest-safe`, is benign but it is a set
+        # of task prompts rather than the broad prose a general-purpose calibration wants.
+        #
+        # So there is nothing here that could be a quiet default, and a quiet default is how the
+        # imatrix confound got in the first time. The user says what to calibrate on.
+        if not a.imatrix_corpus and not a.imatrix_file:
+            raise SystemExit(say.refusal_text(
+                "`--imatrix auto` needs to know what to calibrate the matrix on.",
+                "There is no default on purpose. An importance matrix keeps the precision of "
+                "whatever the calibration text exercises, so the text is part of the result, not "
+                "a setting. Five of the six bundled corpora are harmful-prompt sets, which is the "
+                "wrong choice for a model whose refusal behaviour is going to be measured, and "
+                "the sixth is task prompts rather than ordinary prose.",
+                "Pass --imatrix-file with a file of broad prose, which is the usual choice, or "
+                "--imatrix-corpus NAME if you have a reason to calibrate on one of the bundled "
+                "sets."))
+        if a.imatrix_corpus and a.imatrix_file:
+            raise SystemExit(say.refusal_text(
+                "--imatrix-corpus and --imatrix-file both say what to calibrate on.",
+                "Only one of them can be the answer, and guessing which you meant would decide "
+                "what the matrix preserves.",
+                "Pass one or the other."))
+        if a.imatrix_file and not Path(a.imatrix_file).is_file():
+            raise SystemExit(say.refusal_text(
+                "there is no calibration text at the path given to --imatrix-file.",
+                f"Nothing is at {a.imatrix_file}.",
+                "Point it at a plain text file."))
+    elif a.imatrix and not Path(a.imatrix).is_file():
         raise SystemExit(
-            f"no importance matrix at {a.imatrix}. Build one with `senbonzakura imatrix`.")
+            f"no importance matrix at {a.imatrix}. Build one with `senbonzakura imatrix`, or pass "
+            f"`--imatrix auto` to compute one as part of this run.")
     # Same argument as the imatrix above, and the same shape: decidable from the command line, so it
     # belongs in front of the announcement rather than after the conversion.
     if a.like and not Path(a.like).is_file():
@@ -1203,6 +1271,37 @@ def _quantise_a_checkpoint(a, *, log=print):
 _NOT_FORWARDED = frozenset({"source", "out", "type", "keep_source", "prune_source", "help"})
 
 
+def _computed_imatrix(a, *, log=print):
+    """Compute an importance matrix for this run's source, and return where it was written.
+
+    Delegates to the `imatrix` command rather than reimplementing it, so there is one importance
+    matrix implementation, one sidecar format and one place the harmful-corpus warning is printed.
+    The argv is built here because that command's own parser is the contract between them.
+    """
+    from . import imatrix as _imatrix
+
+    out = Path(a.source).with_suffix(".imatrix")
+    argv = [str(a.source), "-o", str(out)]
+    if a.imatrix_corpus:
+        argv += ["--corpus", a.imatrix_corpus]
+    else:
+        argv += ["--file", a.imatrix_file]
+    if a.imatrix_chunks:
+        argv += ["--chunks", str(a.imatrix_chunks)]
+    # `--force` carries, because a user who said overwrite meant the whole run and being refused
+    # halfway by a leftover matrix from an earlier attempt is the resume failure in miniature.
+    if a.force:
+        argv.append("--force")
+
+    log("  --imatrix auto: computing the importance matrix first, as its own step")
+    rc = _imatrix.run(argv, log=log)
+    if rc != 0 or not out.is_file():
+        raise SystemExit(
+            f"the importance matrix step exited {rc} and this run needs it, so nothing was "
+            f"quantised. The matrix would have been written to {out}.")
+    return out
+
+
 def _forwardable_quantiser_flags(a):
     """(flag, value) for every quantiser flag the user set, read off the parser itself.
 
@@ -1280,10 +1379,18 @@ def run(argv=None, log=print):
     argv_q = [str(exe)]
     if a.allow_requantize:
         argv_q.append("--allow-requantize")
-    if a.imatrix:
+    if a.imatrix == AUTO_IMATRIX:
+        # HERE, and not earlier, because this is the first point at which `a.source` is certainly a
+        # GGUF. A transformers checkpoint reaches `run` as a checkpoint, is converted by
+        # `_quantise_a_checkpoint`, and re-enters this function with the intermediate as its source;
+        # `llama-imatrix` cannot read a checkpoint, so computing it any sooner would work for a
+        # GGUF input and fail for the input the command spends most of its time on.
+        im = _computed_imatrix(a, log=log)
+    elif a.imatrix:
         im = Path(a.imatrix)
         if not im.is_file():
             raise SystemExit(f"no importance matrix at {im}. Build one with `senbonzakura imatrix`.")
+    if a.imatrix:
         argv_q += ["--imatrix", str(im)]
         from . import imatrix as _imatrix
         cal = _imatrix.describe(im)

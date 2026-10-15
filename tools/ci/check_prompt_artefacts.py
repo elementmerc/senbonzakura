@@ -512,14 +512,14 @@ MARKDOWN_SUFFIXES = frozenset({".md"})
 #: became "read nothing". The undecided case gets a refusal, which is the deny-first posture the rest
 #: of this dispatcher was given in September, and the decision it asks for is about LOCATION, which
 #: is the reviewable kind.
-#: `scrollcraft/` was added on 2026-10-10, when the landing page's scroll motion was reworked and
-#: the method behind it had to be written down somewhere a later session would look. It holds a
-#: per-build brief and a registry of page shapes already used, so a future build can prove it is a
-#: different page rather than a re-skin. It is prose about layout, device choice and pacing. The
-#: risk this gate exists for is not absent there and is the same one already recorded for `web/`:
-#: a brief quoting a model's output would be a corpus this gate cannot see, so a reviewer of
-#: anything under it reads with that in mind. What makes the location recordable is that it is a
-#: small, reviewable tree with one purpose and no path by which run artefacts land in it.
+#: `scrollcraft/` WAS HERE AND IS GONE, removed from this list on 2026-10-15 with the directory.
+#: It held the landing page's motion briefs and a registry of page shapes already used. It was
+#: internal working material about an external page, and there was no reason for a stranger
+#: cloning this repository to receive it, so it moved to `senbonzakura-proprietary/design/`.
+#:
+#: The row is deleted rather than left behind, because an exemption for a path that does not exist
+#: is dead configuration: it reads as a decision somebody took about a live directory, and the next
+#: person to add a `scrollcraft/` inherits an exemption nobody meant to grant them.
 DOCUMENTATION_DIRS = (
     "docs/",            # the documentation site
     ".github/",         # issue templates and the like
@@ -529,7 +529,6 @@ DOCUMENTATION_DIRS = (
     "evidence/",        # an evidence tree's README describes its artefacts
     "head-to-head/",    # the results notes are handled above; the rest are READMEs
     "tests/",           # a fixtures README
-    "scrollcraft/",     # the marketing site's build briefs and its page-shape registry
     "unshipped/",       # see below
 )
 #: `unshipped/` was added on 2026-10-13, when `rented.py` was moved out of the package for reading

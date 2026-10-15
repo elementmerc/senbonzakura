@@ -479,6 +479,8 @@ def build_parser(full=False):
             "                   platform, not by hardware.\n"
             "  doctor           check this install can do the job: pins, the binary, every\n"
             "                   architecture module, the bundled data.\n"
+            "  workbench        a local, read-only viewer for runs this tool has already\n"
+            "                   produced. It draws their figures and writes nothing.\n"
             "each command takes --help of its own, e.g. `senbonzakura compass --help`"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[loader_parser(

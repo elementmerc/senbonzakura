@@ -9,11 +9,84 @@ down_proj weights, so the norm-preserving bake, the snapshot/restore, and direct
 all operate on real tensors and their effects are observable. No weights are downloaded and no GPU
 is needed, so the whole suite runs anywhere torch is installed.
 """
+import ctypes
+import ctypes.util
+import gc
 import os
 
 import pytest
 import torch
 from torch import nn
+
+# ── giving freed memory back to the kernel ───────────────────────────────────────
+#
+# WITHOUT THIS THE SUITE PEAKS AT 13 GB AND THE KERNEL KILLS IT. Measured 2026-10-15 on a box with
+# 29 GB, which was enough until the machine had other work on it:
+#
+#     Out of memory: Killed process 1110402 (pytest)  anon-rss:12704672kB
+#
+# The cause is not a leak, and that was worth establishing before writing any fix, because a leak
+# and this want opposite repairs. A probe recorded resident memory after each test, then after a
+# collection, then after a trim:
+#
+#     after the test   4316 MB
+#     after gc.collect()  4306 MB     reclaimed 10 MB
+#     after malloc_trim() 554 MB      reclaimed 3751 MB
+#
+# So Python has already released everything: there is no reference holding it and no cycle for the
+# collector to break. What happens is that glibc keeps the freed pages on its own free lists
+# instead of returning them to the kernel, and resident memory only ever climbs. The suite's
+# attribution tests are what make it visible, because bootstrap resampling allocates and frees a
+# great many medium-sized arrays, which is the pattern that fragments an arena worst.
+#
+# BOTH STEPS ARE NEEDED AND THE ORDER MATTERS, which the table above hides and a first attempt at
+# this got wrong. Reading "gc reclaimed 10 MB" as "the collector is not the point" and shipping the
+# trim on its own changed nothing at all: the suite peaked at 12,640 MB again and was killed again.
+#
+# The collector frees 10 MB *of resident memory*, which is not the same claim as freeing 10 MB of
+# objects. Releasing an object hands it to glibc's free lists, and that does not move RSS; the trim
+# is what moves RSS. So the collect is what makes the pages free, and the trim is what gives them
+# back. Run alone, the trim finds almost nothing to return because the objects are still held in
+# cycles that nothing has broken yet.
+#
+# `malloc_trim(0)` asks glibc to hand the top of each arena back. It is glibc's, not POSIX's, so it
+# is absent on macOS and Windows and this is a no-op there. That is correct rather than a gap: the
+# behaviour being corrected is glibc's too.
+#
+# ONLY WHEN THE RUN IS ACTUALLY BIG. A full collection walks every live object, so paying it after
+# each of eleven thousand tests would be a real cost for the overwhelming majority that allocate
+# nothing much: four of the suite's five parts never pass 1 GB. The threshold buys the cap where it
+# is needed and costs nothing everywhere else.
+_LIBC_NAME = ctypes.util.find_library("c")
+try:
+    _LIBC = ctypes.CDLL(_LIBC_NAME) if _LIBC_NAME else None
+    _MALLOC_TRIM = getattr(_LIBC, "malloc_trim", None) if _LIBC is not None else None
+except OSError:  # pragma: no cover - a libc we cannot load is a libc we do not call
+    _MALLOC_TRIM = None
+
+#: Resident kilobytes above which a test pays for a collection and a trim. The suite idles near
+#: 900 MB once torch and transformers are imported, and the parts that behave never pass 1 GB, so
+#: this fires only for the tests that genuinely churn memory.
+_TRIM_ABOVE_KB = 1_500_000
+
+
+def _resident_kb():
+    try:
+        with open("/proc/self/status", encoding="utf-8") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError:  # pragma: no cover - no procfs is not Linux, and then there is no trim either
+        return 0
+    return 0
+
+
+def pytest_runtest_logfinish(nodeid, location):  # pytest's signature; neither argument is read
+    """Give this test's memory back to the kernel before the next one allocates."""
+    if _MALLOC_TRIM is None or _resident_kb() < _TRIM_ABOVE_KB:
+        return
+    gc.collect()
+    _MALLOC_TRIM(0)
 
 
 # ── a tiny transformer-shaped model ───────────────────────────────────────────────

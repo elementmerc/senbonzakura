@@ -429,6 +429,10 @@ def build_parser(full=False):
             "                   residual stream. A magnitude, not a verdict on an edit:\n"
             "                   read it beside a refusal rate. Works on any checkpoint,\n"
             "                   including one this tool cannot edit.\n"
+            "  attribute        which blocks of an unedited model carry refusal, found by\n"
+            "                   taking each block's share of a direction away and watching\n"
+            "                   the behaviour. It can answer 'not localised'. Reads nothing\n"
+            "                   the edit wrote.\n"
             "  diff             which tensors differ between a checkpoint and the base it\n"
             "                   came from, and by how much. Reads the headers and the\n"
             "                   weights without torch, so it works where the model cannot\n"
@@ -475,6 +479,8 @@ def build_parser(full=False):
             "                   platform, not by hardware.\n"
             "  doctor           check this install can do the job: pins, the binary, every\n"
             "                   architecture module, the bundled data.\n"
+            "  workbench        a local, read-only viewer for runs this tool has already\n"
+            "                   produced. It draws their figures and writes nothing.\n"
             "each command takes --help of its own, e.g. `senbonzakura compass --help`"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[loader_parser(

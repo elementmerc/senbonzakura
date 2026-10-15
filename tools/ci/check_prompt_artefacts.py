@@ -155,6 +155,17 @@ def _repo_root(directory: str) -> str | None:
     return out.decode("utf-8", "replace").strip() or None
 
 
+def _own_root() -> str | None:
+    """The tree this gate itself lives in, used when git cannot answer. See `repo_relative`."""
+    try:
+        here = Path(__file__).resolve()
+    except OSError:
+        return None
+    # <root>/tools/ci/check_prompt_artefacts.py, so two levels up from the containing directory.
+    root = here.parent.parent.parent
+    return str(root) if root.is_dir() else None
+
+
 def repo_relative(path: Path) -> str | None:
     """A path as the repository sees it, which is the form every record here is written in.
 
@@ -165,14 +176,28 @@ def repo_relative(path: Path) -> str | None:
     a directory outside the current one, so the answer is to ask git where the root is rather than
     to guess from the string.
 
-    Outside a work tree this returns None and the caller refuses, which is the deny-first default:
-    a loose directory has no repository to be relative to, so nothing in it is a recorded path.
+    OUTSIDE A GIT WORK TREE IT FALLS BACK TO THIS FILE'S OWN POSITION, and that is a fix rather
+    than a relaxation. The first version returned None there and the caller refused, described as
+    the deny-first default. Measured on 2026-10-15: the build box holds a synced copy of this tree
+    with no `.git` in it, so every recorded path stopped resolving and the gate refused the two
+    files it is supposed to clear. **A gate that refuses the clean case is a gate somebody switches
+    off**, which this file says in as many words about notebooks, and it applied here too. The same
+    would happen in an extracted sdist or a shallow CI checkout.
+
+    The fallback cannot be spoofed by planting a marker file, which is why it is this file's own
+    location rather than a search upward for `pyproject.toml`. This module lives at
+    `<root>/tools/ci/check_prompt_artefacts.py` by construction, so its own path names the root
+    with nothing to guess at. Anybody able to move this file into a different tree is able to edit
+    the gate, and at that point the allowlist is not what is protecting anything.
+
+    Git still wins when it answers, because it is the only one of the two that is right when this
+    gate is pointed at a checkout other than its own.
     """
     try:
         resolved = path.resolve()
     except OSError:
         return None
-    root = _repo_root(str(resolved.parent))
+    root = _repo_root(str(resolved.parent)) or _own_root()
     if root is None:
         return None
     try:

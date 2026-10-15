@@ -599,3 +599,56 @@ def test_the_side_is_read_from_the_data_rather_than_guessed_from_the_sums():
     assert modeldiff._which_side_is_not_finite(nan, ok, "F32") == "the candidate holds"
     assert modeldiff._which_side_is_not_finite(ok, nan, "F32") == "the base holds"
     assert modeldiff._which_side_is_not_finite(nan, nan, "F32") == "both sides hold"
+
+
+# ── the reported cost of the comparison ───────────────────────────────────────────────
+
+def test_bytes_read_counts_both_sides_of_the_comparison(pair):
+    """It counted the base only, so every run reported exactly half of what it read.
+
+    FOUND BY MEASURING, not by reading. A study of three code paths against real checkpoints on
+    2026-10-15 had this path appearing to read MORE than a path that genuinely reads about 45%
+    less, which is the opposite of the truth and was about to inform a decision on which path to
+    sell. `compare` reads the base tensor and the candidate tensor for every shared name, and a
+    figure that exists so somebody can compare one path's cost with another's has to count both.
+
+    The arithmetic here is deliberate rather than approximate: two tensors of a known size are
+    read, so the expected total is exact and a one-sided count fails by a clean factor of two.
+    """
+    raw_base = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+    raw_cand = struct.pack("<4f", 1.0, 2.0, 3.0, 9.0)
+    size = len(raw_base)                      # 4 float32 elements, so 16 bytes
+    assert size == 16, "the fixture changed shape; the expectation below depends on it"
+    base = {OTHER: ("F32", [4], raw_base)}
+    cand = {OTHER: ("F32", [4], raw_cand)}
+    report = modeldiff.compare(*pair(base, cand))
+
+    assert report["bytes_read"] == 2 * size, (
+        f"read {report['bytes_read']} bytes for a pair of {size}-byte tensors; counting one side "
+        f"gives {size}, which is the defect")
+
+
+def test_bytes_read_counts_both_sides_even_when_the_tensors_are_identical(pair):
+    """The identical path short-circuits the magnitude work, and must not short-circuit the count.
+
+    Both tensors are still read off disk to find out they are identical, so the cost was still
+    paid and still has to be reported. This is the branch where a half-count would be easiest to
+    reintroduce, because nothing else in it touches the candidate after the comparison.
+    """
+    raw = struct.pack("<4f", 1.0, 2.0, 3.0, 4.0)
+    report = modeldiff.compare(*pair({OTHER: ("F32", [4], raw)}, {OTHER: ("F32", [4], raw)}))
+
+    assert report["bytes_read"] == 2 * len(raw)
+
+
+def test_the_throughput_constant_is_in_the_range_that_was_measured():
+    """`ELEMENTS_PER_SECOND` feeds a "this will take about N minutes" line the user reads.
+
+    It said 4 million against 11 to 15 million measured on three real bf16 checkpoints, so the
+    estimate ran about three times long. This pins it to the measured range rather than to one
+    number, because the next measurement will land somewhere else in that range and should not
+    fail; a value outside it means the constant has drifted from anything anybody checked.
+    """
+    assert 10_000_000 <= modeldiff.ELEMENTS_PER_SECOND <= 15_000_000, (
+        "the estimate constant is outside the range measured on 2026-10-15; re-measure before "
+        "changing it, because this number becomes a promise about how long a job takes")

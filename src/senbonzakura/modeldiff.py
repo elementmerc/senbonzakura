@@ -124,7 +124,12 @@ CHUNK_ELEMENTS = 4_096
 #: It is pure Python arithmetic on purpose. numpy would be an order of magnitude faster and is not
 #: a dependency of this package, and torch is, but pulling torch in here would put a multi-second
 #: import in front of a command whose promise is that it is cheap.
-ELEMENTS_PER_SECOND = 4_000_000
+#: MEASURED, not guessed, and re-measured on 2026-10-15 against three real bf16 checkpoints on
+#: atlas: 11 to 15 million elements a second, where this said 4 million. It feeds a "this will take
+#: about N minutes" estimate, so the stale value told people a job would take roughly three times
+#: as long as it does. The conservative end of the measured range is used, because an estimate that
+#: runs short is a worse surprise than one that runs long.
+ELEMENTS_PER_SECOND = 11_000_000
 
 #: Past this much work, say how long it might take. One billion elements is about four minutes,
 #: which is where a reader starts wondering whether the command has hung.
@@ -415,7 +420,11 @@ def compare(base_dir, cand_dir, *, log=None):
         cshard, ct = cand[name]
         braw = streaming.read_tensor(str(bshard), bt)
         craw = streaming.read_tensor(str(cshard), ct)
-        read += len(braw)
+        # BOTH SIDES. This counted only the base and reported half the truth, which matters
+        # because the figure exists so somebody can tell a path that reads less from one that
+        # reads more: a measured comparison of three code paths on real checkpoints had this
+        # path looking like it read MORE than one that actually reads about 45% less.
+        read += len(braw) + len(craw)
         identical = braw == craw
         rel, peak, why_not, sums = ((None, None, None, None) if identical
                                     else _magnitude(craw, braw, bt.dtype, on_progress=beat))

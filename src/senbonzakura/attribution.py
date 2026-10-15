@@ -37,8 +37,6 @@ import contextlib
 import math
 from dataclasses import asdict, dataclass
 
-import torch
-
 INSTRUMENT = "block-attribution"
 INSTRUMENT_VERSION = "1"
 ESTIMATOR = "ablate-direction-from-block-write"
@@ -121,6 +119,7 @@ DEFAULT = Conventions()
 # ----------------------------------------------------------------------------- the intervention
 
 def unwrap(out):
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     if isinstance(out, tuple):
         out = out[0] if out else None
     if not isinstance(out, torch.Tensor):
@@ -140,6 +139,7 @@ def ablating(layers, direction, blocks):
     arrangement) sits between the weights and the stream and would hide the write from a hook on
     the weights. Blocks outside the list are untouched, so an empty list is the unedited model.
     """
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     blocks = tuple(blocks)
     n = len(layers)
     bad = [k for k in blocks if not 0 <= k < n]
@@ -180,6 +180,7 @@ def ablating(layers, direction, blocks):
 
 def auc(positive, negative):
     """P(a positive outranks a negative), ties counting a half, from tie averaged ranks."""
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     pos = torch.as_tensor(positive, dtype=torch.float64).flatten()
     neg = torch.as_tensor(negative, dtype=torch.float64).flatten()
     if pos.numel() == 0 or neg.numel() == 0:
@@ -217,6 +218,7 @@ def arm(prompts, groups=None):
 
 
 def _group_index(groups):
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     order = {}
     for g in groups:
         order.setdefault(g, len(order))
@@ -225,6 +227,7 @@ def _group_index(groups):
 
 def _resample_weights(groups, draws, gen):
     """Per prompt multiplicities `[draws, n]` for resampling whole groups with replacement."""
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     index, n_groups = _group_index(groups)
     picks = torch.randint(n_groups, (draws, n_groups), generator=gen)
     counts = torch.zeros(draws, n_groups, dtype=torch.float64).scatter_add_(
@@ -243,6 +246,7 @@ def bootstrap_effects(drop_h, drop_l, groups_h, groups_l, draws, gen):
 
 
 def interval(values, alpha):
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     lo, hi = torch.quantile(values, torch.tensor([alpha / 2, 1 - alpha / 2], dtype=values.dtype),
                             dim=0)
     return lo, hi
@@ -323,6 +327,7 @@ def profile_with_intervals(subject, measure, direction, n_blocks, conv=DEFAULT, 
     No nulls and no status: this is for comparing profiles under different directions, where the
     question is whether the shape moved.
     """
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     conds = {"none": (), "all": tuple(range(n_blocks)),
              **{f"single:{k}": (k,) for k in range(n_blocks)}}
     dh, dl, _, _ = _effects_for(subject, measure, direction, conds)
@@ -349,6 +354,7 @@ def _conditions(n_blocks):
 
 
 def _readouts(subject, arm_, direction, conds):
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     rows = []
     for blocks in conds.values():
         out = torch.as_tensor(subject.readout(list(arm_.prompts), direction, blocks),
@@ -378,6 +384,7 @@ def _validate(parts, conv):
 
 def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None):
     """The whole measurement. `parts` maps fit, search and measure to `{harmful, harmless}` arms."""
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     log = log or (lambda *_: None)
     _validate(parts, conv)
     nb = subject.n_blocks
@@ -508,6 +515,7 @@ def style_direction(subject, parts, res, position, total, nb):
     If that moves the readout about as much as the behaviour direction does, the behaviour
     direction may be reading style. Reported beside the result; it changes no status.
     """
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     first = parts["fit"]["harmful"].prompts[:1]
     if not (first and isinstance(first[0], str)):
         return {"ran": False, "why": "prompts are not text, so there is no length to split on"}
@@ -547,6 +555,7 @@ def selftest(*, conv=DEFAULT):
 
 
 def _auc_interval(base_h, base_l, gh, gl, conv, gen):
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     ih, il = _group_index(gh)[0], _group_index(gl)[0]
     n_gh, n_gl = int(ih.max()) + 1, int(il.max()) + 1
     values = []
@@ -661,6 +670,7 @@ def _null_replicates(subject, parts, res, measure, direction, seed, conv):
     Both feed the family wise threshold, which is taken over the LARGEST block effect
     per replicate, because the best of many blocks manufactures a winner from nothing.
     """
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     nb = subject.n_blocks
     gen = torch.Generator().manual_seed(seed + 7919)
     def stats(d):
@@ -713,6 +723,7 @@ def _null_replicates(subject, parts, res, measure, direction, seed, conv):
 
 
 def _null_summary(reps):
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     totals = torch.tensor([t for t, _ in reps], dtype=torch.float64)
     maxima = torch.tensor([float(s.max()) for _, s in reps], dtype=torch.float64)
     return {"replicates": len(reps), "total_abs_max": float(totals.abs().max()),
@@ -721,6 +732,7 @@ def _null_summary(reps):
 
 def _split_half(drop_h, drop_l, gh, gl, tau, conv, gen, *, reference):
     """How often two random halves of the requests agree on which blocks clear the threshold."""
+    import torch  # local: this module is import-light so `--help` does not pay for torch
     ih, nh = _group_index(gh)
     il, nl = _group_index(gl)
     scores = []

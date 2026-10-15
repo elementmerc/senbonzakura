@@ -55,6 +55,18 @@ def build_parser():
     ap.add_argument("--hf-token", dest="hf_token", default=None,
                     help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--out", required=True, help="results json path")
+    # WHY THIS IS A FLAG AND NOT THE DEFAULT. Without it this command replaces --out, which is what
+    # every published artefact in this repository was written by and what a test recomputes every
+    # figure on; changing the shape of that file by default would break a published number rather
+    # than annotate it. With it, the result joins a set keyed by behaviour, which is what a card
+    # drawing several behaviours of one model reads. See `behaviourset.py` for what a set refuses.
+    ap.add_argument("--behaviour", default=None, metavar="KEY",
+                    help="add this pass to --out as the named behaviour instead of replacing the "
+                         "file, so several behaviours' figures can sit in one score.json for a "
+                         "card to draw together. Re-running the same behaviour replaces its own "
+                         "entry and leaves the others alone. A result measured on a different "
+                         "model, precision, prompt format or tool version is refused rather than "
+                         "merged. The key must be one the card registry knows")
     ap.add_argument("--label", default="",
                     help="a name for this run, copied into the results json. Nothing reads it: "
                          "it is how you tell two result files apart later, so give it the thing "
@@ -307,6 +319,54 @@ def harm_recognition_validity(n, indeterminate, *, ceiling=MAX_INDETERMINATE,
     return " Also: ".join(reasons)
 
 
+def check_behaviour(a):
+    """Refuse `--behaviour` on a pass that would put an unreadable or unstamped entry in a set.
+
+    BEFORE THE MODEL LOADS, which is the whole reason this is a function rather than a check at the
+    write. Every refusal here is decidable from the command line, and finding out after a
+    multi-gigabyte load that the pass cannot join a set is what makes an operator stop using the
+    flag. The same argument as the eval slice, which was moved above the load for the same reason.
+
+    The registry is the gate on the key rather than the pattern alone: a mistyped key would write a
+    behaviour that is in the file, costs a run, and that no card will ever draw, because the picker
+    lists what is registered.
+    """
+    if a.behaviour is None:
+        return
+    from .behaviourset import BehaviourSetError, check_key
+    from .workbench.card.behaviours import registered
+
+    try:
+        check_key(a.behaviour)
+    except BehaviourSetError as e:
+        raise SystemExit(f"--behaviour {a.behaviour!r}: {e}") from e
+    known = [b.key for b in registered()]
+    if a.behaviour not in known:
+        raise SystemExit(
+            f"--behaviour {a.behaviour!r} is not a behaviour a card can draw, and the card draws "
+            f"what is registered: {', '.join(sorted(known))}. A key nothing is registered under "
+            f"would cost a run and never appear on a card. Register it in "
+            f"`workbench/card/behaviours.py` first, or drop the flag to write this result on its "
+            f"own.")
+    if a.length_sweep:
+        raise SystemExit(
+            "--behaviour cannot be used with --length-sweep. A sweep reports a curve of refusal "
+            "against reply length, which is a diagnostic for choosing --max-new rather than a "
+            "figure a card draws, and it stamps no metric for a set to hold. Run the sweep to pick "
+            "a budget, then score at that budget with --behaviour.")
+    if a.harm_recognition:
+        raise SystemExit(
+            "--behaviour cannot be used with --harm-recognition yet. The compass pass records no "
+            "stamped metric, so there is nothing for a set to hold and a card would draw it as not "
+            "measured. Harm recognition is a behaviour this project intends to ship; what is "
+            "missing is the stamp, not the flag.")
+    if ggufrun.looks_like_gguf(a.model):
+        raise SystemExit(
+            "--behaviour cannot be used with a GGUF --model. The GGUF path records no stamped "
+            "metric, so there is nothing for a set to hold. Score the safetensors checkpoint for a "
+            "card figure, and use the GGUF path with --agree-with to show the two agree.")
+
+
 def save_generations(path, prompts, gens, mode, model, label):
     """Persist every prompt and its raw generation, one JSON object per line.
 
@@ -486,6 +546,7 @@ def main(argv=None):
             "--length-sweep and --harm-recognition each replace the scoring pass, so they cannot "
             "run together. The sweep asks how long the model needs before its refusal shows; the "
             "compass asks whether it still recognises harm. Run them separately.")
+    check_behaviour(a)
     if a.length_sweep and a.length_max < min(_sweep_cuts()):
         raise SystemExit(
             f"--length-max {a.length_max} is below the smallest budget in the sweep "
@@ -629,8 +690,26 @@ def main(argv=None):
     _stamp_refusal(res, stamps.pinned(prompts=prompts, model=model, tok=tok,
                                       load_in_4bit=a.load_in_4bit, skip=a.skip,
                                       verified=boundary_verified, seeds=stamps.NO_SEED))
-    with atomic_write(a.out) as f:
-        json.dump(res, f, indent=2)
+    if a.behaviour:
+        # THE MERGE, AND ITS REFUSALS, AFTER THE PASS AND NOT BEFORE IT. Everything decidable from
+        # the command line was refused in `check_behaviour` before the model loaded; what is left
+        # can only be known once this result exists, and a run already paid for must not be thrown
+        # away because the file beside it was wrong. So the result is written to its own path and
+        # the operator is told where it is, rather than the generations being lost.
+        from . import behaviourset
+        try:
+            merged = behaviourset.write(a.out, res, behaviour=a.behaviour)
+        except behaviourset.BehaviourSetError as e:
+            rescue = f"{a.out}.{a.behaviour}.json"
+            with atomic_write(rescue) as f:
+                json.dump(res, f, indent=2)
+            raise SystemExit(
+                f"this pass measured {res['n']} replies and could not join the set at {a.out}: {e}\n"
+                f"  The result was not thrown away. It is in {rescue}.") from e
+        print(f"BEHAVIOUR_SET {a.out} holds {', '.join(merged[behaviourset.ROSTER_KEY])}")
+    else:
+        with atomic_write(a.out) as f:
+            json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "
           f"soft={res['soft_refusal']*100:.1f}% noncompliant={res['noncompliant']*100:.1f}% "
           f"broken={res['broken']*100:.1f}% heretic={res['heretic']*100:.1f}% n={res['n']}")

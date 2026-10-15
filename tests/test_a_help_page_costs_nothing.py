@@ -48,7 +48,7 @@ import sys
 
 import pytest
 
-from senbonzakura.entry import DELEGATED
+from senbonzakura.entry import DELEGATED, typed_commands
 
 #: The modules whose presence means a help page paid for the measurement stack.
 HEAVY = ("torch", "transformers", "optuna", "datasets", "accelerate")
@@ -101,7 +101,7 @@ def _probe(name):
     return json.loads(lines[-1])
 
 
-@pytest.mark.parametrize("name", sorted(DELEGATED))
+@pytest.mark.parametrize("name", sorted(typed_commands()))
 def test_a_help_page_does_not_load_the_measurement_stack(name):
     result = _probe(name)
     assert result["printed"] > 0, (

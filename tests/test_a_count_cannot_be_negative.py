@@ -114,10 +114,10 @@ def _every_parser():
     """The full abliterate parser, plus every delegated command's own."""
     import importlib
 
-    from senbonzakura.entry import DELEGATED
+    from senbonzakura.entry import typed_commands
 
     yield "abliterate", parser.build_parser(full=True)
-    for name, (module_name, *_rest) in sorted(DELEGATED.items()):
+    for name, (module_name, *_rest) in sorted(typed_commands().items()):
         module = importlib.import_module(f"senbonzakura.{module_name}")
         build = getattr(module, "build_parser", None)
         if build is None:

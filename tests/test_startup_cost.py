@@ -91,7 +91,7 @@ def test_a_delegated_command_does_not_import_cli():
 def test_every_delegated_command_resolves():
     """A dispatch table that names a module it cannot import is a command that 404s at runtime."""
     from senbonzakura import entry
-    for name in entry.DELEGATED:
+    for name in entry.typed_commands():
         assert callable(entry.dispatch(name)), f"{name} does not resolve to something callable"
 
 
@@ -209,7 +209,7 @@ def test_every_delegated_command_survives_a_missing_dependency(monkeypatch):
     monkeypatch.setattr(entry.importlib, "import_module",
                         lambda *a, **k: (_ for _ in ()).throw(
                             ModuleNotFoundError("no", name="torch")))
-    for command in entry.DELEGATED:
+    for command in entry.typed_commands():
         with pytest.raises(SystemExit) as caught:
             entry.dispatch(command)
         assert f"cannot run '{command}'" in str(caught.value)

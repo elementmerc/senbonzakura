@@ -22,7 +22,7 @@ local checkpoint.
 """
 import pytest
 
-from senbonzakura.entry import ALIASES, DELEGATED, RETIRED, _not_a_command
+from senbonzakura.entry import ALIASES, DELEGATED, MOVED_TO_WORKBENCH, RETIRED, _not_a_command
 
 
 @pytest.mark.parametrize("word", sorted(RETIRED))
@@ -56,9 +56,50 @@ def test_a_near_miss_for_a_real_command_is_refused(typo, meant):
         "that name and a refusal with no escape is a worse defect than the one being fixed")
 
 
-@pytest.mark.parametrize("word", sorted({*DELEGATED, *ALIASES}))
+@pytest.mark.parametrize("word", sorted({*DELEGATED, *ALIASES} - set(MOVED_TO_WORKBENCH)))
 def test_every_real_command_still_runs(word):
     assert _not_a_command(word) is None
+
+
+@pytest.mark.parametrize("word", sorted(MOVED_TO_WORKBENCH))
+def test_a_command_that_moved_to_the_workbench_is_refused_by_name(word):
+    """The same property the renamed words have, and it matters more here.
+
+    A moved word stays in `DELEGATED`, because that table is the instrument registry rather than
+    the list of typeable words, so nothing about the removal is visible to a reader of that table.
+    If the refusal were ever dropped, `senbonzakura diff` would go straight to the positional model
+    argument and start fetching a Hub model called "diff".
+    """
+    message = _not_a_command(word)
+    assert message is not None, f"{word} was a command here once and must not read as a model"
+    assert "workbench" in message, "the refusal has to say where the instrument went"
+    assert "read as a model" in message, "and why it refuses rather than ignores"
+
+
+@pytest.mark.parametrize("word", sorted(MOVED_TO_WORKBENCH))
+def test_a_moved_command_is_never_dispatched(word, capsys):
+    """Exit 2, and no model loaded. The refusal is only worth having if `main` honours it."""
+    from senbonzakura import entry
+    assert entry.main([word, "--help"]) == 2
+    assert "workbench" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("word", sorted(MOVED_TO_WORKBENCH))
+def test_a_moved_command_is_not_suggested_as_a_near_miss(word):
+    """A typo one letter off a moved word must not be told to run the moved word.
+
+    Pointing somebody at a command that now refuses them is a two-step dead end, and the near-miss
+    universe is built from `DELEGATED`, so this is exactly the drift that would reintroduce it.
+    """
+    typo = word[:1] + word[2:]            # drop one letter: "diff" -> "dff", "drift" -> "drft"
+    message = _not_a_command(typo)
+    # None is a legitimate answer and the common one: with the word gone from the near-miss
+    # universe the typo is near nothing, so it is read as a model id, which is what an unrecognised
+    # first word has always meant. The property under test is only that IF something is suggested,
+    # it is never the word that would refuse them.
+    assert word not in (message or ""), (
+        f"{typo} must not be answered with {word}, which is no longer a command and would send the "
+        f"reader to a second refusal")
 
 
 @pytest.mark.parametrize("word", [

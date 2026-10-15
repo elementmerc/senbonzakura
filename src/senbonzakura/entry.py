@@ -64,12 +64,6 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # a model this tool did not edit and in some cases cannot edit: reading a model is just
     # running it, so a quantisation-aware checkpoint is measurable here and uneditable upstream.
     "leak": ("leak", "main"),
-    # What changed between a checkpoint and the base it claims to come from, tensor by tensor.
-    # Its own command and not a flag because the interesting case is two checkpoints neither of
-    # which this tool made, and because it is the only instrument here that needs no model loaded,
-    # no token generated and no card: it compares two files. That is also why it must never grow
-    # a safety verdict, which the module docstring argues at length.
-    "diff": ("modeldiff", "main"),
     # Which blocks of an UNEDITED model carry refusal, measured by taking each block's share of a
     # direction away and watching the behaviour. Its own command because it reads nothing the
     # abliteration tool wrote: where the tool wrote is not evidence of where the behaviour lived.
@@ -77,6 +71,12 @@ DELEGATED: dict[str, tuple[str, str]] = {
     "stream-bake": ("streambake", "main"),
     "stream-extract": ("streamextract", "main"),
     "coherence": ("coherence", "main"),
+    # What changed between a checkpoint and the base it claims to come from, tensor by
+    # tensor. The only instrument here that needs no model loaded, no token generated and no
+    # card: it compares two files. That is also why it must never grow a safety verdict,
+    # which the module docstring argues at length. Not typed any more: see
+    # `MOVED_TO_WORKBENCH`, which is why the row stays.
+    "diff": ("modeldiff", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),
     # Fetches and packs the refusal corpora. A release wheel already carries them, so this is
@@ -134,8 +134,6 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # the laptop is plugged in, and refuses a run that cannot finish. Headers only, so it costs
     # about a second on a 61 GB model and never holds a weight.
     "budget": ("streaming", "main"),
-    # The read-only viewer for a run directory: a graph of the runs, their parts and figures.
-    "workbench": ("workbench.cli", "main"),
 }
 
 
@@ -170,6 +168,25 @@ RETIRED = {
     "bench": "head-to-head",
     "benchmark": "head-to-head",
     "harm_recognition": "compass",
+}
+
+#: Instruments that are no longer TYPED here, because the workbench reads them better than a
+#: terminal can. They stay in `DELEGATED` on purpose: that table is the registry of instruments this
+#: package owns, not the list of words a user may type, and `measure`'s drift stage, the plugin
+#: contract and the journey gate all resolve through it. Removing the rows would make
+#: `measure --only drift` a KeyError, and would leave the card's edit-magnitude channel with nothing
+#: in the package able to produce the artefact it reads.
+#:
+#: Separate from `RETIRED` because the sentence a reader needs is different: there is no other word
+#: to type, so telling them to run something that does not exist is worse than telling them nothing.
+#:
+#: THEY ARE STILL REFUSED BY NAME. The model is a positional argument, so a word that stops being a
+#: command is read as a model to edit: `senbonzakura diff` would go to the Hub for a model called
+#: "diff" and start editing weights. That exact failure is recorded against `bench` above, found
+#: twice by the 2026-09-25 panel, and dropping a word without leaving a refusal behind re-creates it.
+MOVED_TO_WORKBENCH = {
+    "diff": "what changed between a checkpoint and the base it came from",
+    "drift": "how far apart two models' answers are",
 }
 
 
@@ -291,6 +308,20 @@ def _cannot_run(command, module_name, error):
         f"    {hint}\n"
         f"  'senbonzakura doctor' lists everything this install is missing in one go, and it "
         f"runs without any of it.")
+
+
+def typed_commands() -> dict[str, tuple[str, str]]:
+    """The commands a user may actually TYPE: the registry minus the ones that moved.
+
+    Two different questions share one table and they come apart here. `DELEGATED` answers "which
+    instruments does this package own", which is what the plugin contract, the journey gate and
+    `measure`'s stage runner need. This answers "which words does the command line accept", which is
+    what the help page and every test that runs a command with `--help` needs.
+
+    Derived rather than typed, so moving an instrument to the workbench updates both answers at
+    once. A hand-kept second list is how a word ends up advertised on a help page that refuses it.
+    """
+    return {name: v for name, v in DELEGATED.items() if name not in MOVED_TO_WORKBENCH}
 
 
 def dispatch(name):
@@ -416,7 +447,13 @@ def _not_a_command(word):
     # also what a typo is matched against, so leaving `kageyoshi` and `auto` out meant the near miss
     # suggester could never propose the two words `--help` presents as the way to run this: a reader
     # who typed `kageyosi` got no suggestion at all and a fetch attempt for a model of that name.
-    known = sorted({*DELEGATED, *ALIASES, *MODES})
+    if word in MOVED_TO_WORKBENCH:
+        return (f"senbonzakura: `{word}` is no longer a command here. It measures "
+                f"{MOVED_TO_WORKBENCH[word]}, and that now lives in the workbench.\n"
+                f"  Run `senbonzakura workbench` and open it there.\n"
+                f"  It is refused rather than ignored because the model is a positional argument, "
+                f"so `{word}` would otherwise be read as a model to edit.")
+    known = sorted({*DELEGATED, *ALIASES, *MODES} - set(MOVED_TO_WORKBENCH))
     if word in known:
         return None
     if word in RETIRED:
@@ -649,7 +686,7 @@ def _main(argv=None):
         if notice:
             print(notice, file=sys.stderr)
 
-    if argv and argv[0] in DELEGATED:
+    if argv and argv[0] in DELEGATED and argv[0] not in MOVED_TO_WORKBENCH:
         name = argv[0]
         run = dispatch(name)
         try:

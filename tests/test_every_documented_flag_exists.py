@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from senbonzakura.entry import DELEGATED
+from senbonzakura.entry import typed_commands
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = [*sorted((ROOT / "docs" / "guide").glob("*.md")), ROOT / "README.md"]
@@ -76,7 +76,8 @@ def _sweep():
     Cached because it shells out once per command and this file parametrises over every flag the
     guide names, which would otherwise pay for the whole sweep on each one.
     """
-    invocations = [[c, "--help"] for c in [*sorted(DELEGATED), "abliterate", "kageyoshi", "auto"]]
+    invocations = [[c, "--help"]
+                   for c in [*sorted(typed_commands()), "abliterate", "kageyoshi", "auto"]]
     invocations += [[c, sub, "--help"] for c, subs in sorted(SUBCOMMANDS.items()) for sub in subs]
     # THE LONG HELP FOR THE DEFAULT COMMAND. `--help` shows 16 of its 69 flags since the page was
     # split, so sweeping the short form would have quietly narrowed this guard to a quarter of the

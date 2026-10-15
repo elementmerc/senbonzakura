@@ -35,12 +35,14 @@ import sys
 
 import pytest
 
-from senbonzakura.entry import DELEGATED
+from senbonzakura.entry import typed_commands
 
 #: The modes `split_mode` peels off, which never appear in `DELEGATED`.
 MODES = ("abliterate", "kageyoshi", "auto")
 
-COMMANDS = [*sorted(DELEGATED), *MODES]
+# `typed_commands()`, not `DELEGATED`: the registry also holds the instruments that moved
+# to the workbench, and those refuse by name rather than answering --help.
+COMMANDS = [*sorted(typed_commands()), *MODES]
 
 #: Each tell, as a pattern and the thing to do instead.
 #:

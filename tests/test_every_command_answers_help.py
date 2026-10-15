@@ -22,13 +22,15 @@ import sys
 
 import pytest
 
-from senbonzakura.entry import DELEGATED
+from senbonzakura.entry import typed_commands
 
 #: The modes `split_mode` peels off before the parser ever sees them, so they never appear in
 #: `DELEGATED` and a table built from that alone would leave the default command untested.
 MODES = ("abliterate", "kageyoshi", "auto")
 
-COMMANDS = sorted(DELEGATED) + list(MODES)
+# `typed_commands()`, not `DELEGATED`: the registry also holds the instruments that moved
+# to the workbench, and those refuse by name rather than answering --help.
+COMMANDS = sorted(typed_commands()) + list(MODES)
 
 
 def _help(command):
@@ -76,7 +78,7 @@ def test_the_help_describes_the_command_rather_than_only_naming_it(command):
     assert prose, f"`senbonzakura {command} --help` gives a usage line and no sentence saying what it does"
 
 
-@pytest.mark.parametrize("command", sorted(DELEGATED))
+@pytest.mark.parametrize("command", sorted(typed_commands()))
 def test_the_usage_line_is_a_command_that_can_actually_be_run(command):
     """The usage line is the one line people copy, so it has to be the real invocation.
 

@@ -34,7 +34,7 @@ import importlib
 import pytest
 
 from senbonzakura import argresolve
-from senbonzakura.entry import DELEGATED
+from senbonzakura.entry import typed_commands
 
 
 def _parser(**over):
@@ -196,7 +196,7 @@ def test_a_parser_with_subcommands_adds_nothing():
 
 
 def _delegated_parsers():
-    for name, (module_name, *_rest) in sorted(DELEGATED.items()):
+    for name, (module_name, *_rest) in sorted(typed_commands().items()):
         try:
             module = importlib.import_module(f"senbonzakura.{module_name}")
         except ImportError:  # pragma: no cover - depends on what is installed here

@@ -77,7 +77,7 @@ def test_every_delegated_command_reaches_the_normaliser(monkeypatch):
     Asserted through `entry.main` rather than by reading the source: a check that does not run
     the shipped code path is not a check.
     """
-    for name in entry.DELEGATED:
+    for name in entry.typed_commands():
         monkeypatch.setattr(entry, "dispatch", lambda _n: (lambda _argv: {"result": "numbers"}))
         assert entry.main([name]) == 0, f"'{name}' reports failure after a successful run"
 
@@ -158,7 +158,7 @@ SERVES_UNTIL_STOPPED = {
 }
 
 
-@pytest.mark.parametrize("command", sorted(entry.DELEGATED))
+@pytest.mark.parametrize("command", sorted(entry.typed_commands()))
 def test_the_two_invocation_forms_agree_about_failure(command):
     """`python -m senbonzakura.<module>` and `senbonzakura <command>` must report the same thing.
 
@@ -207,7 +207,7 @@ NEEDS_NO_ARGUMENTS = {
 }
 
 
-@pytest.mark.parametrize("command", sorted(entry.DELEGATED))
+@pytest.mark.parametrize("command", sorted(entry.typed_commands()))
 def test_no_delegated_module_runs_silently(command):
     """Exiting 0 having done nothing is the specific failure, so it gets its own assertion.
 

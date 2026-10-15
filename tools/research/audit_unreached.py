@@ -57,13 +57,24 @@ import sys
 TOP_LEVEL = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
+def package_modules(src):
+    """Every module in the package, sub-packages included.
+
+    A non-recursive glob here made every module inside `workbench/` invisible: their public names
+    were never listed, and their calls never counted as references, so a live function they used
+    read as unreached.
+    """
+    return sorted(src.rglob("*.py"))
+
+
 def public_definitions(src):
-    """Every top-level public name in the package, as {name: ["file.py:line", ...]}."""
+    """Every top-level public name in the package, as {name: ["path/file.py:line", ...]}."""
     out = {}
-    for path in sorted(src.glob("*.py")):
+    for path in package_modules(src):
+        where = path.relative_to(src).as_posix()
         for node in ast.parse(path.read_text(encoding="utf-8")).body:
             if isinstance(node, TOP_LEVEL) and not node.name.startswith("_"):
-                out.setdefault(node.name, []).append(f"{path.name}:{node.lineno}")
+                out.setdefault(node.name, []).append(f"{where}:{node.lineno}")
     return out
 
 
@@ -112,7 +123,7 @@ def unreached(root):
         raise SystemExit(
             f"{src} yielded no public definitions, which cannot be right and means this read the "
             f"wrong tree rather than that the package is empty.")
-    product = references(sorted(src.glob("*.py")) + sorted((root / "tools").rglob("*.py")),
+    product = references(package_modules(src) + sorted((root / "tools").rglob("*.py")),
                          strings=False)
     tested = references(sorted((root / "tests").rglob("*.py")), strings=True)
     rows = [(name, where, len(tested.get(name, ())))

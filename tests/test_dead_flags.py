@@ -36,9 +36,16 @@ import audit_flags  # noqa: E402
 
 
 def analyse_source(tmp_path, **modules):
-    """Write `name=source` modules to a tree and run the audit over it."""
+    """Write `name=source` modules to a tree and run the audit over it.
+
+    A name may carry a directory (`a__cli` is written as `a/cli.py` when the tree is built with
+    `a/cli`), so two modules can share a leaf name in different packages. Double underscores stand in
+    for the slash because a keyword argument cannot contain one.
+    """
     for name, src in modules.items():
-        (tmp_path / f"{name}.py").write_text(textwrap.dedent(src), encoding="utf-8")
+        path = tmp_path / f"{name.replace('__', '/')}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(src), encoding="utf-8")
     declared, read, _splat, _n = audit_flags.analyse(tmp_path)
     return audit_flags.findings(declared, read)
 
@@ -131,6 +138,120 @@ def test_a_module_that_imports_a_parser_inherits_its_promises(tmp_path):
         """,
         runner="""
             from .parser import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.other          # --thing inherited and dropped
+        """,
+        elsewhere="""
+            def go(args):
+                return args.thing
+        """)
+    assert [(d, m) for d, m, _l, _f, _mods in unkept] == [("thing", "runner.py")]
+
+
+def test_two_modules_sharing_a_leaf_name_do_not_share_their_parsers(tmp_path):
+    """The defect the auditor was keying into, in miniature.
+
+    `a/cli.py` and `b/cli.py` are different modules that each define `build_parser`. Keyed by leaf
+    name, both collapsed to `cli.py`, so `c/main.py`, which imports only `a`'s parser, inherited
+    `b`'s `--beta` as well and was reported for dropping a flag it was never handed. This is the
+    shape the real tree produced: one module's flags reported against an unrelated importer.
+    """
+    dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        a__cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--alpha", default="")
+                return ap
+
+            def run(args):
+                return args.alpha
+        """,
+        b__cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--beta", default="")
+                return ap
+
+            def run(args):
+                return args.beta
+        """,
+        c__main="""
+            from ..a.cli import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.alpha
+        """)
+    assert not dead, dead
+    assert not unkept, f"c/main.py imports only a's parser, so it may not answer for b's: {unkept}"
+
+
+def test_a_flag_nothing_reads_is_still_caught_when_another_module_shares_its_leaf_name(tmp_path):
+    """The other half of that fix: distinguishing the two modules must not hide a genuinely dead flag."""
+    dead, _inspected, _unkept = analyse_source(
+        tmp_path,
+        a__cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--gone", default="")
+                ap.add_argument("--kept", default="")
+                return ap
+
+            def run(args):
+                return args.kept
+        """,
+        b__cli="""
+            def run(args):
+                return args.other
+        """)
+    assert [d for d, _ in dead] == ["gone"]
+
+
+def test_an_import_from_another_distribution_inherits_nothing_from_a_same_named_module(tmp_path):
+    """The real defect, reduced. `check.py` imports `senbonzakura_check.cli`, a module in another
+    distribution that this tree does not audit, and the audit matched it by its leaf name `cli.py` to
+    the first-party `cli.py` and inherited that parser's flags. It is answerable for none of them.
+    """
+    _dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        cli="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--root", default="")
+                ap.add_argument("--mode", default="")
+                return ap
+
+            def run(args):
+                return args.root, args.mode
+        """,
+        check="""
+            from senbonzakura_check.cli import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.mode
+        """)
+    assert not unkept, f"check.py imports another distribution's parser, not this one: {unkept}"
+
+
+def test_an_absolute_import_of_this_package_inherits_exactly_as_a_relative_one_does(tmp_path):
+    """Absolute imports name the package the tree is, and must resolve to the same module a
+    relative import would. The real package uses both spellings.
+    """
+    _dead, _inspected, unkept = analyse_source(
+        tmp_path,
+        parser="""
+            def build_parser():
+                ap = make()
+                ap.add_argument("--thing", default="")
+                ap.add_argument("--other", default="")
+                return ap
+        """,
+        runner=f"""
+            from {tmp_path.name}.parser import build_parser
 
             def main(argv=None):
                 args = build_parser().parse_args(argv)
@@ -312,3 +433,140 @@ def test_a_module_that_reads_one_real_flag_is_still_answerable(tmp_path):
     assert "device" in dropped, (
         "parser.py reads `trials`, so it is not a pure declarer and must answer for `device`, "
         f"which it declares and never reads. Got: {unkept}")
+
+
+# ── a parsed namespace is recognised by what bound it, not by what it is called ──────────────────
+def test_a_name_bound_to_a_parse_is_a_namespace_whatever_it_is_called(tmp_path):
+    """The binding is the evidence, not the spelling. `zzq` is on no list anywhere, and the read of
+    `--thing` through it is still a read. A name list here would fix this spelling and leave the next
+    author's `chosen` or `opts` reported dead.
+    """
+    dead, _inspected, unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def run(argv):
+            zzq = build_parser().parse_args(argv)
+            return zzq.thing
+    """)
+    assert not dead and not unkept, (dead, unkept)
+
+
+def test_a_name_rebound_to_something_else_stops_being_a_namespace(tmp_path):
+    """A parse result that is rebound to something else is no longer the namespace, so a read of
+    `--thing` through the new value is not a read of the flag.
+    """
+    dead, _inspected, _unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def run(argv):
+            zzq = build_parser().parse_args(argv)
+            zzq = load_config()
+            return zzq.thing
+    """)
+    assert [d for d, _ in dead] == ["thing"]
+
+
+def test_a_parse_result_is_not_a_namespace_in_another_function(tmp_path):
+    """Scopes are lexical. `zzq` is bound from a parse in one function and is an unrelated name in
+    the next, so reading `.thing` there is not a read of the flag.
+    """
+    dead, _inspected, _unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def first(argv):
+            zzq = build_parser().parse_args(argv)
+            return zzq.kept
+
+        def second(tok):
+            return zzq.thing
+    """)
+    assert "thing" in [d for d, _ in dead]
+
+
+def test_a_parameter_shadows_an_outer_parse_result(tmp_path):
+    """A parameter is a new name in its function, even when an enclosing scope bound the same name
+    to a parse. Reads through it are not reads through the outer namespace.
+    """
+    dead, _inspected, _unkept = analyse_source(tmp_path, one="""
+        def build(ap):
+            ap.add_argument("--thing", default="")
+
+        def outer(argv):
+            n = build_parser().parse_args(argv)
+
+            def inner(n):
+                return n.thing
+            return inner
+    """)
+    assert [d for d, _ in dead] == ["thing"]
+
+
+# ── the reasoned exceptions: exact, reasoned, and not stale ──────────────────────────────────────
+def test_every_not_offered_exception_says_why_it_is_there_and_what_would_remove_it():
+    for key, reason in audit_flags.NOT_OFFERED.items():
+        assert reason.strip(), key
+        assert "Removed when" in reason or "removed when" in reason, (
+            f"{key} must say what would remove it, so the exception has an owner: {reason!r}")
+
+
+def test_every_not_offered_exception_still_matches_an_inherited_flag_so_none_is_stale():
+    """With the table switched off, each exception must be a flag the audit would otherwise report.
+    An exception that matches nothing is a flag somebody fixed, and it should be deleted.
+    """
+    declared, read, _splat, _n = audit_flags.analyse(PACKAGE, not_offered={})
+    _dead, _inspected, unkept = audit_flags.findings(declared, read)
+    reported = {(module, fn, dest) for dest, module, _line, fn, _mods in unkept}
+    stale = [key for key in audit_flags.NOT_OFFERED if key not in reported]
+    assert not stale, f"these exceptions no longer match an inherited flag; delete them: {stale}"
+
+
+def test_an_exception_excuses_only_its_own_importer_and_its_own_flag(tmp_path):
+    """Two importers of the same parser. The exception names one of them, so the other still answers
+    for the same flag. An exception keyed loosely would silently excuse every importer.
+    """
+    (tmp_path / "parser.py").write_text(textwrap.dedent("""
+        def build_parser():
+            ap = make()
+            ap.add_argument("--thing", default="")
+            ap.add_argument("--other", default="")
+            return ap
+    """), encoding="utf-8")
+    for name in ("a", "b"):
+        (tmp_path / f"{name}.py").write_text(textwrap.dedent("""
+            from .parser import build_parser
+
+            def main(argv=None):
+                args = build_parser().parse_args(argv)
+                return args.other
+        """), encoding="utf-8")
+    (tmp_path / "elsewhere.py").write_text("def go(args):\n    return args.thing\n", encoding="utf-8")
+    declared, read, _splat, _n = audit_flags.analyse(
+        tmp_path, not_offered={("a.py", "build_parser", "thing"): "test"})
+    _dead, _inspected, unkept = audit_flags.findings(declared, read)
+    thing = sorted(module for dest, module, *_ in unkept if dest == "thing")
+    assert thing == ["b.py"], thing
+
+
+def test_an_exception_does_not_excuse_a_flag_that_nothing_reads(tmp_path):
+    """An exception only removes an inherited promise. It does not make a flag read, so a flag that
+    nothing reads is still reported dead, whatever the table says.
+    """
+    (tmp_path / "parser.py").write_text(textwrap.dedent("""
+        def build_parser():
+            ap = make()
+            ap.add_argument("--gone", default="")
+            return ap
+    """), encoding="utf-8")
+    (tmp_path / "a.py").write_text(textwrap.dedent("""
+        from .parser import build_parser
+
+        def main(argv=None):
+            return build_parser().parse_args(argv)
+    """), encoding="utf-8")
+    declared, read, _splat, _n = audit_flags.analyse(
+        tmp_path, not_offered={("a.py", "build_parser", "gone"): "test"})
+    dead, _inspected, _unkept = audit_flags.findings(declared, read)
+    assert [d for d, _ in dead] == ["gone"]

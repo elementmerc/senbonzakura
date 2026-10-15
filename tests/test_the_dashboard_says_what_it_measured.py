@@ -38,16 +38,21 @@ def _args(**kw):
     return argparse.Namespace(**kw)
 
 
-def _panel(layout="full", width=94, total=200, baseline=0.578, height=None, **argkw):
+# rich reads its size from the environment unless both figures are given. Its size check looks at
+# TERM before it looks at any width you asked for, so a `dumb` or `unknown` TERM reports 80 by 25
+# whatever width the test set, and a shell that exports COLUMNS or LINES changes the height. A
+# panel is drawn at the size it is given, so every panel here states both figures.
+PANEL_HEIGHT = 25
+
+
+def _panel(layout="full", width=94, total=200, baseline=0.578, height=PANEL_HEIGHT, **argkw):
     rich_console = pytest.importorskip("rich.console", reason="rich draws the panel")
     # `legacy_windows=False` is spelled out because rich infers it as True on a Windows runner,
     # and then `set_alt_screen` returns False however capable the console is. The panel reads
     # that return value deliberately, so without this the lifecycle tests assert against rich's
     # platform detection rather than against the panel.
-    console = rich_console.Console(file=io.StringIO(), width=width, force_terminal=True,
-                                   legacy_windows=False)
-    if height is not None:
-        console.height = height
+    console = rich_console.Console(file=io.StringIO(), width=width, height=height,
+                                   force_terminal=True, legacy_windows=False)
     return livedisplay._RichPanel(
         events.EventLog(None), total_trials=total, log=None, stream=io.StringIO(),
         console=console, args=_args(**argkw), baseline=baseline, layout=layout)

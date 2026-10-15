@@ -193,6 +193,36 @@ def test_a_dense_gated_mlp_is_an_mlp_and_a_routed_gate_is_a_router():
 
 def test_an_expert_path_is_an_expert_even_though_it_also_names_an_mlp():
     assert modelmap.classify_block_path("mlp.experts.12.up_proj.weight") == "expert_mlp"
+    # Mixtral's spelling, which names neither "mlp" nor a projection the other rules know.
+    assert modelmap.classify_block_path("block_sparse_moe.experts.0.w1.weight") == "expert_mlp"
+
+
+# One row per naming scheme this project has met, kept as a table so adding an architecture is a
+# line rather than a function. These lived in the structure-probe test file until 2026-10-16 and
+# asserted on a `classify` the probe no longer defines: it delegates to the map, which is the whole
+# point of the map being the only resolver. They skipped in a fresh clone too, because that file
+# cannot run without the unversioned probe, so the package's own classifier was never checked
+# anywhere but a working copy.
+@pytest.mark.parametrize(("path", "role"), [
+    ("self_attn.q_proj.weight", "attention"),
+    ("attn.c_attn.weight", "attention"),
+    ("self_attn.q_norm.weight", "attention_norm"),
+    ("mlp.gate_proj.weight", "mlp"),
+    ("mlp.down_proj.weight", "mlp"),
+    ("mlp.gate.weight", "router"),
+    ("mlp.router.weight", "router"),
+    ("mlp.experts.4.down_proj.weight", "expert_mlp"),
+    ("mlp.experts.4.gate_proj.weight", "expert_mlp"),
+    ("input_layernorm.weight", "norm"),
+    ("ln_1.bias", "norm"),
+    ("conv.conv.weight", "conv"),
+    ("mamba.A_log", "ssm"),
+    ("mixer.in_proj.weight", "ssm"),
+    ("operator.dt_bias", "ssm"),
+    ("something_nobody_has_seen.weight", "unclassified"),
+])
+def test_every_tensor_gets_a_role_and_the_unknown_one_is_named_not_dropped(path, role):
+    assert modelmap.classify_block_path(path) == role
 
 
 def test_a_name_no_rule_covers_is_unclassified_rather_than_defaulted():

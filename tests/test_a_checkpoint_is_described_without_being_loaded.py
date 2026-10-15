@@ -487,39 +487,12 @@ def test_the_part_of_a_name_below_its_block_is_what_a_viewer_would_label():
     assert probe_mod.within_block("lm_head.weight", "model.layers", 3) == "lm_head.weight"
 
 
-@pytest.mark.parametrize(("path", "role"), [
-    ("self_attn.q_proj.weight", "attention"),
-    ("attn.c_attn.weight", "attention"),
-    ("self_attn.q_norm.weight", "attention_norm"),
-    ("mlp.gate_proj.weight", "mlp"),
-    ("mlp.down_proj.weight", "mlp"),
-    ("mlp.gate.weight", "router"),
-    ("mlp.router.weight", "router"),
-    ("mlp.experts.4.down_proj.weight", "expert_mlp"),
-    ("mlp.experts.4.gate_proj.weight", "expert_mlp"),
-    ("input_layernorm.weight", "norm"),
-    ("ln_1.bias", "norm"),
-    ("conv.conv.weight", "conv"),
-    ("mamba.A_log", "ssm"),
-    ("mixer.in_proj.weight", "ssm"),
-    ("operator.dt_bias", "ssm"),
-    ("something_nobody_has_seen.weight", "unclassified"),
-])
-def test_every_tensor_gets_a_role_and_the_unknown_one_is_named_not_dropped(path, role):
-    assert probe_mod.classify(path) == role
-
-
-def test_a_dense_gated_mlp_is_never_mistaken_for_a_router():
-    """`mlp.gate.weight` is a router and `mlp.gate_proj.weight` is not, and a substring match on
-    "gate" reports a router in every dense Llama ever made. That is the whole reason the
-    classifier matches whole dotted segments.
-    """
-    assert probe_mod.classify("mlp.gate_proj.weight") == "mlp"
-    assert probe_mod.classify("mlp.gate.weight") == "router"
-
-
-def test_an_expert_tensor_beats_the_mlp_rule_it_also_matches():
-    assert probe_mod.classify("block_sparse_moe.experts.0.w1.weight") == "expert_mlp"
+# THE TENSOR-ROLE TESTS LIVE IN `test_modelmap_observed_structure.py`, not here.
+#
+# They used to assert on `probe_mod.classify`. The probe stopped defining one when classification
+# moved into `senbonzakura.modelmap`, which is the single resolver the map is supposed to be, and
+# the tests went on calling the old name and failed. Testing the package's classifier through an
+# unversioned research script was also why it skipped in a fresh clone: this whole file does.
 
 
 @pytest.mark.parametrize(("name", "dtype", "expected"), [

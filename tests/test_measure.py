@@ -218,7 +218,14 @@ def test_every_reading_names_a_metric_its_command_actually_stamps():
     import pathlib
 
     pkg = pathlib.Path(measure.__file__).parent
-    for name, (metric, _note) in measure.READINGS.items():
+    for name, reading in measure.READINGS.items():
+        if reading.kind != measure.KIND_FIGURE:
+            # A VERDICT STAGE STAMPS NOTHING, by design rather than by omission: it measures no
+            # quantity, so it writes no `metrics` block and there is no stamp for this to check.
+            # `test_measure_reads_a_verdict_as_well_as_a_figure.py` holds that side's guard, which
+            # is that its answer comes from a closed vocabulary.
+            continue
+        metric = reading.key
         source = (pkg / f"{DELEGATED[name][0]}.py").read_text(encoding="utf-8")
         stamped = set()
         for node in ast.walk(ast.parse(source)):
@@ -584,6 +591,9 @@ def test_a_redirected_run_log_does_not_promise_a_reason_it_cannot_hold(monkeypat
 #: deciding that it should be.
 KNOWN_INSTRUMENTS = frozenset({
     "score", "compass", "coherence", "capability", "drift",
+    # Added 2026-10-15. It is a stage, and an opt-in one: it asks about the DIRECTION SET rather
+    # than about the model, and it answers in a judgement rather than a figure.
+    "validate",
     "jailbreak", "multi-turn", "tamper",
 })
 

@@ -130,7 +130,16 @@ example:
 """
 
 
-def build_args(argv=None):
+def build_parser():
+    """The parser for this command, by the name every other command in this package uses.
+
+    SPLIT OUT OF `build_args` on 2026-10-15, when `validate` became a `measure` stage. Every other
+    delegated command exposes `build_parser()`, and several checks resolve a command's parser by
+    that name: the one that parses each stage's generated command line could not see this module
+    at all, so the line `measure` builds for this stage was the only one nothing verified.
+
+    `build_args` still does what it did, and now calls this.
+    """
     # `prog` is set because argparse otherwise reads it off sys.argv[0], which is `python -m
     # senbonzakura` on the delegated path: the usage line then printed a command that does not
     # include the word `validate`, so copying it ran the abliterator.
@@ -191,7 +200,11 @@ def build_args(argv=None):
                     help="load a [NL+1, K, H] direction set (as written by tools/research/rdo.py) instead "
                          "of extracting cluster directions. The rest of the harness is unchanged, "
                          "so two direction sources are scored with one measuring stick.")
-    own = ap.parse_args(argv)
+    return ap
+
+
+def build_args(argv=None):
+    own = build_parser().parse_args(argv)
 
     # BELOW THE `parse_args` ABOVE, NOT AT THE TOP OF THE FUNCTION, which is what keeps `--help`
     # free: it exits from inside `parse_args` and never reaches this line.
@@ -361,6 +374,12 @@ def experiment_1(a, log):
     usable = [f for f in folds if f["best_extra_on_held_out"] is not None
               and f["random_mean"] is not None]
     verdict = "no usable folds"
+    # THE CATEGORY, BESIDE THE SENTENCE AND NOT DERIVED FROM IT. The sentences below are written
+    # for a person reading this file; `measure` needs the same judgement as one of a closed set of
+    # words, and string-matching a sentence to recover a category is how a reworded sentence
+    # silently changes a reported verdict. The two are set together, here, so they cannot disagree.
+    # `measure.VERDICT_VOCABULARY["validate"]` is the other half of this contract.
+    verdict_kind = "no usable folds"
     summary = {}
     if usable:
         extra = [f["best_extra_on_held_out"] for f in usable]
@@ -377,19 +396,22 @@ def experiment_1(a, log):
         # A fitted direction that cannot beat the best of eight random ones on unseen prompts is
         # not carrying anything transferable, whatever its score on the data it was fitted to.
         if wins > len(usable) * 0.75:
+            verdict_kind = "generalises"
             verdict = ("the extra directions generalise to prompts they were never fitted on and "
                        "beat the random floor in most folds, which is what a refusal direction "
                        "should do and a topic direction should not")
         elif wins < len(usable) * 0.25:
+            verdict_kind = "does not generalise"
             verdict = ("the extra directions do NOT generalise: on held-out clusters they score "
                        "no better than random directions. They are fitting the clusters they came "
                        "from, which is what a topic direction looks like")
         else:
+            verdict_kind = "mixed"
             verdict = ("mixed: the extra directions beat random on some held-out clusters and not "
                        "others, so they carry something transferable but not reliably")
 
     return {"folds": folds, "summary": summary, "verdict": verdict,
-            "cluster_alignment": alignment}
+            "verdict_kind": verdict_kind, "cluster_alignment": alignment}
 
 
 # ── the transfer gap: the operation optimised against, versus the one applied ─────────

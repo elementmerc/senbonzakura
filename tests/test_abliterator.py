@@ -727,7 +727,11 @@ def test_every_subcommand_is_listed_in_the_help():
     matched THERE rather than anywhere in the help text.
     """
     lines = cli.build_parser().format_help().splitlines()
-    for name in ("abliterate", "kageyoshi", *cli.DELEGATED):
+    # `typed_commands()`, not `DELEGATED`: the registry also holds the instruments that moved to
+    # the workbench, and those are deliberately NOT listed in the epilog because they are no
+    # longer words anybody can type. Their own test asserts they refuse by name instead.
+    from senbonzakura.entry import typed_commands
+    for name in ("abliterate", "kageyoshi", *typed_commands()):
         # The command must OPEN an epilog entry, not merely appear somewhere in the help.
         # Column widths vary with the longest name, so match the entry rather than the padding.
         assert any(ln.startswith(f"  {name} ") for ln in lines), \

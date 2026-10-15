@@ -51,7 +51,13 @@ from .crashsafe import atomic_write
 #: Stage name -> (module, output filename). The module is looked up through `entry.DELEGATED`
 #: where it appears there, so a command that moves keeps being run rather than quietly dropping
 #: out of this list.
-STAGE_ORDER = ("score", "compass", "coherence", "capability", "drift")
+STAGE_ORDER = ("score", "compass", "coherence", "capability", "drift", "validate")
+
+#: Stages that never run unless asked for by name. Separate from `NOT_IN_MEASURE`, which names
+#: instruments this command does not run AT ALL: these do run, just not by default. `drift` because
+#: it needs a second model, `validate` because it is a long job asking about the direction set
+#: rather than about this model.
+OPT_IN_STAGES = frozenset({"drift", "validate"})
 
 #: What each stage's result file is called inside `--out`. Named after the command rather than
 #: after the quantity, so somebody who wants to re-run one by hand can see which it was.
@@ -159,6 +165,14 @@ def stage_argv(name, args, out_dir):
     if name == "drift":
         return [*common, "--base", args.baseline,
                 "--prompts", _track_spec(args.track, "good_ds"), "--out", out]
+    if name == "validate":
+        # `e1` AND NOT `all`, which is the command's own default. `all` is e1 to e4 plus transfer
+        # and reach, several of which bake the model across a grid of strengths; as a stage of a
+        # command somebody runs to get one table, that is the wrong size of job. e1 is also the
+        # one that answers the question the row is named after: hold out a cluster the directions
+        # were never fitted on, and see whether they still separate it. The full set is still
+        # `senbonzakura validate`, and the row's note says so.
+        return [*common, "--track", args.track, "--experiment", "e1", "--out", out]
     raise KeyError(name)
 
 
@@ -292,14 +306,53 @@ def invalidated(doc):
 #: model that had just scored 29 of 39 in the log two lines above. A guard that checked the key
 #: appeared anywhere in the writing module passed it, which is this project's own through-line:
 #: a check that covers one spelling of a defect reports clean on the others.
+#: The two kinds of answer an instrument can give this table.
+#:
+#: A FIGURE is a number with units, stamped in the instrument's own result file, and it is what
+#: every stage gave until 2026-10-15.
+#:
+#: A VERDICT is a judgement from a closed set of words, with the instrument's own sentence beside
+#: it as the reason. Some instruments do not measure a quantity at all: `validate` asks whether a
+#: direction set carries refusal or carries topic, and the honest answer has three values and no
+#: units. Compressing that into a number would need a threshold nobody has measured, and would
+#: turn a judgement into a figure a reader can crop out of context.
+KIND_FIGURE, KIND_VERDICT = "figure", "verdict"
+
+#: What a verdict row may ever say, per stage. CLOSED, AND DECLARED HERE RATHER THAN READ FROM THE
+#: RESULT, which is the guardrail and not bureaucracy.
+#:
+#: A row that prints whatever word an instrument put in its file is a row that can be made to print
+#: anything, including a safety claim. This project does not ship those: `diff` must never grow a
+#: safety verdict, `localisation_claim: false` makes marks structurally unreachable on the card, and
+#: this is the same move one layer along. An instrument whose verdict is not in its own declared set
+#: gets a "not reported" row naming the value it tried to use, so a new verdict word is a visible
+#: failure rather than a silent new claim.
+VERDICT_VOCABULARY = {
+    "validate": ("generalises", "does not generalise", "mixed", "no usable folds"),
+}
+
+
+class Reading(NamedTuple):
+    """How to read one stage's answer, and what kind of answer it is.
+
+    `key` means different things per kind, which is the only wrinkle: for a figure it is the
+    stamped metric's name, and for a verdict it is the field in the result that carries the
+    category. Both are "where the answer is", so one field rather than two optional ones.
+    """
+
+    kind: str
+    key: str
+    note: str
+
+
 READINGS = {
     # THE PARTITION IS NOT IN THIS SENTENCE, deliberately, since 2026-09-25. It used to assert
     # "Measured on this track's held-out rows and on no others", which is a claim about the run
     # rather than a description of the metric, and it was false for every default-track run. What
     # the rows were is read from the artefact by `partition_note` and appended per run.
-    "score": ("refusal_rate.senbonzakura-ruler",
+    "score": Reading(KIND_FIGURE, "refusal_rate.senbonzakura-ruler",
               "hard refusals left, as a fraction"),
-    "compass": ("compass_auc.margin-past-preamble",
+    "compass": Reading(KIND_FIGURE, "compass_auc.margin-past-preamble",
                 ("harm recognition. 0.5 is a coin toss, which means the model no longer tells a "
                  "harmful request from a harmless one")),
     # NOT the perplexity. This command stamps the negative log likelihood, and the perplexity
@@ -307,16 +360,23 @@ READINGS = {
     # "perplexity" over a value of 2.6111 while the stage had printed `ppl=13.61`, which is a
     # mislabelled number and worse than the blank row it replaced. The units below now come out
     # of the stamp, so a row cannot describe itself as something the file disagrees with.
-    "coherence": ("coherence",
+    "coherence": Reading(KIND_FIGURE, "coherence",
                   ("how surprised the model is by a fixed neutral passage. Its exponential is "
                    "the perplexity, which the stage's own result file carries. Comparable only "
                    "against the same passage on the same tokeniser")),
-    "capability": ("capability",
+    "capability": Reading(KIND_FIGURE, "capability",
                    ("what the edit cost, on questions the model either gets right or does not. "
                     "Read `accuracy_reportable` in the file before quoting it")),
-    "drift": ("kl",
+    "drift": Reading(KIND_FIGURE, "kl",
               ("divergence from the baseline on one ruler, which is the comparable cost. Read "
                "`precision_ok` before quoting it")),
+    # THE FIRST VERDICT STAGE. It asks a question about the DIRECTION SET rather than about the
+    # model, which is why it has no figure to stamp and why it was nearly left out of this command
+    # altogether. Its answer still belongs in the table: a run whose extra directions carry topic
+    # rather than refusal is a run whose other rows mean something different.
+    "validate": Reading(KIND_VERDICT, "verdict_kind",
+                        ("whether the extra refusal directions carry refusal or carry topic, "
+                         "judged by holding out a cluster they were never fitted on")),
 }
 
 
@@ -464,6 +524,42 @@ class Row(NamedTuple):
     units: str
     note: str
     interval: str = ""
+    #: `KIND_FIGURE` or `KIND_VERDICT`. Last, and defaulted, for the reason the docstring gives:
+    #: a reader written before this field existed still means what it meant.
+    kind: str = KIND_FIGURE
+
+
+def _verdict_row(name, result, reading):
+    """One stage's judgement, checked against the closed set of words that stage may say.
+
+    THE CHECK IS THE POINT. A row that prints whatever the result file happens to carry is a row
+    that can be made to print anything, and the thing this project most carefully never prints is a
+    verdict about whether a model is safe. So the category has to be one the stage declared in
+    `VERDICT_VOCABULARY`, and anything else becomes a "not reported" row that names the value it
+    refused. A new verdict word is then a visible failure that someone has to come and widen the
+    vocabulary for, rather than a new claim the table starts making on its own.
+
+    The instrument's own sentence travels in the note as the REASON, which is where free text is
+    harmless: it explains a category that has already been constrained.
+    """
+    allowed = VERDICT_VOCABULARY.get(name, ())
+    value = result.get(reading.key) if isinstance(result, dict) else None
+    if value is None:
+        return Row(name, "not reported", "",
+                   f"{reading.note}. The stage's result carries no `{reading.key}`, so there is "
+                   f"no judgement to report.", kind=reading.kind)
+    if value not in allowed:
+        # NAMED, not swallowed. "not reported" with no value is indistinguishable from the stage
+        # not running, and the two need different fixes.
+        return Row(name, "not reported", "",
+                   f"{reading.note}. The stage answered {value!r}, which is not one of the "
+                   f"judgements it declares ({', '.join(allowed) or 'none'}), so it is not "
+                   f"reported.", kind=reading.kind)
+    because = result.get("verdict")
+    return Row(name, value, "",
+               f"{reading.note}. {because}" if isinstance(because, str) and because else
+               reading.note,
+               kind=reading.kind)
 
 
 def verdict_rows(results):
@@ -473,9 +569,10 @@ def verdict_rows(results):
         if name not in results:
             continue
         r = results[name]
-        metric, note = READINGS[name]
+        reading = READINGS[name]
+        metric, note = reading.key, reading.note
         if isinstance(r, str):                  # a failure, carried as its message
-            rows.append(Row(name, "not measured", "", r))
+            rows.append(Row(name, "not measured", "", r, kind=reading.kind))
             continue
         # A STAGE THAT DECLARED ITS OWN FIGURE INVALID HAS NOT PRODUCED ONE, and this table is the
         # artefact a reader quotes from. `run_stage` calls each stage in process and returns what its
@@ -489,18 +586,21 @@ def verdict_rows(results):
             rows.append(Row(name, "not a measurement", "",
                             f"{note}. The stage recorded that this figure is not a measurement of "
                             f"what it is named after, so it is not reported. Read the stage's own "
-                            f"log and result file for why."))
+                            f"log and result file for why.", kind=reading.kind))
+            continue
+        if reading.kind == KIND_VERDICT:
+            rows.append(_verdict_row(name, r, reading))
             continue
         value, why_not, units = read_figure(r, metric)
         if value is None:
             # The REASON, not a blank. A row saying only "not reported" beside a stage that
             # printed its number two lines earlier tells the reader nothing they can act on.
-            rows.append(Row(name, "not reported", "", why_not))
+            rows.append(Row(name, "not reported", "", why_not, kind=reading.kind))
             continue
         where = partition_note(r, metric)
         rows.append(Row(name, _figure(value), units or "",
                         f"{note}. {where}" if where else note,
-                        _interval_of(r, metric)))
+                        _interval_of(r, metric), kind=reading.kind))
     return rows
 
 
@@ -553,8 +653,14 @@ def wanted_stages(args):
     `drift` needs a second model, so it is in only when `--baseline` names one. Asked for
     explicitly without one, it is a refusal rather than a silent omission: somebody who typed
     `--only drift` has said what they want and should be told why they are not getting it.
+
+    `validate` is out of the default set for a different reason: it is not measuring this model at
+    all. It asks whether a DIRECTION SET carries refusal or carries topic, which means fitting
+    directions and baking the model at several strengths, and that is a longer and more deliberate
+    job than the rest of this command put together. Somebody who wants it asks for it by name.
     """
-    chosen = list(args.only) if args.only else [n for n in STAGE_ORDER if n != "drift"]
+    default = [n for n in STAGE_ORDER if n not in OPT_IN_STAGES]
+    chosen = list(args.only) if args.only else default
     if "drift" in chosen and not args.baseline:
         if args.only:
             raise SystemExit(
@@ -743,6 +849,12 @@ def main(argv=None):
             # these are why there is no aggregate stamp: one value for a field four instruments
             # measured differently would be false about three of them.
             "stage_stamps": stamps,
+            # WHICH KIND OF ANSWER EACH STAGE GAVE, so a reader can tell a designed absence from a
+            # fault. A verdict stage measures no quantity and therefore writes no `metrics` block,
+            # and `stage_stamps` marks it `unstamped`, which is true but reads like a defect
+            # without this beside it. Additive, so a reader of the previous shape is unaffected
+            # and the schema version does not move: no existing field changes meaning.
+            "readings": {n: READINGS[n].kind for n in results},
             "pinned_fields_that_differ": pinned_fields_that_differ(stamps),
             "pinned_fields_that_differ_note": PINNED_MAY_DIFFER_DOC,
             "failed": failures,

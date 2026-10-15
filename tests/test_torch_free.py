@@ -178,7 +178,12 @@ def test_help_still_prints_without_the_stack(stripped):
 #: before anything is opened, which is the whole point of the assertion below.
 NEEDS_THE_STACK = {
     "score": ("--model", "m", "--eval", "e", "--out", "o"),
-    "drift": ("--model", "m", "--base", "b", "--prompts", "p", "--out", "o"),
+    # `coherence` REPLACED `drift` HERE on 2026-10-15, when `drift` stopped being a word the CLI
+    # accepts and started refusing by name. It is a swap and not a removal on purpose: the
+    # docstrings below argue that three examples rather than one is what keeps this property from
+    # going untested after a refactor, and dropping to two to make a failure go away would be
+    # exactly that refactor.
+    "coherence": ("--model", "m", "--out", "o"),
     "validate": ("--model", "m", "--out", "o"),
 }
 

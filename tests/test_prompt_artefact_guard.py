@@ -612,3 +612,82 @@ class TestHtmlIsReadRatherThanCleared:
                   / "check_prompt_artefacts.py").read_text(encoding="utf-8")
         assert "assembled by JavaScript at runtime" in source, (
             "the HTML rule no longer states what it cannot see")
+
+
+# ── the corpus SHAPE rule, which is what catches a renamed field ───────────────────
+#
+# Every fixture below uses harmless filler. A test that pasted real harmful rows in to prove the
+# gate catches harmful rows would be committing the thing the gate exists to stop.
+FILLER = [f"this is sentence number {n} and it is long enough to read as prose" for n in range(8)]
+
+
+class TestCorpusShape:
+    def test_the_bypass_that_prompted_this_rule(self, tmp_path):
+        """Reproduced against the real gate on 2026-10-15: the same rows under `prompt` were
+        refused and under `a` were reported clean. Renaming a field is not work.
+        """
+        named = tmp_path / "named.json"
+        named.write_text(json.dumps({"prompt": FILLER}), encoding="utf-8")
+        unnamed = tmp_path / "unnamed.json"
+        unnamed.write_text(json.dumps({"a": FILLER}), encoding="utf-8")
+        assert guard.scan_file(named), "the named case was already caught and must stay caught"
+        assert any("shape a dumped corpus takes" in f for f in guard.scan_file(unnamed)), (
+            "a corpus under a field name this gate has never heard of reads as clean again")
+
+    def test_the_rows_shape_under_unknown_names(self, tmp_path):
+        """The likelier leak: prompt and reply paired per row, neither field named."""
+        p = tmp_path / "rows.json"
+        p.write_text(json.dumps({"rows": [{"q": s, "r": s} for s in FILLER]}), encoding="utf-8")
+        findings = " ".join(guard.scan_file(p))
+        assert "$.rows[].q" in findings and "$.rows[].r" in findings
+
+    def test_a_jsonl_corpus_cannot_hide_between_the_lines(self, tmp_path):
+        """One row per line means a per-line rule sees a run of one however long the file is.
+        The lines are read as a run as well, and this is the test that the run is read.
+        """
+        p = tmp_path / "rows.jsonl"
+        p.write_text("\n".join(json.dumps({"q": s}) for s in FILLER), encoding="utf-8")
+        assert any("read as a whole" in f for f in guard.scan_file(p))
+
+    def test_an_ordinary_artefact_with_a_few_notes_still_clears(self, tmp_path):
+        """THE HALF THAT DECIDES WHETHER THE GATE SURVIVES: a gate that refuses the clean case is
+        a gate somebody switches off. Four free-text strings is the measured ceiling across the
+        tracked tree, so four must pass.
+        """
+        p = tmp_path / "res.json"
+        p.write_text(json.dumps({"auc": 0.91, "notes": FILLER[:4]}), encoding="utf-8")
+        assert guard.scan_file(p) == []
+
+    def test_every_recorded_exception_exists_and_clears(self):
+        """A recorded path that no longer exists is a line nobody will notice is dead, and a
+        recorded path that no longer clears means the file changed shape without the record.
+        """
+        root = Path(__file__).resolve().parent.parent
+        for rel in guard.KNOWN_CORPUS_SHAPED_JSON:
+            path = root / rel
+            assert path.exists(), f"{rel} is recorded as corpus-shaped but is not in the tree"
+            assert guard.scan_file(path) == [], f"{rel} is recorded yet does not clear"
+
+    def test_being_recorded_clears_the_shape_and_not_a_banned_name(self):
+        """The exception is narrow on purpose. A file allowlisted for its shape that later grows
+        a `prompt` field is still refused, for that field.
+        """
+        obj = {"prompt": FILLER}
+        assert any("carries prompt" in f for f in guard.findings_for(obj, "x", shapes=False))
+        assert not any("dumped corpus" in f for f in guard.findings_for(obj, "x", shapes=False))
+
+    def test_the_thresholds_are_the_measured_ones(self):
+        """Pinned so a later loosening is a visible edit rather than a quiet one. The sweep on
+        2026-10-15 refused the same single file at every setting from six rows upward, so the
+        tightest corner was free; raising any of these three gives that up for nothing.
+        """
+        assert (guard.MIN_CORPUS_ROWS, guard.FREE_TEXT_MIN_CHARS,
+                guard.FREE_TEXT_MIN_SPACES) == (6, 20, 2)
+
+    def test_it_says_what_it_cannot_do(self):
+        """The rule cannot tell explanatory notes from prompts, and the source has to keep saying
+        so. A gate believed to read content is worse than one whose reach is written down.
+        """
+        source = (Path(__file__).resolve().parent.parent / "tools" / "ci"
+                  / "check_prompt_artefacts.py").read_text(encoding="utf-8")
+        assert "it cannot tell twenty explanatory notes from twenty harmful prompts" in source

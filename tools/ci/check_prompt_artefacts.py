@@ -726,8 +726,126 @@ def banned_keys_in(obj, depth: int = 0) -> set[str]:
     return inspect_value(obj, depth)[0]
 
 
-def findings_for(obj, where: str) -> list[str]:
-    """Everything worth refusing about one decoded document, as human-readable lines."""
+#: THE HOLE THIS CLOSES, reproduced against the real gate on 2026-10-15. `BANNED_KEYS` bans
+#: field NAMES, and `inspect_value` reports a document holding no object at all. Between those
+#: two sits a document that is an object whose names are simply not on the list: three harmful
+#: prompts under `prompt` were refused, and the SAME BYTES under `a` and `b` were reported
+#: "1 file(s) clean". Renaming a field is not a thing a leak has to work at.
+#:
+#: SO THIS READS SHAPE, exactly as `markdown_findings` and `text_corpus_findings` do and for the
+#: same reason. Three other answers were measured first and each is worse:
+#:
+#:   - A denylist of what a harmful prompt says. REFUSED 2026-09-17, because the guard carrying
+#:     the denylist inline published the terms it existed to keep out. Still refused.
+#:   - A known-key allowlist, the mirror of `BANNED_KEYS`. Measured: 50 distinct keys carry free
+#:     text across the 105 tracked `.json` files, and the set grows with every new result
+#:     artefact (`what_the_method_tests`, `estimator_description`). A gate edited on every
+#:     artefact is a gate whose edits stop being read, which is the `KNOWN_TEXT_FILES` failure
+#:     mode at a slower speed.
+#:   - Deny-first on all JSON, the `.txt` rule. That needs 105 recorded paths to clear today's
+#:     tree, and the key walk above already reads JSON usefully.
+#:
+#: WHAT IT CANNOT DO, stated because a gate believed to do more than it does is worse than this
+#: one: it cannot tell twenty explanatory notes from twenty harmful prompts. Nothing can, from
+#: shape alone. So the shape is refused and the legitimate exceptions are recorded BY EXACT PATH,
+#: which is the answer this gate already reached for plaintext. One tracked file trips it.
+#:
+#: THE THRESHOLDS ARE MEASURED, not chosen. Across the tracked tree the largest run of free-text
+#: strings in a single array, excluding `pins.json`, is FOUR (`$.recovery_targets`, 4 strings).
+#: Sweeping rows 6/8/12 against lengths 20/30/40/60 and 2/4/8 spaces refuses the same single file
+#: at every setting, so the tightest corner is free: six rows, and "free text" set as low as 20
+#: characters with 2 spaces. Tight matters, because a corpus of one-sentence prompts is the
+#: likelier leak and a 60-character floor would have cleared it.
+MIN_CORPUS_ROWS = 6
+FREE_TEXT_MIN_CHARS = 20
+FREE_TEXT_MIN_SPACES = 2
+
+#: Repo-relative paths (forward slashes) of the corpus-shaped JSON legitimately tracked today,
+#: checked against the whole tree on 2026-10-15. Nothing else clears.
+#:
+#: Recorded BY EXACT PATH, like `KNOWN_TEXT_FILES` and for the reason written there: this gate is
+#: widened by naming a file and never by opening a location or a key. A second such file costs
+#: one line, and that line is where a human looks at it.
+KNOWN_CORPUS_SHAPED_JSON = frozenset({
+    # THE VENDOR PIN RATIONALE. `pins.json` explains each pinned revision in prose, one array
+    # element per line, and three of those arrays run past six lines. It is the only tracked file
+    # at any threshold in the sweep above.
+    #
+    # It is not a corpus and is awkward to turn into one: every string is rationale ABOUT a pin,
+    # the pins themselves are hashes a release gate verifies, and a corpus substituted into a
+    # `why` array would have to survive whoever next reads why a revision was pinned.
+    "src/senbonzakura/vendor/pins.json",
+    # THE CAPABILITY BENCHMARK, and the one file this rule found that the sweep did not predict:
+    # 256 rows of `problem` and `reference`, which are GSM8K maths word problems. Neither name is
+    # on `BANNED_KEYS`, so until now it cleared by not being asked about.
+    #
+    # It IS a corpus, and it is allowlisted BECAUSE it is one: it is the benign half of the
+    # measurement, published GSM8K, and the capability score is unreportable without it. A corpus
+    # of maths problems is the thing this gate exists to let through, and it reaching the
+    # allowlist rather than the refusal list is the whole distinction the gate cannot draw itself.
+    "src/senbonzakura/data/capability-gsm8k.jsonl",
+})
+
+
+def _is_free_text(value) -> bool:
+    """Is this string prose rather than an identifier, a hash, a version or a token?"""
+    return (isinstance(value, str)
+            and len(value) >= FREE_TEXT_MIN_CHARS
+            and value.count(" ") >= FREE_TEXT_MIN_SPACES)
+
+
+def corpus_runs(obj, depth: int = 0, where: str = "$"):
+    """Every corpus-shaped run in a decoded document, as `(json_path, kind, rows)`.
+
+    Two shapes, because a corpus arrives as either. A run of free-text STRINGS in one array is a
+    dumped prompt list; a run of OBJECTS in one array sharing a free-text field is the rows shape,
+    and the shared field is the column. Both are counted per array rather than per document, so
+    one long array trips and a document with many short ones does not.
+
+    The depth cap is `MAX_DEPTH` for the reason given on `inspect_value`: a structure deeper than
+    that is reported by the walk above rather than read here.
+    """
+    if depth > MAX_DEPTH or not isinstance(obj, (dict, list)):
+        return
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            yield from corpus_runs(value, depth + 1, f"{where}.{key}")
+        return
+    strings = [item for item in obj if _is_free_text(item)]
+    if len(strings) >= MIN_CORPUS_ROWS:
+        yield where, "free-text strings", len(strings)
+    rows = [item for item in obj if isinstance(item, dict)]
+    if len(rows) >= MIN_CORPUS_ROWS:
+        counts: dict[str, int] = {}
+        for row in rows:
+            for key, value in row.items():
+                if _is_free_text(value):
+                    counts[key] = counts.get(key, 0) + 1
+        for key, count in sorted(counts.items()):
+            if count >= MIN_CORPUS_ROWS:
+                yield f"{where}[].{key}", "records carrying free text", count
+    for index, item in enumerate(obj):
+        yield from corpus_runs(item, depth + 1, f"{where}[{index}]")
+
+
+def corpus_shape_findings(obj, where: str) -> list[str]:
+    """Corpus-shaped runs in one decoded document, whatever its field names are called."""
+    return [
+        (f"{where}: {path} holds {rows} {kind}, which is the shape a dumped corpus takes. This "
+         f"check judges SHAPE here rather than field names, because the same rows under a name "
+         f"this gate has never heard of would otherwise read as clean. If it is not a corpus, "
+         f"record the file in KNOWN_CORPUS_SHAPED_JSON and say why in the commit; if it is, keep "
+         f"it out of the tree.")
+        for path, kind, rows in corpus_runs(obj)
+    ]
+
+
+def findings_for(obj, where: str, *, shapes: bool = True) -> list[str]:
+    """Everything worth refusing about one decoded document, as human-readable lines.
+
+    `shapes` is false only for a file recorded in `KNOWN_CORPUS_SHAPED_JSON`. The key walk still
+    runs on it: being cleared of one shape is not being cleared of a banned name.
+    """
     keys, concerns, saw_a_dict = inspect_value(obj)
     out = []
     if keys:
@@ -736,6 +854,8 @@ def findings_for(obj, where: str) -> list[str]:
         out.append(f"{where}: holds no JSON object, so a check that judges FIELD NAMES has "
                    f"nothing to read. A bare array of strings is the shape a dumped prompt "
                    f"list takes, and this check cannot clear it.")
+    if shapes:
+        out += corpus_shape_findings(obj, where)
     out += [f"{where}: {c}" for c in dict.fromkeys(concerns)]
     return out
 
@@ -797,7 +917,12 @@ def scan_bytes(path: Path, raw: bytes, *, kind: str | None = None) -> list[str]:
     findings: list[str] = []
     if _foreign_schema(path):
         return findings
+    shapes = not _recorded_as(path, KNOWN_CORPUS_SHAPED_JSON)
     if kind == JSONL_KEYS:
+        # The lines are also checked AS A RUN, below. A corpus in this format puts one row on
+        # each line, so a rule applied per line sees a run of one however long the file is, and
+        # the shape would have slipped between the lines rather than through any of them.
+        documents = []
         for lineno, line in enumerate(raw.split(b"\n"), 1):
             if not line.strip():
                 continue
@@ -809,7 +934,10 @@ def scan_bytes(path: Path, raw: bytes, *, kind: str | None = None) -> list[str]:
             except (UnicodeDecodeError, json.JSONDecodeError) as e:
                 findings.append(f"{path}:{lineno}: is not valid JSON ({e}), so it cannot be cleared")
                 continue
-            findings += findings_for(obj, f"{path}:{lineno}")
+            documents.append(obj)
+            findings += findings_for(obj, f"{path}:{lineno}", shapes=shapes)
+        if shapes:
+            findings += corpus_shape_findings(documents, f"{path} read as a whole")
     else:
         try:
             obj = json.loads(raw)
@@ -817,7 +945,7 @@ def scan_bytes(path: Path, raw: bytes, *, kind: str | None = None) -> list[str]:
             # A malformed .json is reported rather than skipped: "unparseable" is
             # not "harmless", and every other .json in the tree parses.
             return [f"{path}: is not valid JSON ({e}), so it cannot be cleared"]
-        findings += findings_for(obj, str(path))
+        findings += findings_for(obj, str(path), shapes=shapes)
     return findings
 
 

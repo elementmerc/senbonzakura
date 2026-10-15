@@ -618,7 +618,7 @@ jobs:
   workbench-ui:
     # The workbench interface bundle is committed minified, so nobody can check it by eye. This job
     # is the evidence that it came from the committed sources: it rebuilds the bundle with the
-    # modules locked in web/package-lock.json and fails when the bytes differ. A hash of the committed
+    # modules locked in tools/workbench-ui/package-lock.json and fails when the bytes differ. A hash of the committed
     # file alone would only show that nobody has changed it since it was committed.
     name: Workbench interface bundle reproduces from its sources
     runs-on: ubuntu-latest
@@ -628,12 +628,12 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: tools/workbench-ui/package-lock.json
       - name: Install, from the lockfile only, without install scripts
         # The build needs three locked packages (react, react-dom, esbuild) and nothing from their
         # install scripts. Leaving those scripts off means nothing executes from the downloads
         # (baseline section 5).
-        working-directory: web
+        working-directory: tools/workbench-ui
         run: npm ci --ignore-scripts
       - name: Rebuild the bundle from the committed sources and compare
         run: tools/workbench-ui/check.sh

@@ -39,6 +39,7 @@ make it blind to the only fault it was written for. The driver is asked instead,
 """
 from __future__ import annotations
 
+import json
 import platform
 import re
 import shutil
@@ -372,6 +373,52 @@ def pick_cuda_channel(driver, compute=None):
     return None
 
 
+def recommend_channel(*, system, gpus, driver, compute):
+    """`(channel, reason)` for an environment being built from nothing, as the desktop app does.
+
+    Different from `plan`, which advises on a torch that is already installed: here nothing is
+    installed yet, so the question is only which build to fetch first. `channel` is None when the
+    platform's default wheel is right (macOS), else a PyTorch channel tag.
+
+    No GPU means "cpu", not the default wheel. On Linux the default is the CUDA build with fifteen
+    nvidia packages, a few gigabytes nobody without a card should download.
+    """
+    if system == "Darwin":
+        return None, "macOS: the default build is right, Metal on Apple silicon and CPU on Intel"
+    if not gpus:
+        return "cpu", ("no NVIDIA GPU was found, so the CPU build, which is also the smaller "
+                       "download")
+    if driver is None:
+        return "cpu", ("an NVIDIA GPU is present but the CUDA version its driver supports could "
+                       "not be read, so the CPU build is the one that is sure to run")
+    channel = pick_cuda_channel(driver, compute)
+    if channel is None:
+        return "cpu", (f"an NVIDIA GPU is present but no CUDA build PyTorch publishes runs on this "
+                       f"driver (CUDA {driver[0]}.{driver[1]}) and card, so the CPU build")
+    return channel, (f"an NVIDIA GPU is present and its driver supports CUDA "
+                     f"{driver[0]}.{driver[1]}, so {channel}")
+
+
+def fallback_channels(channel):
+    """The channels to try, in order, if `channel` installs and then will not start. Ends at cpu."""
+    chain, here = [], channel
+    while here is not None and here != "cpu":
+        here = next_channel_below(here)
+        if here is not None:
+            chain.append(here)
+    return [*chain, "cpu"] if channel not in (None, "cpu") else []
+
+
+def machine_answer(*, system, machine, gpus, driver, compute, wsl):
+    """Everything an installer needs to choose torch, as one JSON-ready dict. Pure."""
+    channel, reason = recommend_channel(system=system, gpus=gpus, driver=driver, compute=compute)
+    return {"v": 1, "system": system, "machine": machine, "wsl": wsl, "gpus": gpus or [],
+            "driver": list(driver) if driver else None,
+            "compute": list(compute) if compute else None,
+            "channel": channel, "reason": reason, "fallbacks": fallback_channels(channel),
+            "index": INDEX}
+
+
 def installed_torch():
     """(version, variant) of the installed torch, or (None, None).
 
@@ -642,10 +689,29 @@ def main(argv=None):
     p.add_argument("--apply", action="store_true",
                    help="actually run the pip command. Without this, nothing is changed and the "
                         "command is only printed.")
+    p.add_argument("--json", action="store_true",
+                   help="print what this machine needs as one JSON object and change nothing. "
+                        "For an installer building an environment from nothing.")
+    p.add_argument("--probe-cuda", action="store_true",
+                   help="check, in a separate process, that the installed torch can start CUDA, "
+                        "and print the answer as JSON. Changes nothing.")
     p.add_argument("--cuda", metavar="CHANNEL",
                    help="force a PyTorch channel (cpu, cu128, cu130, ...) instead of the one the "
                         "driver implies. For a machine whose driver this cannot read.")
     a = p.parse_args(argv)
+    if (a.json or a.probe_cuda) and (a.apply or a.cuda):
+        p.error("--json and --probe-cuda only report; they cannot be combined with --apply or "
+                "--cuda")
+    if a.probe_cuda:
+        state, detail = cuda_initialises()
+        print(json.dumps({"v": 1, "state": state, "detail": detail}, sort_keys=True))
+        return 0
+    if a.json:
+        print(json.dumps(machine_answer(
+            system=platform.system(), machine=platform.machine(), gpus=nvidia_gpus(),
+            driver=driver_cuda_version(), compute=compute_capability(), wsl=is_wsl()),
+            sort_keys=True))
+        return 0
 
     gpus = nvidia_gpus()
     driver = driver_cuda_version()

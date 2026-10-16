@@ -166,7 +166,7 @@ paths with a regex rather than a person choosing them. Without that, a config fi
 
 | Command | What it does |
 |---|---|
-| `setup` | Look at this machine and put the right build of torch on it. pip cannot: there is no environment marker for a GPU, and PyPI cannot depend on PyTorch's index. Prints the command; `--apply` runs it. |
+| `setup` | Look at this machine and put the right build of torch on it. pip cannot: there is no environment marker for a GPU, and PyPI cannot depend on PyTorch's index. Prints the command; `--apply` runs it. `--json` prints what this machine needs as one JSON object for an installer, and `--probe-cuda` checks in a separate process that the installed torch can start CUDA; neither changes anything. |
 | `doctor` | Check this install can actually do the job, and say so loudly when it cannot. |
 | `budget` | Will this model fit on this machine, and roughly how long would a run take? Reads the checkpoint's headers, measures the card, the memory, the free disk and whether a laptop is plugged in, and refuses a run that cannot finish. |
 

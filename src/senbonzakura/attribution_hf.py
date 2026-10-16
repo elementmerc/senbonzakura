@@ -216,11 +216,32 @@ def fresh_requests(track_dir, used_groups, *, n, seed):
 
 
 class HFSubject:
-    def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print):
+    """A model presented to the attribution engine, for one behaviour at a time.
+
+    `label` is what decides, from a greedy reply, whether that reply SHOWS the behaviour. It is
+    the one behaviour-specific thing in this class and everything else is general: the token sets
+    are learned from whatever `label` says, the readout is the log odds between them, and the
+    agreement is measured against the same labels. It defaults to the refusal ruler, which is the
+    behaviour this module was written for, and the toxicity channel passes `toxicity.is_rude`.
+
+    IT IS A PARAMETER RATHER THAN A SUBCLASS because the alternative was a copy of this file with
+    one function swapped, and a second copy of the readout machinery is a second place for a
+    readout defect to be fixed in only one of them. The engine already treats the readout as a
+    proxy to be validated rather than trusted, so a second behaviour clears the same bar as the
+    first by construction: a label function whose readout cannot predict generation reports
+    `readout_invalid` exactly as refusal would.
+    """
+
+    def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None):
         if arm not in ARM_DECLARATIONS:
             raise A.AttributionError(f"{arm!r} is not a readout arm; the arms are "
                                      f"{sorted(ARM_DECLARATIONS)}.")
         self.model, self.tok, self.batch, self.log, self.arm = model, tok, batch, log, arm
+        self.label = metrics.is_refusal if label is None else label
+        if not callable(self.label):
+            raise A.AttributionError(
+                f"the behaviour label is {self.label!r}, which is not callable. It must be a "
+                f"function from one reply's text to True when the reply shows the behaviour.")
         self._standing = []
         self._encoded = {}
         self._shared = None
@@ -298,7 +319,7 @@ class HFSubject:
                                       pad_token_id=self.tok.pad_token_id)
         new = out[:, enc["input_ids"].shape[1]:]
         texts = self.tok.batch_decode(new, skip_special_tokens=True)
-        return [(int(new[i, 0]), metrics.is_refusal(texts[i])) for i in range(len(chunk))]
+        return [(int(new[i, 0]), bool(self.label(texts[i]))) for i in range(len(chunk))]
 
     def _label(self, prompts):
         todo = [p for p in prompts if p not in self._replies]
@@ -354,8 +375,31 @@ class HFSubject:
             "compliance_token_text": self.tok.convert_ids_to_tokens(com[:16]),
             "fit_refused": sum(refused.values()), "fit_complied": sum(complied.values())}
 
+    @torch.no_grad()
+    def replies(self, prompts, direction=None, blocks=()):
+        """The greedy reply text for each prompt, with `blocks` ablated while it is written.
+
+        The flag methods throw the text away, which is right for them and wrong for a judge that
+        has to be validated: an agreement figure needs the replies a human can read beside the
+        verdicts. Not cached, for the same reason `refusal_flags` is not: the point is to see what
+        a different condition does to the same prompts.
+        """
+        out = []
+        for chunk in self._batches(prompts):
+            enc = self._encode(chunk)
+            with self._under_standing_edit(), A.ablating(self.layers, direction, blocks):
+                got = self.model.generate(**enc, max_new_tokens=REPLY_TOKENS, do_sample=False,
+                                          pad_token_id=self.tok.pad_token_id)
+            new = got[:, enc["input_ids"].shape[1]:]
+            out.extend(self.tok.batch_decode(new, skip_special_tokens=True))
+        return out
+
     def refusal_flags(self, prompts, direction=None, blocks=()):
-        """Whether each prompt's greedy reply is a refusal, with `blocks` ablated while it is written.
+        """Whether each prompt's greedy reply shows the behaviour, with `blocks` ablated as it is written.
+
+        "Shows the behaviour" is whatever this subject's `label` says, which is the refusal ruler
+        unless a caller passed another one. The name is refusal's because refusal is what the
+        method was written for and what every caller in the package asks it for.
 
         Not cached: the point is to see what a different condition does to the same prompts.
         """

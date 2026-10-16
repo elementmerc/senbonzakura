@@ -75,7 +75,7 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # tensor. The only instrument here that needs no model loaded, no token generated and no
     # card: it compares two files. That is also why it must never grow a safety verdict,
     # which the module docstring argues at length. Not typed any more: see
-    # `MOVED_TO_WORKBENCH`, which is why the row stays.
+    # `NO_LONGER_TYPED`, which is why the row stays.
     "diff": ("modeldiff", "main"),
     "drift": ("drift", "main"),
     "track": ("track", "main"),
@@ -121,13 +121,6 @@ DELEGATED: dict[str, tuple[str, str]] = {
     # nobody can run is the same claim made by assertion, which is what the format exists to
     # replace.
     "prereg": ("prereg", "main"),
-    # THE SIXTH THAT NEEDS NOTHING, and the only one with a user interface. It starts a page on
-    # the loopback address that draws artefacts this tool has already written: no torch, no model,
-    # no network, and nothing outside the standard library on either side of it. That is a
-    # property the install is tested for rather than told, because a chart library or a web
-    # framework arriving through a transitive dependency would quietly kill the checker's "no
-    # torch" promise one release later.
-    "workbench": ("workbench.cli", "main"),
     # THE FIFTH THAT NEEDS NOTHING, and the one that answers a question people ask before they
     # install anything: will this model fit on my machine, and how long would it take? It reads
     # the checkpoint's safetensors headers, measures the card, the memory, the disk and whether
@@ -170,8 +163,7 @@ RETIRED = {
     "harm_recognition": "compass",
 }
 
-#: Instruments that are no longer TYPED here, because the workbench reads them better than a
-#: terminal can. They stay in `DELEGATED` on purpose: that table is the registry of instruments this
+#: Instruments that are no longer TYPED here. They stay in `DELEGATED` on purpose: that table is the registry of instruments this
 #: package owns, not the list of words a user may type, and `measure`'s drift stage, the plugin
 #: contract and the journey gate all resolve through it. Removing the rows would make
 #: `measure --only drift` a KeyError, and would leave the card's edit-magnitude channel with nothing
@@ -184,7 +176,7 @@ RETIRED = {
 #: command is read as a model to edit: `senbonzakura diff` would go to the Hub for a model called
 #: "diff" and start editing weights. That exact failure is recorded against `bench` above, found
 #: twice by the 2026-09-25 panel, and dropping a word without leaving a refusal behind re-creates it.
-MOVED_TO_WORKBENCH = {
+NO_LONGER_TYPED = {
     "diff": "what changed between a checkpoint and the base it came from",
     "drift": "how far apart two models' answers are",
 }
@@ -318,10 +310,10 @@ def typed_commands() -> dict[str, tuple[str, str]]:
     `measure`'s stage runner need. This answers "which words does the command line accept", which is
     what the help page and every test that runs a command with `--help` needs.
 
-    Derived rather than typed, so moving an instrument to the workbench updates both answers at
+    Derived rather than typed, so retiring a word from the command line updates both answers at
     once. A hand-kept second list is how a word ends up advertised on a help page that refuses it.
     """
-    return {name: v for name, v in DELEGATED.items() if name not in MOVED_TO_WORKBENCH}
+    return {name: v for name, v in DELEGATED.items() if name not in NO_LONGER_TYPED}
 
 
 def dispatch(name):
@@ -447,13 +439,12 @@ def _not_a_command(word):
     # also what a typo is matched against, so leaving `kageyoshi` and `auto` out meant the near miss
     # suggester could never propose the two words `--help` presents as the way to run this: a reader
     # who typed `kageyosi` got no suggestion at all and a fetch attempt for a model of that name.
-    if word in MOVED_TO_WORKBENCH:
-        return (f"senbonzakura: `{word}` is no longer a command here. It measures "
-                f"{MOVED_TO_WORKBENCH[word]}, and that now lives in the workbench.\n"
-                f"  Run `senbonzakura workbench` and open it there.\n"
+    if word in NO_LONGER_TYPED:
+        return (f"senbonzakura: `{word}` is no longer a command. It measured "
+                f"{NO_LONGER_TYPED[word]}, and the command line tool no longer offers it.\n"
                 f"  It is refused rather than ignored because the model is a positional argument, "
                 f"so `{word}` would otherwise be read as a model to edit.")
-    known = sorted({*DELEGATED, *ALIASES, *MODES} - set(MOVED_TO_WORKBENCH))
+    known = sorted({*DELEGATED, *ALIASES, *MODES} - set(NO_LONGER_TYPED))
     if word in known:
         return None
     if word in RETIRED:
@@ -686,7 +677,7 @@ def _main(argv=None):
         if notice:
             print(notice, file=sys.stderr)
 
-    if argv and argv[0] in DELEGATED and argv[0] not in MOVED_TO_WORKBENCH:
+    if argv and argv[0] in DELEGATED and argv[0] not in NO_LONGER_TYPED:
         name = argv[0]
         run = dispatch(name)
         try:

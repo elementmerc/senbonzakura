@@ -8,7 +8,7 @@
 Bailing, Mistral and Command-R configs the module reported that it could not tell which blocks
 were dense. The config said so plainly, under a name the tuple did not list.
 
-WHY THAT IS WORSE THAN A MISSING FEATURE. The workbench drew each of those feed-forwards as "not
+WHY THAT IS WORSE THAN A MISSING FEATURE. A reader drew each of those feed-forwards as "not
 measured", and the whole point of that state is to mean "we looked and the config does not say".
 Here the config did say. An unread key turned into a claim about the model, which is the failure
 this module is built to avoid: it refuses to guess, so the honesty of every refusal depends on the

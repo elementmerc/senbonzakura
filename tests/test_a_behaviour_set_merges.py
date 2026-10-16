@@ -140,16 +140,6 @@ def test_a_result_that_disowned_its_own_measurement_may_not_join_a_set():
         behaviourset.merge(None, disowned, behaviour="refusal")
 
 
-def test_the_invalidation_field_is_spelled_as_the_reader_spells_it():
-    """One copy here and one in the viewer, enforced rather than hoped, as for the estimator table."""
-    from senbonzakura.workbench.core import artefacts
-    assert behaviourset.INVALIDATION_FIELD == artefacts.INVALIDATION_FIELD
-
-
-def test_the_card_and_the_writer_hold_one_key_pattern():
-    from senbonzakura.workbench.card import behaviours
-    assert behaviours.KEY_PATTERN is behaviourset.KEY_PATTERN
-
 
 def test_a_different_model_is_refused_rather_than_merged():
     one = behaviourset.merge(None, result(model="org/one"), behaviour="refusal")

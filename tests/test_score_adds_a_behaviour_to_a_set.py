@@ -106,32 +106,6 @@ def test_re_running_the_same_behaviour_is_idempotent(evalset, tmp_path, monkeypa
     assert out.read_bytes() == first
 
 
-def test_the_card_reads_a_set_exactly_as_it_reads_a_single_result(evalset, tmp_path, monkeypatch,
-                                                                  tiny_model, tiny_tok):
-    """The reason the merged shape was chosen: the card's own reader needed no edit at all."""
-    from senbonzakura.workbench.card import behaviours
-
-    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
-    run(evalset, tmp_path / "score.json", "--behaviour", "refusal")
-    measured = behaviours.measure_refusal(tmp_path)
-    # Two replies is below the reportable floor, so the honest answer is a named refusal rather
-    # than a rate. What matters here is that the reader got to the stamped block at all.
-    assert "below the floor" in measured.figure.reason
-    assert behaviours.read_model(tmp_path) == {"name": "org/tiny", "revision": None}
-
-
-def test_a_set_declaring_a_schema_loses_the_no_schema_caveat(evalset, tmp_path, monkeypatch,
-                                                             tiny_model, tiny_tok):
-    from senbonzakura.workbench.core import artefacts
-
-    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (tiny_model, tiny_tok))
-    run(evalset, tmp_path / "score.json", "--behaviour", "refusal")
-    read = artefacts.read_json(tmp_path, "score.json")
-    assert read.state == "present"
-    assert read.schema_declared == behaviourset.SCHEMA
-    assert artefacts.NO_SCHEMA_CAVEAT not in artefacts.schema_caveats(read)
-
-
 def test_a_result_that_cannot_join_the_set_is_kept_rather_than_thrown_away(
         evalset, tmp_path, monkeypatch, tiny_model, tiny_tok):
     """A run already paid for must not be lost because the file beside it was wrong."""

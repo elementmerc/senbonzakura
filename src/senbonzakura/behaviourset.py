@@ -7,9 +7,8 @@
 THE DEFECT THIS EXISTS BECAUSE OF
 
 `score` ends with `atomic_write(a.out)` and `json.dump(res, f)`, which replaces the whole file.
-That is correct for one behaviour and fatal for four: the first workbench release draws refusal,
-sycophancy, honesty and entity knowledge together on one card, and the card reads them out of one
-`score.json`. Behaviours do not share a generation pass, so four behaviours are four runs, and with
+That is correct for one behaviour and fatal for four: a reader that shows refusal, sycophancy,
+honesty and entity knowledge together reads them out of one `score.json`. Behaviours do not share a generation pass, so four behaviours are four runs, and with
 one writer that replaces the file, run four leaves a file holding only behaviour four. The card
 would then draw one figure and three "not measured" boxes, with nothing anywhere saying that the
 three had in fact been measured and then deleted. A measurement silently destroyed by the next one
@@ -47,8 +46,8 @@ them would produce a card that reads as one measurement of one model and is not.
 
 WHY A SELF-INVALIDATED RESULT IS REFUSED RATHER THAN MERGED
 
-`workbench/core/artefacts.py` checks `self_invalidated` at the DOCUMENT level and withholds every
-figure underneath it, deliberately: a `tamper` run that disowned its own measurement still wrote a
+A reader checks `self_invalidated` at the DOCUMENT level and withholds every figure underneath
+it, deliberately: a `tamper` run that disowned its own measurement still wrote a
 complete, tidy-looking per-metric block, and a panel reading `metrics.<name>.value` would have
 drawn it. That rule is right and it is why a self-invalidated behaviour cannot join a set. One
 run's invalidation would condemn the other three honest figures sitting beside it, and nothing in
@@ -65,7 +64,7 @@ from senbonzakura_check.measurement import METRICS_KEY
 
 from .crashsafe import atomic_write
 
-#: The field an artefact declares its own shape in, as `workbench/core/artefacts.read_json` reads it.
+#: The field an artefact declares its own shape in.
 SCHEMA_FIELD = "schema"
 
 #: What a behaviour set declares itself to be. Versioned, so a viewer built against this shape and
@@ -81,12 +80,8 @@ ROSTER_KEY = "behaviour_keys"
 #: The identity fields every behaviour in one set shares, recorded once.
 SHARED_KEY = "pinned_shared"
 
-#: THE DOCUMENT-LEVEL INVALIDATION FIELD, as `workbench/core/artefacts.INVALIDATION_FIELD` spells
-#: it. A COPY, and the copy is deliberate: the reader lives in the viewer package and the writers
-#: are in the core, so importing it here would run the dependency backwards, from the thing that
-#: produces artefacts to the thing that draws them. `tests/test_a_behaviour_set_merges.py` fails if
-#: the two spellings ever disagree, which is the same enforcement `measurement.SEPARATION_ESTIMATORS`
-#: uses for the same reason.
+#: THE DOCUMENT-LEVEL INVALIDATION FIELD. A reader withholds every figure in a document carrying
+#: it, which is why a result that set it may not join a set (see the module docstring).
 INVALIDATION_FIELD = "self_invalidated"
 
 #: A behaviour key travels in a query string and a filename, so it is held to a small safe alphabet.

@@ -195,7 +195,7 @@ SHARED_EXPERT_WIDTH_KEYS = ("shared_expert_intermediate_size", "moe_shared_exper
 #: Spellings of "the first N blocks are dense, the rest are mixture of experts". A tuple rather
 #: than one string because `first_k_dense_replace` is the spelling DeepSeek, GLM, Kimi, Bailing,
 #: Mistral and Command-R use, and with only `num_dense_layers` read, every feed-forward in those
-#: models came back unknown. That is not a harmless gap: the workbench drew each one as "not
+#: models came back unknown. That is not a harmless gap: a reader drew each one as "not
 #: measured", which reads as "we looked and could not tell" when in fact the config said so
 #: plainly under a name this tuple did not list.
 #:

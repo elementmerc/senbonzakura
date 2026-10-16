@@ -60,7 +60,7 @@ TOP_LEVEL = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 def package_modules(src):
     """Every module in the package, sub-packages included.
 
-    A non-recursive glob here made every module inside `workbench/` invisible: their public names
+    A non-recursive glob here made every module inside a sub-package invisible: their public names
     were never listed, and their calls never counted as references, so a live function they used
     read as unreached.
     """

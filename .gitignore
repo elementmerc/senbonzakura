@@ -209,5 +209,3 @@ rust/target/
 # every other safetensors file stays ignored, and any new exception needs the same justification.
 !recipes/conformance/**/*.safetensors
 
-# The workbench bundle build keeps its own locked toolchain beside the script that uses it.
-tools/workbench-ui/node_modules/

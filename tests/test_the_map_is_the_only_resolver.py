@@ -82,22 +82,6 @@ KNOWN_EXCEPTIONS = {
     ("src/senbonzakura/modeldiff.py", "WRITER_HINTS"): (
         "the diff command's list of residual writers, a second copy of WRITER_PROJECTIONS. "
         "Paid off by importing the map's table."),
-    ("src/senbonzakura/workbench/core/graph.py", "LEVELS"): (
-        "the depth the viewer's camera is at, in order: model, blocks, parts, tensors. It names "
-        "two of the map's words and resolves nothing with them; it is the order of the depth "
-        "tabs, which is a property of the interface rather than of a tensor. Nothing reads a "
-        "tensor name through it."),
-    ("src/senbonzakura/workbench/card/structure.py", "PICTURE_LEVELS"): (
-        "the card's copy of the viewer's depth ordering, for the same reason and with the same "
-        "non-answer. Paid off by importing graph.LEVELS once the card and the viewer agree on "
-        "one module to own it."),
-    ("src/senbonzakura/workbench/core/graph.py", "MIXER_TEXT"): (
-        "a mechanism key to the sentence a reader sees, which is presentation rather than "
-        "resolution: the map decides WHICH key a block has and this only decides how to say it. "
-        "THE RISK IS REAL THOUGH, and it is not the one this guard catches: if the map gains a "
-        "fifth mixer kind, this table silently has no entry for it and the viewer prints nothing "
-        "where a mechanism belongs. The fix is a check that its keys cover the map's kinds, "
-        "which is in DEFERRED.md; it is not an argument for removing the table."),
 }
 
 #: The probe's remaining tables, which the map does not own yet. Each one is the next thing to move

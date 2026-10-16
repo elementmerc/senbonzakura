@@ -37,10 +37,10 @@ and the edited model's first-token distributions on harmless prompts, which is e
 this block. `senbonzakura coherence` reports perplexity on one fixed passage of ordinary English,
 which appears nowhere on this page.
 
-> **`drift` is no longer a command you can type.** It moved into the workbench on 2026-10-15, along
+> **`drift` is no longer a command you can type.** It left the command line on 2026-10-15, along
 > with `diff`. The name is kept throughout this page on purpose: these figures were produced by that
 > command, and renaming it here would misreport how they were made. If you want to reproduce them,
-> the instrument is the same one, reached through the workbench rather than the command line.
+> the instrument is the same one, and `senbonzakura measure --only drift` still runs it.
 
 The per-seed values are listed above in full precisely so this block does not have to be taken on
 trust, and **the run's artefacts are now published**: 31 aggregate JSON files plus a README under

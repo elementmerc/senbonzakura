@@ -150,12 +150,10 @@ def test_the_other_track_branches_also_exit_zero_from_a_real_process(tmp_path, m
 
 
 #: Commands that are SERVERS when run with no arguments, so they never exit and the no-argument
-#: form cannot be used here. `workbench` serves the current directory until it is stopped. These are
-#: checked with `--help` instead, which still answers in both forms, so the agreement is tested and
-#: nothing waits for five minutes on a server that is working as designed.
-SERVES_UNTIL_STOPPED = {
-    "workbench",  # the read-only viewer; with no arguments it serves the current directory forever
-}
+#: form cannot be used here. These are checked with `--help` instead, which still answers in both
+#: forms, so the agreement is tested and nothing waits for five minutes on a server that is working
+#: as designed. None today; the mechanism stays for the next one.
+SERVES_UNTIL_STOPPED = set()
 
 
 @pytest.mark.parametrize("command", sorted(entry.typed_commands()))

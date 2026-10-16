@@ -290,55 +290,8 @@ site having been built.
 asking a renderer to embolden the regular, which smears outlines rather than selecting a drawn
 weight.
 
-**Now shipped in the wheel as well, since the workbench viewer.** This section used to end by
-saying these files were build-time inputs that reached no user through PyPI. That stopped being
-true when the viewer began setting its page in the project's own typeface: both cuts and `OFL.txt`
-are copied into `src/senbonzakura/workbench/core/static/` and are package data, so a user who
-installs from PyPI receives them.
-
-The obligation is the same one and it is met the same way, by `OFL.txt` sitting beside them in
-both places. It is recorded here because a notice that quietly stops describing the artefact is
-worse than no notice: the sentence was accurate when it was written and would have gone on being
-read as accurate.
-
-**Why vendored rather than fetched.** The viewer loads nothing from a network, by design and by
-content security policy, so a page that asked a font service for a face would show a system
-fallback on a machine with no network and fail its own promise to work offline.
-
-## Lucide icons, vendored as drawings for the workbench viewer
-
-**What it is and where it sits.** Seventeen of Lucide's icons, as the node data that draws them,
-in `src/senbonzakura/workbench/core/static/icons.js`. Each one is a handful of coordinates for a
-24 by 24 stroke drawing. No Lucide code is included: the function that turns the data into an
-element is this project's own, and is in the same file above the data.
-
-**Licence: ISC.** Copyright (c) for portions of Lucide are held by Lucide Contributors, 2022; the
-set derives from Feather (copyright (c) 2013 to 2017 Cole Bemis), also ISC. The ISC licence
-permits use and redistribution with the copyright notice and permission notice retained, which is
-what this section is.
-
-**Why the drawings and not the package.** The sister project this icon set is inherited from is a
-desktop application with a node toolchain, where `lucide-react` is one line in a manifest. The
-viewer ships inside a Python wheel, has no build step, and loads nothing from a network, so the
-choice was between vendoring the coordinates and acquiring a front-end toolchain for the sake of
-seventeen pictures. The coordinates are a few kilobytes of data and cannot execute anything.
-
-**Shipped in the wheel**, unlike the vendored font above: the viewer's static files are package
-data, so a user who installs from PyPI receives these drawings and this notice travels with them.
-
-## React, react-dom and scheduler, bundled into the workbench interface
-
-| | |
-|---|---|
-| Packages | `react` 19.3.0, `react-dom` 19.3.0, and `scheduler` 0.28.0 (a dependency of `react-dom`) |
-| Source | Locked in `tools/workbench-ui/package-lock.json` (until 2026-10-15 in `web/package-lock.json`, before the site moved to its own repository), with `resolved` and `integrity` (sha512) recorded for each. Not newly adopted and not fetched for this change, so the seven-day cooldown applies to the adoption of these versions, which was made when the lockfile was committed |
-| Licence | **MIT** for all three, read from each package's own LICENSE file |
-| Copyright | Copyright (c) Meta Platforms, Inc. and affiliates. |
-| What ships | Compiled into `src/senbonzakura/workbench/core/static/workbench-ui.js` by esbuild 0.28.1 (MIT, a build tool that is not itself shipped). The MIT notice travels with the bundle through this file |
-| Build | `tools/workbench-ui/`, which reads the three packages from `web/node_modules` and fails with a plain message when they are missing |
-
-The copyright notice and permission text of the MIT licence are in each package's LICENSE file, and
-this entry records where they are. The bundle does not strip them.
+**Not in the wheel.** These two files are inputs to the card generator in a source checkout. No
+package data names them, so a user who installs from PyPI does not receive them.
 
 ## Licence reach, and why this file stops where it does
 

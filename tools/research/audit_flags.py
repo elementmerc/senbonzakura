@@ -34,13 +34,13 @@ Exit status is 0 when clean and 1 when a flag is unkept, so it works as a gate.
 
 MODULE IDENTITY IS THE PATH UNDER THE ROOT, NOT THE LEAF NAME
 
-Two modules that share a leaf name are different modules. The package has `cli.py` at its top and
-`workbench/cli.py` beside the workbench, and an importer of `senbonzakura_check.cli` (a different
-distribution entirely) was attributed to the first-party one because all three answer to `cli.py`.
+Two modules that share a leaf name are different modules. The package has `cli.py` at its top, and an
+importer of `senbonzakura_check.cli` (a different distribution entirely) was attributed to the
+first-party one because both answer to `cli.py`.
 Keying by the leaf made every such import inherit whatever parser the other module declared, and
 the audit then reported those flags as dropped by modules that were never handed them.
 
-So a module is named by its path under the root (`workbench/cli.py`), and an import is resolved to
+So a module is named by its path under the root (`vendor/src/conversion/dbrx.py`), and an import is resolved to
 the file it names, the way Python resolves it:
 
   - a relative import counts up from the importer's own package by its level;
@@ -77,30 +77,7 @@ SELF_HANDLED_DESTS = {
 #: here and what would remove it. Keyed exactly: (importing module path, parser function, flag dest).
 #: An exception that no longer matches an inherited flag fails the gate, so the list shrinks as the
 #: code changes rather than growing as it is forgotten. A new entry is a decision to say why.
-_S1_PANEL = "workbench/slices/s1_fit/panel.py"
-_S1_NOT_RECEIVED = (
-    "the S1 fit panel calls the budget parser with its own fixed argument list, `--model` and nothing "
-    "else, to read the defaults a `senbonzakura budget` run would plan with. No operator flag reaches "
-    "the panel, so this one is not offered to anybody through it, and the panel is not a command that "
-    "could drop it. ")
-NOT_OFFERED = {
-    (_S1_PANEL, "build_budget_parser", "out"): (
-        _S1_NOT_RECEIVED + "`--out` names where the budget command writes its report, and the panel "
-        "writes nothing. Removed when the panel takes its run settings from a caller that can pass them."),
-    (_S1_PANEL, "build_budget_parser", "read_rate"): (
-        _S1_NOT_RECEIVED + "`--read-rate` overrides the disk speed the budget assumes, and the panel "
-        "plans with the default the command plans with. Removed when the panel takes its run settings "
-        "from a caller that can pass them."),
-    (_S1_PANEL, "build_budget_parser", "no_pinned_probe"): (
-        _S1_NOT_RECEIVED + "`--no-pinned-probe` skips the page-locked memory probe, and the panel never "
-        "runs that probe, which its machine section records as not measured. Removed when the panel "
-        "takes its run settings from a caller that can pass them."),
-    (_S1_PANEL, "build_budget_parser", "model"): (
-        "the S1 fit panel supplies `--model` itself, from the checkpoint it is budgeting, so the value is "
-        "passed rather than offered, and the panel uses the path it already holds instead of reading it "
-        "back from the namespace. Removed when the panel reads its model from the parsed namespace, or "
-        "stops parsing with the budget parser at all."),
-}
+NOT_OFFERED = {}
 
 # The names an argparse Namespace travels under in this codebase. `own` is the one that matters:
 # several commands separate their own flags from the shared loader's `args`, and a checker that

@@ -551,7 +551,7 @@ class TestResultsMarkdown:
 class TestHtmlIsReadRatherThanCleared:
     """HTML arrived unread, and the fix had to be a reading rather than an exemption.
 
-    The workbench's `index.html` and `motion.html` were refused on 2026-10-14 for having no
+    Two HTML pages were refused on 2026-10-14 for having no
     recorded reading, which was correct: this gate is deny-first. The obvious repair was one more
     entry in `IGNORED_KINDS`, which already holds `.js`, `.css` and `.svg`. That was refused,
     because an entry there clears every HTML file in the repository forever and HTML carries a

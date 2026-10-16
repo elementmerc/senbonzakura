@@ -348,14 +348,6 @@ KNOWN_TEXT_FILES = frozenset({
     # It is legal prose fetched verbatim from the font project's own repository, and a corpus
     # substituted into it would have to survive being read by whoever next checks the licence.
     "assets/brand/fonts/OFL.txt",
-    # THE WORKBENCH'S OWN COPY of the same licence, added 2026-10-14 with the workbench merge. The
-    # viewer is served over HTTP from the package directory and cannot reach `assets/` at runtime,
-    # so the copy is an obligation of the same font redistribution rather than a convenience.
-    #
-    # Named by exact path for the third time and the same reason. The one-home gate holds the two
-    # byte-identical, so a corpus substituted into either would have to survive both that gate and
-    # whoever next reads the licence.
-    "src/senbonzakura/workbench/core/static/OFL.txt",
 })
 
 
@@ -557,9 +549,8 @@ def markdown_findings(path: Path, text: str) -> list[str]:
     return found
 
 
-#: HTML, which arrived unread. Added 2026-10-14, when the workbench's `index.html` and
-#: `motion.html` were refused for having no recorded reading and the merge carrying them was
-#: backed out rather than the gate widened.
+#: HTML, which arrived unread. Added 2026-10-14, when two HTML pages were refused for having no
+#: recorded reading and the merge carrying them was backed out rather than the gate widened.
 #:
 #: WHY NOT `IGNORED_KINDS`. That set already holds `.js`, `.css` and `.svg`, so the obvious move
 #: was one more entry. It was refused: an entry there clears every HTML file in the repository

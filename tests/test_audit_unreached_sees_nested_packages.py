@@ -7,8 +7,8 @@
 WHAT WAS WRONG. Both halves of the audit read the package with a non-recursive glob, so a module
 inside a sub-package was invisible in two ways. A public name defined there was never listed, which
 hides a dead function. A public name used only there was counted as referenced nowhere, which turns
-a live function into a false positive. The workbench lives in `senbonzakura/workbench/`, so every
-public name it calls from the top level read as unreached.
+a live function into a false positive. Every public name a sub-package called from the top level
+read as unreached.
 """
 import pathlib
 import sys

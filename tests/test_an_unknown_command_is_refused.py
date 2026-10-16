@@ -22,7 +22,7 @@ local checkpoint.
 """
 import pytest
 
-from senbonzakura.entry import ALIASES, DELEGATED, MOVED_TO_WORKBENCH, RETIRED, _not_a_command
+from senbonzakura.entry import ALIASES, DELEGATED, NO_LONGER_TYPED, RETIRED, _not_a_command
 
 
 @pytest.mark.parametrize("word", sorted(RETIRED))
@@ -56,13 +56,13 @@ def test_a_near_miss_for_a_real_command_is_refused(typo, meant):
         "that name and a refusal with no escape is a worse defect than the one being fixed")
 
 
-@pytest.mark.parametrize("word", sorted({*DELEGATED, *ALIASES} - set(MOVED_TO_WORKBENCH)))
+@pytest.mark.parametrize("word", sorted({*DELEGATED, *ALIASES} - set(NO_LONGER_TYPED)))
 def test_every_real_command_still_runs(word):
     assert _not_a_command(word) is None
 
 
-@pytest.mark.parametrize("word", sorted(MOVED_TO_WORKBENCH))
-def test_a_command_that_moved_to_the_workbench_is_refused_by_name(word):
+@pytest.mark.parametrize("word", sorted(NO_LONGER_TYPED))
+def test_a_command_no_longer_typed_is_refused_by_name(word):
     """The same property the renamed words have, and it matters more here.
 
     A moved word stays in `DELEGATED`, because that table is the instrument registry rather than
@@ -72,19 +72,19 @@ def test_a_command_that_moved_to_the_workbench_is_refused_by_name(word):
     """
     message = _not_a_command(word)
     assert message is not None, f"{word} was a command here once and must not read as a model"
-    assert "workbench" in message, "the refusal has to say where the instrument went"
+    assert "no longer offers" in message, "the refusal has to say the word is gone, not mistyped"
     assert "read as a model" in message, "and why it refuses rather than ignores"
 
 
-@pytest.mark.parametrize("word", sorted(MOVED_TO_WORKBENCH))
+@pytest.mark.parametrize("word", sorted(NO_LONGER_TYPED))
 def test_a_moved_command_is_never_dispatched(word, capsys):
     """Exit 2, and no model loaded. The refusal is only worth having if `main` honours it."""
     from senbonzakura import entry
     assert entry.main([word, "--help"]) == 2
-    assert "workbench" in capsys.readouterr().err
+    assert "no longer a command" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("word", sorted(MOVED_TO_WORKBENCH))
+@pytest.mark.parametrize("word", sorted(NO_LONGER_TYPED))
 def test_a_moved_command_is_not_suggested_as_a_near_miss(word):
     """A typo one letter off a moved word must not be told to run the moved word.
 

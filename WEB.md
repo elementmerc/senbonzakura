@@ -16,6 +16,4 @@ moving it after session validation landed would have been a migration with a lea
 **Its history came with it.** The 23 commits that touched `web/` are the real history in the new
 repository, not a squashed import, so `git log` and `git blame` still answer there.
 
-**Nothing here depends on it any more.** The workbench bundle build used to take esbuild, react
-and react-dom from `web/node_modules`; it now pins them itself in `tools/workbench-ui/`, and the
-rebuilt bundle hashes identically to prove the move changed nothing.
+**Nothing here depends on it any more.**

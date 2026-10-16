@@ -727,8 +727,8 @@ def test_every_subcommand_is_listed_in_the_help():
     matched THERE rather than anywhere in the help text.
     """
     lines = cli.build_parser().format_help().splitlines()
-    # `typed_commands()`, not `DELEGATED`: the registry also holds the instruments that moved to
-    # the workbench, and those are deliberately NOT listed in the epilog because they are no
+    # `typed_commands()`, not `DELEGATED`: the registry also holds instruments that left the
+    # command line, and those are deliberately NOT listed in the epilog because they are no
     # longer words anybody can type. Their own test asserts they refuse by name instead.
     from senbonzakura.entry import typed_commands
     for name in ("abliterate", "kageyoshi", *typed_commands()):

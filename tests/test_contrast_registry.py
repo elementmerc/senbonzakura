@@ -141,3 +141,21 @@ def test_no_contrast_prompt_carries_a_subject_from_outside_the_declared_lists():
             continue
         for pair in contrast.build():
             assert pair.group in contrasts.SUBJECTS, key
+
+
+def test_every_invented_subject_has_a_real_twin_with_its_article_and_its_noun():
+    """The twins are what keep the entity-knowledge arms matched in topic and in length."""
+    assert len(contrasts.REAL_TWINS) == len(contrasts.INVENTED)
+    assert len(set(contrasts.REAL_TWINS)) == len(contrasts.REAL_TWINS)
+    for invented, real in zip(contrasts.INVENTED, contrasts.REAL_TWINS, strict=True):
+        assert invented.split()[0] == real.split()[0], (invented, real)
+        assert invented.split()[-1] == real.split()[-1], (invented, real)
+        assert invented != real
+
+
+def test_the_entity_contrast_pairs_each_invented_subject_with_its_own_twin():
+    pairs = contrasts.REGISTRY["entity-knowledge"].build()
+    groups = {p.group for p in pairs}
+    assert "the zephrine coil | the solenoid coil" in groups
+    assert all(" | " in g for g in groups)
+    assert len(groups) == len(contrasts.INVENTED)

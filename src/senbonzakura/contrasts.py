@@ -206,6 +206,51 @@ INVENTED = (
     "the oakvint trunnion", "a candermere bobbin",
 )
 
+#: The real twin of each invented subject, in the same order: same article, same final noun, and a
+#: real part where the invented one has a made-up word. So the two arms differ in whether the thing
+#: exists and in nothing else, topic included.
+#:
+#: WHY TWINS AND NOT THE SHARED SUBJECT POOL. The first version paired these invented machine parts
+#: with the household subjects every other contrast uses ("kettles"), and the 2026-10-15 sweep found
+#: prompt length alone told the arms apart at an AUC of 0.85 to 0.88: a made-up word splits into more
+#: tokens than a common one, and the topics differed too. Each twin below was chosen from a pool of
+#: real candidates as the one whose prompt is closest in token count on the SmolLM2 and Qwen2.5
+#: tokenizers. Measured 2026-10-16 over every template: length-only AUC 0.566 and 0.591, against 0.870
+#: and 0.878 before. Not 0.5, because the invented words still run slightly long, and the sweep's own
+#: length control reports what is left.
+REAL_TWINS = (
+    "the solenoid coil",
+    "a corbel bracket",
+    "the pressure relief valve",
+    "a quick-release clamp",
+    "the tyre pressure gauge",
+    "a bobbin spindle",
+    "the concealed cabinet hinge",
+    "a window sash latch",
+    "the engine connecting rod",
+    "a gearbox output cog",
+    "the alternator pulley",
+    "a door hinge packing shim",
+    "the MacPherson strut",
+    "a fender washer",
+    "the split cotter pin",
+    "a drill chuck sleeve",
+    "the scissor truss",
+    "a walking stick ferrule",
+    "the flanged shaft collar",
+    "a cylinder head gasket",
+    "the bicycle freewheel ratchet",
+    "a suspension control arm bushing",
+    "the eyelet grommet",
+    "a slip-on flange",
+    "the fluted beech dowel",
+    "a tapered roller bearing",
+    "the camshaft sprocket",
+    "a stuffing box gland",
+    "the gimbal trunnion",
+    "a sewing machine bobbin",
+)
+
 #: True statements about ordinary things, each paired with a false twin that differs in as few
 #: words as possible, so the two arms are matched in length and in topic by construction.
 FACTS = (
@@ -343,7 +388,7 @@ def _entity_knowledge(phrasing=0, subjects=None):
             f"entity knowledge has one phrasing and {phrasing} is not it. There is no instruction "
             f"in either arm, so there is nothing to rephrase and no transfer test to run, which "
             f"is the whole methodological advantage of this contrast.")
-    pool = tuple(SUBJECTS if subjects is None else subjects)
+    pool = REAL_TWINS if subjects is None else tuple(subjects)
     return tuple(
         Pair(group=f"{invented} | {real}",
              a=template.format(subject=invented),

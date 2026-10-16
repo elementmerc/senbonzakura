@@ -331,7 +331,7 @@ data, so a user who installs from PyPI receives these drawings and this notice t
 | | |
 |---|---|
 | Packages | `react` 19.3.0, `react-dom` 19.3.0, and `scheduler` 0.28.0 (a dependency of `react-dom`) |
-| Source | Already in this repository's `web/package-lock.json`, with `resolved` and `integrity` (sha512) recorded for each. Not newly adopted and not fetched for this change, so the seven-day cooldown applies to the adoption of these versions, which was made when the lockfile was committed |
+| Source | Locked in `tools/workbench-ui/package-lock.json` (until 2026-10-15 in `web/package-lock.json`, before the site moved to its own repository), with `resolved` and `integrity` (sha512) recorded for each. Not newly adopted and not fetched for this change, so the seven-day cooldown applies to the adoption of these versions, which was made when the lockfile was committed |
 | Licence | **MIT** for all three, read from each package's own LICENSE file |
 | Copyright | Copyright (c) Meta Platforms, Inc. and affiliates. |
 | What ships | Compiled into `src/senbonzakura/workbench/core/static/workbench-ui.js` by esbuild 0.28.1 (MIT, a build tool that is not itself shipped). The MIT notice travels with the bundle through this file |

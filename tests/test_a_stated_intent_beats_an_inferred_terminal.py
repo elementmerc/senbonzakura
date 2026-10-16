@@ -31,7 +31,7 @@ That file imports `tests.conftest`, which imports torch at module scope, so it d
 the machine this was written on and these tests could not have been run there. Nothing here
 imports conftest, which is what made it possible to drive them rather than reason about them. The
 natural home is still `test_interactive.py`, and moving them there is on the torch-run handover
-list in `private/plans/2026-10-01-deferred-triage.md`.
+list in `private/plans/archive/2026-10-01-deferred-triage.md`.
 """
 from __future__ import annotations
 

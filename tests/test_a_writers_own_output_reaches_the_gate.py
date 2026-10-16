@@ -39,7 +39,7 @@ WHY ONLY `capability`
 It is the one writer of the five that imports without torch, so it is the one whose real stamping
 call a CI job with no deep-learning stack can make. `score`, `margin`, `coherence` and `drift`
 import torch at module scope. Their coverage stays structural and the gap is named in
-`private/plans/2026-10-01-deferred-triage.md` rather than papered over here. One real writer
+`private/plans/archive/2026-10-01-deferred-triage.md` rather than papered over here. One real writer
 reaching the reader is not complete; it is the difference between none and one, and it is the
 seam that was untested.
 """

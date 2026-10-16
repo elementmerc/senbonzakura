@@ -467,6 +467,10 @@ def prose_degradation(texts, produced_and_budgets=None):
 #: than a guarantee of power: n=30 is still weak for comparing two rates, and the interval beside
 #: the rate is what tells a reader how weak. Anything under it cannot support a claim in any
 #: framing, so the honest output is a refusal rather than a figure with a caveat.
+#:
+#: STATED TWICE, here and in `floor.py`, and that is deliberate: this module imports nothing (see
+#: `test_metrics_still_imports_nothing`), and `floor.py` exists so the number can be read without
+#: loading the borrowed code above. A test holds the two equal.
 MIN_REPORTABLE_N = 30
 
 

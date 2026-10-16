@@ -89,11 +89,16 @@ SHARED_KEY = "pinned_shared"
 #: uses for the same reason.
 INVALIDATION_FIELD = "self_invalidated"
 
-#: A behaviour key travels in a query string, a picker and a filename, so it is held to a small safe
-#: alphabet. ONE SOURCE OF TRUTH: `workbench/card/behaviours.KEY_PATTERN` imports this rather than
-#: spelling its own, because a key the card accepts and the writer refuses is a behaviour that can be
-#: registered and never measured.
+#: A behaviour key travels in a query string and a filename, so it is held to a small safe alphabet.
+#: ONE SOURCE OF TRUTH: anything that reads a behaviour set imports this rather than spelling its
+#: own, because a key one side accepts and the writer refuses is a behaviour that can be named and
+#: never measured.
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+#: The behaviours a result may be stamped under with `score --behaviour`. A key outside this list
+#: would cost a full run and be read by nothing, so `score` refuses it before the model loads.
+#: Anything that reads behaviour sets must recognise exactly these keys.
+STAMPABLE_KEYS = ("refusal", "edit-magnitude")
 
 #: The pinned fields that legitimately take a different value for each behaviour in a set.
 MAY_DIFFER = ("input_digest", "partition", "seeds")

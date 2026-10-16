@@ -333,21 +333,17 @@ def check_behaviour(a):
     """
     if a.behaviour is None:
         return
-    from .behaviourset import BehaviourSetError, check_key
-    from .workbench.card.behaviours import registered
+    from .behaviourset import STAMPABLE_KEYS, BehaviourSetError, check_key
 
     try:
         check_key(a.behaviour)
     except BehaviourSetError as e:
         raise SystemExit(f"--behaviour {a.behaviour!r}: {e}") from e
-    known = [b.key for b in registered()]
-    if a.behaviour not in known:
+    if a.behaviour not in STAMPABLE_KEYS:
         raise SystemExit(
-            f"--behaviour {a.behaviour!r} is not a behaviour a card can draw, and the card draws "
-            f"what is registered: {', '.join(sorted(known))}. A key nothing is registered under "
-            f"would cost a run and never appear on a card. Register it in "
-            f"`workbench/card/behaviours.py` first, or drop the flag to write this result on its "
-            f"own.")
+            f"--behaviour {a.behaviour!r} is not a behaviour a result can be stamped under. The "
+            f"known ones are {', '.join(sorted(STAMPABLE_KEYS))}. A key nothing reads would cost "
+            f"a run and be read by nothing, so drop the flag to write this result on its own.")
     if a.length_sweep:
         raise SystemExit(
             "--behaviour cannot be used with --length-sweep. A sweep reports a curve of refusal "

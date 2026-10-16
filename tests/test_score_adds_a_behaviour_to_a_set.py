@@ -47,7 +47,7 @@ def test_a_key_shaped_wrong_is_refused_before_the_model_loads(evalset, tmp_path,
 
 
 def test_an_unregistered_key_is_refused_before_the_model_loads(evalset, tmp_path, never_loads):
-    with pytest.raises(SystemExit, match="not a behaviour a card can draw"):
+    with pytest.raises(SystemExit, match="not a behaviour a result can be stamped under"):
         run(evalset, tmp_path / "s.json", "--behaviour", "telepathy")
 
 

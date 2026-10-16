@@ -33,6 +33,53 @@ import pytest
 from senbonzakura import envsetup
 
 
+@pytest.fixture(autouse=True)
+def _no_driver_outside_path(monkeypatch):
+    # These tests fake the driver by faking `which`. A real nvidia-smi at a known install place
+    # (every WSL machine has one) would answer behind the fake, so the places are emptied here and
+    # tested on their own below.
+    monkeypatch.setattr(envsetup, "NVIDIA_SMI_PLACES", ())
+
+
+def test_nvidia_smi_off_path_is_found_at_a_known_place(monkeypatch, tmp_path):
+    smi = tmp_path / "nvidia-smi"
+    smi.write_text("")
+    smi.chmod(0o755)
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "NVIDIA_SMI_PLACES", (str(tmp_path / "absent"), str(smi)))
+    assert envsetup.find_nvidia_smi() == str(smi)
+
+
+def test_path_wins_over_a_known_place_and_nothing_found_is_none(monkeypatch, tmp_path):
+    smi = tmp_path / "nvidia-smi"
+    smi.write_text("")
+    smi.chmod(0o755)
+    monkeypatch.setattr(envsetup, "NVIDIA_SMI_PLACES", (str(smi),))
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: "/on/path/nvidia-smi")
+    assert envsetup.find_nvidia_smi() == "/on/path/nvidia-smi"
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "NVIDIA_SMI_PLACES", (r"%NO_SUCH_VAR_SENBON%\nvidia-smi.exe",
+                                                        str(tmp_path / "absent")))
+    assert envsetup.find_nvidia_smi() is None
+
+
+def test_a_found_off_path_smi_is_the_one_asked(monkeypatch, tmp_path):
+    smi = tmp_path / "nvidia-smi"
+    smi.write_text("")
+    smi.chmod(0o755)
+    monkeypatch.setattr(envsetup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(envsetup, "NVIDIA_SMI_PLACES", (str(smi),))
+    asked = []
+
+    def fake_run(cmd, **kw):
+        asked.append(cmd[0])
+        return subprocess.CompletedProcess(cmd, 0, stdout="GPU 0: NVIDIA GeForce RTX 3060\n")
+
+    monkeypatch.setattr(envsetup.subprocess, "run", fake_run)
+    assert envsetup.nvidia_gpus() == ["GPU 0: NVIDIA GeForce RTX 3060"]
+    assert asked == [str(smi)]
+
+
 def verdict(**kw):
     return envsetup.plan(**kw)[0]
 

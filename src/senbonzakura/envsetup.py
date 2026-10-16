@@ -40,6 +40,7 @@ make it blind to the only fault it was written for. The driver is asked instead,
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import shutil
@@ -150,6 +151,30 @@ def check_channel(channel, table=None):
 _LOCAL = re.compile(r"\+(?P<tag>[a-z][a-z0-9.]*)$")
 
 
+#: Where the driver installs `nvidia-smi` when it is not on PATH. Under WSL it lives in
+#: `/usr/lib/wsl/lib`, which a login shell adds to PATH and an ssh session or an app started from a
+#: menu does not: measured on a WSL laptop 2026-10-16, where `setup --json` said "no NVIDIA GPU" on a
+#: machine with an RTX 3060 and the desktop app would have installed the CPU build without a word.
+NVIDIA_SMI_PLACES = (
+    "/usr/lib/wsl/lib/nvidia-smi",
+    "/usr/bin/nvidia-smi",
+    r"%SystemRoot%\System32\nvidia-smi.exe",
+    r"%ProgramFiles%\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+)
+
+
+def find_nvidia_smi():
+    """The `nvidia-smi` to ask: the one on PATH, else the first known install place, else None."""
+    exe = shutil.which("nvidia-smi")
+    if exe:
+        return exe
+    for place in NVIDIA_SMI_PLACES:
+        path = os.path.expandvars(place)
+        if "%" not in path and os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
 def nvidia_gpus():
     """GPU names from the DRIVER, or None when the question could not be asked.
 
@@ -157,7 +182,7 @@ def nvidia_gpus():
     one whose driver is not installed, and those need different advice. Saying "none found" for
     both is the kind of confident wrong answer this project keeps having to withdraw.
     """
-    exe = shutil.which("nvidia-smi")
+    exe = find_nvidia_smi()
     if not exe:
         return None
     try:
@@ -175,7 +200,7 @@ def driver_cuda_version():
     This is NOT the CUDA toolkit version installed on the machine, and it is not what torch was
     built against. It is the ceiling: a driver reporting 13.0 runs any build up to 13.0.
     """
-    exe = shutil.which("nvidia-smi")
+    exe = find_nvidia_smi()
     if not exe:
         return None
     try:
@@ -199,7 +224,7 @@ def compute_capability():
     The oldest, because a build has to carry kernels for every card it will be asked to run on,
     and the weakest one decides.
     """
-    exe = shutil.which("nvidia-smi")
+    exe = find_nvidia_smi()
     if not exe:
         return None
     try:

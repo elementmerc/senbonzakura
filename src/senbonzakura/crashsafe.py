@@ -158,6 +158,11 @@ def free_bytes_for(path):
 #: a line about it is noise in a log a person is reading for the quantisation.
 HASH_IS_WORTH_MENTIONING_S = 5
 
+#: How often a long hash says how far it has got. A 100 TB output hashes for about 19 hours at the measured
+#: rate, and a silent log for that long looks like a hang. Thirty seconds keeps every silence short enough
+#: to read as progress.
+HASH_HEARTBEAT_S = 30
+
 
 def digest_for_the_record(path, *, what, log=print, chunk=1 << 20):
     """The sha256 of an artefact we produced, or None with a loud warning.
@@ -186,11 +191,20 @@ def digest_for_the_record(path, *, what, log=print, chunk=1 << 20):
     for this; a missing hash is a degradation, and it degrades loudly rather than silently.
     """
     started = time.monotonic()
+    last_beat = started
     digest = hashlib.sha256()
     try:
         with open(path, "rb") as fh:
+            total = os.fstat(fh.fileno()).st_size
+            done = 0
             for block in iter(lambda: fh.read(chunk), b""):
                 digest.update(block)
+                done += len(block)
+                now = time.monotonic()
+                if now - last_beat >= HASH_HEARTBEAT_S:
+                    last_beat = now
+                    share = f"{min(100, 100 * done // max(total, 1))}% of "
+                    log(f"  still hashing the {what}: {share}{done:,} bytes in {now - started:.0f}s")
     except OSError as e:
         log(f"  WARNING: could not hash the {what} ({e}). Its sha256 is unrecorded.")
         return None

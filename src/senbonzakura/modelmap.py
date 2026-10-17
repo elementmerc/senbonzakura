@@ -129,6 +129,21 @@ PREDICTION_HEAD_OWN_STACK = "mtp"
 #: a consolidation would have been least likely to read.
 EXTRA_BLOCK_KEYS = ("num_nextn_predict_layers", "mtp_num_hidden_layers")
 
+#: The most blocks a config may declare. The deepest decoder this tool has met is well under a
+#: hundred blocks. A reader that draws three nodes per block needs 12,288 nodes at this bound, so every
+#: depth accepted here can still be drawn at block level by a reader with a node cap of 20,000. Without
+#: the bound a config declaring a billion layers makes the per-block lists in this module exhaust
+#: memory before any caller sees a count.
+MAX_DECLARED_BLOCKS = 4096
+
+
+def _too_deep(count, key):
+    """The plain reason a declared block count is refused, or None when it is within the bound."""
+    if count <= MAX_DECLARED_BLOCKS:
+        return None
+    return (f"{key} declares {count:,} blocks and this tool reads at most {MAX_DECLARED_BLOCKS:,}, "
+            f"which is far above any published decoder. No per-block list was built.")
+
 #: Where a multi-tower checkpoint keeps the decoder's own config. Gemma-4-31B carries `text_config`
 #: beside `vision_config` and `audio_config`; Qwen3.6-35B carries `text_config` beside
 #: `vision_config`. Reading `cfg["num_hidden_layers"]` on either returns nothing, which is not the
@@ -628,6 +643,10 @@ def block_count(cfg):
     if declared is None:
         mech = mechanisms(cfg)
         if mech.kinds.known:
+            too_deep = _too_deep(len(mech.kinds.value), mech.kinds.source)
+            if too_deep:
+                return BlockCount(declared=Resolved(why=too_deep), extra=extra_res,
+                                  total=Resolved(why=too_deep))
             return BlockCount(
                 declared=Resolved(why=f"no key of {list(LAYER_COUNT_KEYS)} is present in this "
                                       f"config, so it never states a stack depth"),
@@ -640,11 +659,15 @@ def block_count(cfg):
                f"decoder config.")
         return BlockCount(declared=Resolved(why=why), extra=extra_res, total=Resolved(why=why))
     declared = int(declared)
+    total = declared + int(extra or 0)
+    too_deep = _too_deep(total, key)
+    if too_deep:
+        return BlockCount(declared=Resolved(why=too_deep), extra=extra_res,
+                          total=Resolved(why=too_deep))
     return BlockCount(
         declared=Resolved(value=declared, source=key),
         extra=extra_res,
-        total=Resolved(value=declared + int(extra or 0),
-                       source=key if not extra else f"{key} + {extra_key}"))
+        total=Resolved(value=total, source=key if not extra else f"{key} + {extra_key}"))
 
 
 def attention_residual_group(cfg):
@@ -703,8 +726,11 @@ def mechanisms(cfg):
         if isinstance(nested, dict) and isinstance(nested.get(inner), list):
             # Same inversion as Bamba's, one level down and one-based. See the constant.
             marked, base, source = nested[inner], NESTED_INDEX_BASE, f"{outer}.{inner}"
-    depth, _ = _first(scope, LAYER_COUNT_KEYS)
+    depth, depth_key = _first(scope, LAYER_COUNT_KEYS)
     if isinstance(marked, list) and depth is not None:
+        too_deep = _too_deep(int(depth), depth_key)
+        if too_deep:
+            return Mechanisms(kinds=Resolved(source=source, why=too_deep))
         # THE INVERTED SPELLING. The key names the attention blocks and says nothing about the
         # rest, so taking the list at face value as "the block kinds" reports a 32-block Bamba as
         # a 3-block model. Every unmarked index is the family's other mechanism, and this module
@@ -830,7 +856,10 @@ def experts(cfg):
 
     prefix, prefix_key = _first(scope, DENSE_PREFIX_KEYS)
     listed = scope.get(DENSE_INDEX_KEY) if isinstance(scope, dict) else None
-    if prefix is not None:
+    too_deep = _too_deep(int(prefix), prefix_key) if prefix is not None else None
+    if too_deep:
+        dense = Resolved(why=too_deep)
+    elif prefix is not None:
         # The key that was actually found, not the first of the tuple. Every field in this record
         # carries the key it came from, and a reader checking a record against the config file has
         # to find the same name in both.

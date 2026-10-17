@@ -583,3 +583,27 @@ class TestVersionSuffix:
         monkeypatch.setattr("importlib.metadata.version", lambda name: "1.2.3")
         assert crashsafe._installed("pretend_pkg3") == "1.2.3"
         assert "pretend_pkg3" not in _sys.modules
+
+
+def test_a_long_hash_says_how_far_it_has_got(tmp_path, monkeypatch):
+    """A hash of a very large output is silent for hours without this, which looks like a hang."""
+    import hashlib
+
+    data = b"x" * 40
+    path = tmp_path / "big.gguf"
+    path.write_bytes(data)
+    monkeypatch.setattr(crashsafe, "HASH_HEARTBEAT_S", 0)
+    said = []
+    digest = crashsafe.digest_for_the_record(path, what="GGUF", log=said.append, chunk=10)
+    assert digest == hashlib.sha256(data).hexdigest()
+    beats = [m for m in said if "still hashing the GGUF" in m]
+    assert len(beats) == 4
+    assert "100% of 40 bytes" in beats[-1]
+
+
+def test_a_quiet_hash_says_nothing_about_progress(tmp_path):
+    path = tmp_path / "small.gguf"
+    path.write_bytes(b"abc")
+    said = []
+    crashsafe.digest_for_the_record(path, what="GGUF", log=said.append)
+    assert not [m for m in said if "still hashing" in m]

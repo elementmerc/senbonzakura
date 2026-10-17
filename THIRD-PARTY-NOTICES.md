@@ -28,7 +28,7 @@ upstream's.
 - **Modified by:** Daniel Iwugo.
 - **First included:** 2026-07-14, in the initial package.
 - **Relicensed to AGPL-3.0-or-later for this inclusion:** 2026-07-17.
-- **Most recent modification to the file carrying it:** 2026-10-07 (this is
+- **Most recent modification to the file carrying it:** 2026-10-17 (this is
   the date the README's credit section must agree with; the two drifted by six
   weeks once, which is the one field section 5(a) is actually about). The date
   moves whenever `metrics.py` is touched, whatever the change was about,

@@ -1,46 +1,29 @@
 # Tuned presets, and the pack that supplies them
 
-A run searches for its own settings. It tries layer bands, direction counts and ablation
-strengths, scores each trial, and keeps the best one. That search is why a run takes hours on a
-card, and it is also why the result is trustworthy: the numbers came from measuring this model
-rather than from a table somebody wrote down.
+A run searches for its own settings. It tries layer bands, direction counts and ablation strengths, scores each trial, and keeps the best. That search is why a run takes hours on a card, and why the result can be trusted: it came from measuring this model.
 
-A **preset** is the settings a previous measured run already found for one model, written down so
-the next run can start from them. There is nothing else to it. A preset is a shortcut past the
-search, not a different method and not a better one.
+A **preset** is the settings a previous measured run found for one model, written down so the next run can start from them. A preset is a shortcut past the search. It is not a different method.
 
 ## What the open tool does
 
-Everything. The search is in the package you installed, every instrument that scores it is in the
-package you installed, and no part of either is held back. If no preset is installed, a run looks
-for its own settings, which is the path every published number from this project was measured on.
-
-That is worth saying plainly because the usual shape of this arrangement is the opposite: a free
-tier that exists to be inadequate. Measuring is the whole product here, and a measurement nobody
-can read is worth nothing, so the measuring code stays open. The settings a search arrives at are
-a different kind of thing: they are the output of hours of card time, they decide nothing about
-how a result is measured, and a published figure stays checkable whether or not you know which
-layer band produced it.
+The open tool runs the full search, and every instrument that scores it is in the package. If no preset is installed, a run finds its own settings. Every published number from this project was measured that way.
 
 ## How a preset reaches the tool
 
-A pack is an ordinary Python distribution that registers itself under the entry point group
-`senbonzakura.presets`:
+A pack is an ordinary Python distribution that registers itself under the entry point group `senbonzakura.presets`:
 
 ```toml
 [project.entry-points."senbonzakura.presets"]
 my-pack = "my_pack"
 ```
 
-The tool then finds it by name rather than by path, which matters because the same pack can be a
-source checkout on one machine and an installed wheel on another. A fixed path would work in one
-of those cases and fail in the other.
+The tool finds a pack by name, not by path. The same pack can be a source checkout on one machine and an installed wheel on another.
 
 A pack exposes two callables:
 
 | Callable | What it returns |
 |---|---|
-| `catalogue()` | The model identifiers it holds, and nothing heavier. Listing what a pack covers never loads a preset |
+| `catalogue()` | The model identifiers it holds, and nothing heavier. Listing never loads a preset |
 | `preset(model)` | One record for that identifier, or nothing |
 
 A record is a mapping:
@@ -55,14 +38,9 @@ A record is a mapping:
 }
 ```
 
-Every key in `settings` has to be an argument this version of the tool actually reads, and a key
-it does not read is refused rather than ignored. A setting nobody applies is the worst outcome
-available here: the person who supplied it believes it took effect, and nothing says otherwise.
-The same reasoning covers the version keys. A layer band measured against a different search is
-not a setting for this one, so a mismatch is a refusal that names both versions.
+Every key in `settings` must be an argument this version of the tool reads. A key it does not read is refused, not ignored. A setting nobody applies is the worst outcome: the person who supplied it believes it took effect, and nothing says otherwise. The version keys work the same way. A layer band measured against a different search is not a setting for this one, so a mismatch is refused, and the refusal names both versions.
 
-`provenance` is required. A tuned number with no account of where it came from cannot be
-re-derived and nobody can tell whether it still applies.
+`provenance` is required. A tuned number with no account of where it came from cannot be re-derived, and nobody can tell whether it still applies.
 
 ## Reading it from Python
 
@@ -74,25 +52,16 @@ presets.find("owner/model")    # the preset, or None if nothing here holds one
 presets.require("owner/model") # the preset, or a refusal that explains the absence
 ```
 
-`find` returning `None` is an answer and not a fault. `require` is for the caller that wants a
-message instead, and the message says what was missing, what it would have supplied, and that the
-search still runs without it.
+`find` returning `None` is an answer, not a fault. `require` is for a caller that wants a message. The message says what was missing, what it would have supplied, and that the search still runs without it.
 
 ## What this is not
 
-It is not a licence check, and it cannot be. Python resolves imports while the program is already
-running, so anything one module can check at that point another module can satisfy. The resolver
-is a lookup that finds nothing and says so. Nothing about it is a lock.
+It is not a licence check, and it cannot be one. Python resolves imports while the program runs, so anything one module can check, another can satisfy. The resolver is a lookup that finds nothing and says so. It is not a lock.
 
 ## What is published today
 
-No pack is published. The resolver and the contract above are in the package so that a pack can
-exist without changing the open tool, and the open tool behaves exactly as it does with no pack
-installed, because that is the only state anybody is in.
+No pack is published. The resolver and the contract above are in the package so a pack can exist without changing the open tool. With no pack installed, the tool behaves exactly as it does with one.
 
-::: tip This page is about settings, not about corpora
-The evaluation track and the research prompt corpora that ship inside the wheel are a separate
-matter with their own licences and their own page. See
-[corpus provenance](/corpus-provenance) and `THIRD-PARTY-CORPORA.md` in the repository for what
-the distribution carries and under what terms.
+::: tip This page is about settings, not corpora
+The evaluation track and the research prompt corpora in the wheel have their own licences and their own page. See [corpus provenance](/corpus-provenance), and `THIRD-PARTY-CORPORA.md` in the repository, for what the distribution carries and under what terms.
 :::

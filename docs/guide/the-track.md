@@ -1,25 +1,15 @@
 # The track
 
-A **track** is the pile of prompts the tool learns from and is judged on. Harmful ones, harmless
-ones, and a split that decides which of them any published number is allowed to come from.
+A **track** is the set of prompts the tool learns from and is judged on: harmful prompts, harmless prompts, and a split that
+decides which rows a published number may come from.
 
-It sounds like plumbing. It is the single easiest place to accidentally lie to yourself, so it
-gets a page.
+## Why the split matters
 
-## Why the split is the whole thing
-
-Suppose you fit your refusal directions on 500 harmful prompts, then measure how well the
-uncensoring worked using those same 500 prompts.
-
-You'll get a spectacular result. You have also learned nothing, because you tested the model on
-the exact questions it was tuned against. It's revising from the answer sheet.
+If you fit the directions on some prompts and measure on the same prompts, you've marked your own homework.
 
 ::: warning This project did exactly that, for months
-The original corpus had **all 200 harmful evaluation prompts sitting inside the 4,918-row fitting
-set**. On the harmless side it was 196 out of 197.
-
-Every number measured on it was in-sample and flattering, and nothing in the tooling noticed,
-because "the file parsed and the numbers came out" is not a check.
+The original corpus had all 200 harmful evaluation prompts inside the 4,918-row fitting set. On the harmless side it was 196 out of
+197. Every number measured on it was in-sample and flattering.
 :::
 
 So a track is split three ways, and the tool enforces it:
@@ -30,65 +20,78 @@ So a track is split three ways, and the tool enforces it:
 | `search` | 132 | 128 | Scoring attempts, picking a winner |
 | `measure` | 4,504 | 4,597 | **Every published number, and nothing else** |
 
-Note the sizes. The part that does the work is small. The part that's protected is 92% of the
-corpus, and the uncensoring never sees it.
+## Checking a benchmark for contamination
 
-## Getting the prompts in the first place
+Before you quote a score on a public benchmark such as AdvBench, check whether its requests are already inside your fit or search rows.
+If they are, the number doesn't mean what it says.
 
-If you want the corpus this project measured on, you have to fetch it yourself, and there is a
-tool that does it:
+```sh
+senbonzakura track --out mytrack \
+    --contamination advbench.txt --contamination-name AdvBench \
+    --contamination-report contamination-advbench.json
+```
+
+Against our own bundled track it printed:
+
+```
+contamination: AdvBench against this track
+  520 rows, 508 distinct requests (templates discovered: 131)
+  in fit 8, in search 3, in measure 159, absent 338
+  CONTAMINATED: 11 of its requests were fitted or searched on.
+  publishable today: 159 requests from the measure partition, plus 338 this track has never held.
+```
+
+::: warning Public corpora overlap more than you'd expect
+**176 rows** of this project's harmful corpus **are AdvBench**, arriving through `mlabonne/harmful_behaviors` without anybody choosing
+them. The check on our own bundled track, run on 2026-10-01, came back contaminated: 11 of AdvBench's requests were in the partitions
+we fit and search on.
+:::
+
+- **It matches requests, not strings.** The tool strips the wrappers corpora put around the same request before comparing.
+- **`measure` is not contamination.** That slice is held out by design. Overlap with `fit` or `search` is the fatal kind.
+- **It reports counts, never a prompt**, so the output is safe to paste anywhere.
+
+`--fail-on-contamination` makes it exit non-zero, which suits a CI job. Without the flag it reports and exits cleanly.
+
+The track build ends by printing the flags that point the compass at the held-out rows:
+
+```
+TRACK_BUILT mytrack  harmful {'fit': 256, 'search': 128, 'measure': 616}
+  measure with: --skip-harmful 128 --skip-harmless 384 --n 616
+```
+
+Copy the second line into your compass command. [The compass](/guide/compass) explains what to do with it.
+
+## Getting the prompts
 
 ```sh
 senbonzakura track build --out corpus
 ```
 
-It fetches the public datasets at **pinned revisions**, writes `harmful.txt` and `harmless.txt`
-one prompt per line, and records what it fetched in `sources.json`. It refuses to run if any
-upstream's declared licence has moved since the recipe was written, because that is the single
-fact deciding what a track built from it may be used for.
+It fetches the public sources at **pinned revisions**, writes `harmful.txt` and `harmless.txt`, and records what it fetched in
+`sources.json`. It refuses to run if an upstream licence has changed since the recipe was written.
 
-It also **balances the two sides**, and that is worth knowing about rather than discovering. The
-sources return roughly four times as many harmless prompts as harmful ones, and `senbonzakura
-track` refuses a pair more than 10% apart, so the two commands did not compose at all until
-2026-09-23: following this page in order stopped at the second step. The larger side is now cut to
-the smaller one's size by a seeded sample, and `sources.json` records the seed and exactly how many
-rows were dropped, because a corpus that quietly lost nineteen thousand rows is not one anybody can
-reason about later. `--no-balance` gives you the raw pools if you would rather sample them
-yourself.
+The sources return about four times as many harmless prompts, so the builder balances the two sides with a seeded sample.
+`sources.json` records the seed and the rows dropped. `--no-balance` keeps the raw pools.
 
-::: warning The track itself is published, gated, under CC BY-NC 4.0
-Every row came from somewhere else, so the track carries the strictest term in its chain forward:
-attribution to every source, non-commercial use only. Access is gated so taking it is a
-deliberate act: you accept the acceptable-use terms first, and a crawler sweeping the Hub does
-not pick it up in passing. Nothing about you is collected beyond what the Hub needs to run the
-gate.
-
-The builder above is for anyone who would rather fetch the sources themselves. It rebuilds a pool
-of the same *shape* rather than the identical one: the harmless top-ups added to the original
-pool were never recorded, so that part of its assembly cannot be reproduced. The
-[dataset card](/evaluation-track-card) is blunt about that, and about the two licence links that
-are inferred rather than stated.
+::: warning The track is published under CC BY-NC 4.0
+Every row came from somewhere else, so the track carries the strictest term in its chain: attribution to every source, and
+non-commercial use only. Access is gated, so you accept the acceptable-use terms first. The rebuilt pool has the same shape as
+the original, not the same rows. The [dataset card](/evaluation-track-card) covers provenance.
 :::
 
 ::: danger If you hold a copy of this track from before 2026-07-30, check it
-An earlier export, `ops-malware/senbon-track-35axis-clean`, was labelled "clean" and was not. Measured on 2026-08-16: **189 of its 200
-harmful evaluation rows, and all 196 harmless ones, were sitting inside its own fitting set**.
-The repair landed on 2026-07-30 and that export was never refreshed, so for six weeks its name
-promised the opposite of its contents.
-
-The published track,
-[`ops-malware/senbonzakura-dataset`](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset),
-is the repaired one, verified at zero overlap on both sides. Check any copy you already have
-rather than trusting what it is called:
+An earlier export, `ops-malware/senbon-track-35axis-clean`, was labelled "clean" and wasn't. Measured on 2026-08-16, **189 of its 200
+harmful evaluation rows, and all 196 harmless ones, were inside its own fitting set**. The published track,
+[`ops-malware/senbonzakura-dataset`](https://huggingface.co/datasets/ops-malware/senbonzakura-dataset), is the repaired one, with zero
+overlap on both sides. Check any copy you have:
 
 ```sh
 senbonzakura track --out mytrack --audit
 ```
 :::
 
-## Build one, and have it checked
-
-Doing it by hand is how the mistake happens, so there is a builder:
+## Build your own, and have it checked
 
 ```sh
 senbonzakura track \
@@ -96,74 +99,23 @@ senbonzakura track \
     --out mytrack --fit 256 --search 128
 ```
 
-One prompt per line. It deduplicates on a case- and punctuation-insensitive key,
-splits each side into three parts by index, and **writes nothing at all unless every
-check passes**:
+One prompt per line. It deduplicates on a case- and punctuation-insensitive key, splits each side into `fit`, `search` and `measure`
+by index, and **writes nothing unless every check passes**. It refuses a track if anything in `measure` also appears in `fit` or
+`search`, if a prompt is labelled both harmful and harmless, if a partition is empty, or if the sides differ by more than 10%.
 
-- `fit` — the directions are extracted from these
-- `search` — the search scores trials on these
-- `measure` — the published number comes from these, and nothing else touches them
+Writing the directories by hand skips every check, and the checks are what make the split worth anything. If you do it anyway, each
+partition is a Hugging Face dataset with one column, `text`, in the directories `bad_ds`, `good_ds` and `bad_eval_ds`.
 
-The checks are the point. A track is refused if anything in `measure` also appears in
-`fit` or `search`, if a prompt is labelled both harmful and harmless, if a partition is
-empty, or if the two sides differ in size by more than 10%. It reports counts only and
-never prints a prompt, so its output is safe to paste anywhere.
+### Why the check is on requests, not wording
 
-### What it writes, if you want to build one yourself
+Corpora are usually built by crossing a few phrasings with a list of requests. "Explain in detail how to X" and "Write a step by step
+guide to X" are two strings and one question. Compare whole prompts and you get a clean split. On this project's own corpus, comparing
+the underlying requests changes **zero overlap** into **60% of the evaluation set**. The builder works the wrappers out from your data
+and keeps every wording of one request on the same side of the split.
 
-Each partition is a HuggingFace dataset saved with `save_to_disk`, holding exactly one
-column named `text`, one prompt per row:
+## `track.json`: where the boundaries are
 
-```python
-from senbonzakura import trackio
-trackio.write_text_column("mytrack/bad_ds", ["first prompt", "second prompt"])
-```
-
-That writes the same three files `datasets.save_to_disk` writes, and a directory written
-either way loads either way, so this still works if you'd rather use the library directly:
-
-```python
-from datasets import Dataset
-Dataset.from_dict({"text": ["first prompt", "second prompt"]}).save_to_disk("mytrack/bad_ds")
-```
-
-That is the whole schema. Anything the tool reads, it reads from a `text` column, so a
-dataset built any other way loads and then scores nothing. The directories it expects are
-`bad_ds`, `good_ds` and `bad_eval_ds`, with `good_eval_ds` and `good_matched_ds` optional
-(see below).
-
-Use the builder anyway if you can. Writing the directories by hand skips every check
-above, and the checks are the reason the split is worth anything.
-
-## The check that isn't obvious
-
-Here's the one that catches people, including me.
-
-Corpora are usually built by crossing a handful of phrasings with a list of requests. So *"Explain
-in detail how to X"* and *"Write a step by step guide to X"* are two different strings and one
-question.
-
-Compare whole prompts and you get a clean split. Compare the underlying **requests** and you find
-your evaluation set is stuffed with training questions wearing a different hat.
-
-On this project's own corpus, that's the difference between **"zero overlap"** and **60% of the
-evaluation set**. The first number is what a naive check reported. The second is the truth.
-
-So the builder works the phrasings out from your corpus, strips them, and keeps every wording of
-one request on the same side of the split. You don't configure it; it's derived from your data, so
-it works on somebody else's corpus too and can't go stale against ours.
-
-::: warning If you take one thing from this page
-**The split isn't bookkeeping.** It's the difference between a measurement and a compliment
-you paid yourself.
-:::
-
-## `track.json`: where the boundaries are recorded
-
-The three partitions are stored end to end inside each dataset, so `bad_ds` is the fit rows
-followed by nothing else, while `bad_eval_ds` is the search rows followed by the measure
-rows. **Nothing about a directory of prompts says where one partition ends and the next
-begins**, so the builder writes it down:
+Nothing in a directory of prompts says where one partition ends and the next begins, so the builder writes it down:
 
 ```json
 {
@@ -180,72 +132,23 @@ begins**, so the builder writes it down:
 }
 ```
 
-| Field | What it is |
-|---|---|
-| `schema` | The format version. A manifest declaring a version this build does not know is **refused**, rather than read with the fields it happens to recognise. A manifest with no `schema` at all is read as version 1, because hand-written ones predate the field. |
-| `sources` | Where the prompts came from, so a track can be traced to its input. |
-| `counts` | Rows in each partition, per side. The record the boundary checks are made against. |
-| `skip_harmful`, `skip_harmless` | What to pass to `--skip-harmful` and `--skip-harmless` to land on the measure rows. |
-| `n_harmful`, `n_harmless` | What to pass to `--n`. |
+Three things read this file. The audit (`--audit`) refuses a track whose rows disagree with its counts. The boundary check refuses a run
+whose flags would cross a partition. The measure flags are read from it. A track without `track.json` still runs, but none of those
+checks apply.
 
-**This file is load-bearing, not documentation.** Three things read it:
+If you have a `label<TAB>prompt` file, add `--labels` to `--audit`. That checks whether every category reaches the `measure` slice. A
+category that doesn't makes your score narrower than it looks.
 
-- **The audit** (`--audit`) re-checks an existing track: leakage, empty partitions, whether
-  the rows on disk still match the counts recorded here. A `track.json` that disagrees with
-  the rows beside it is refused, because every slice taken from it would silently read the
-  wrong rows.
-- **The boundary check** refuses a run whose flags would cross a partition. Asking the search
-  to score more prompts than the `search` partition holds means selecting a configuration on
-  the rows the published number comes from, and the tool stops rather than doing it.
-- **The measure flags above** are read from it rather than remembered.
+Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites that backup.
 
-A track with no `track.json` still runs. It simply gets none of the above, and every
-boundary becomes something you have to keep right by hand.
+## Optional directories and a toy track
 
-## The optional fourth and fifth directories
+`good_matched_ds` (harmless prompts matched to the harmful ones by topic, read by `--harmless-matched`) and `hedge_ds` (hedged
+compliances) are optional. Neither is built by `senbonzakura track` today.
 
-| Directory | What it holds | What reads it |
-|---|---|---|
-| `good_matched_ds` | Harmless prompts matched to the harmful ones by topic | `--harmless-matched`, the compass's construct-validity control |
-| `hedge_ds` | Hedged compliances, neither refusal nor clean answer | The hedging direction, when one exists |
-
-Both are optional and neither is built by `senbonzakura.track` today. `good_matched_ds`
-answers "is the compass reading refusal, or is it reading topic?" by holding the subject
-matter still. `hedge_ds` has no public dataset behind it anywhere, which is why the
-single-versus-multi comparison is two arms rather than three.
-
-## Re-checking a track you already have
-
-Including one somebody assembled by hand, or one of yours from six months ago:
-
-```sh
-senbonzakura track --out mytrack --audit
-```
-
-![The track audit running against the committed toy track](/media/track-audit.gif)
-
-That's the real thing, recorded against `examples/toy-track` which ships in the repository, so
-you can run the exact command above and get the exact output above.
-
-If you've got a `label<TAB>prompt` file for the corpus, pass `--labels` as well. It buys
-you the one check that can't be run without it: whether every category in the track
-actually reaches the `measure` slice. A category that doesn't is the mirror image of
-leakage. Leakage makes your number better than it should be; this makes it **narrower than
-it looks**, a score on eight topics being reported as a score on twelve.
-
-Rebuilding backs the old track up once, to `<track>.pre-build`, and never overwrites that
-backup. So a rebuild you regret costs you nothing, and a second rebuild you regret can't
-quietly eat the good copy.
-
-## A toy track to try it on
-
-`examples/toy-track/` is committed and runs straight from a clone. Its prompts are
-synthetic placeholders rather than real harmful text, because it exists to show the
-plumbing works, not to measure anything. Point the tool at it, break something on purpose,
-watch the audit complain.
+`examples/toy-track/` is committed and runs from a clone. Its prompts are synthetic placeholders, so it shows the plumbing works and
+measures nothing.
 
 ## Where next
 
-- [Contamination](/guide/contamination) to check whether the benchmark you want to quote is
-  already sitting inside your fit rows.
-- [The compass](/guide/compass) for what to point at the `measure` slice once you have one.
+- [The compass](/guide/compass), for what to point at the `measure` slice once you have one.

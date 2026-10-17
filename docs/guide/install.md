@@ -1,40 +1,27 @@
 # Install
 
-One command, and then you can go and read the interesting pages.
+One command, and then you can go and read the other pages.
 
 ```sh
 pip install senbonzakura
 senbonzakura setup
 ```
 
-`senbonzakura` names `senbonzakura-check` as a dependency, so pip fetches both. The small one is
-torch-free and installs in seconds; you can also install it on its own with
-`pip install senbonzakura-check` if all you want is to check somebody's result file.
+`senbonzakura` depends on `senbonzakura-check`, so pip fetches both. The check package is torch-free. Install it alone
+with `pip install senbonzakura-check` if you only want to check somebody's result file.
 
-::: tip What changed
-Until 0.4.0 this page said "not from PyPI, not yet" and gave a pair of `git+` URLs instead. PyPI
-served 0.3.0, whose numbers are withdrawn, and `senbonzakura-check` was not published at all, so
-`pip install senbonzakura` could not resolve. Both packages are on PyPI from 0.4.0 and the command
-above is the whole install.
-:::
+**You get the evaluation track with it.** The wheel carries the packed track and six research corpora, so `--track
+default` works straight away. That's roughly 6,200 harmful prompts on your disk, and the
+[README](https://github.com/elementmerc/senbonzakura#what-this-repository-does-not-contain) has the detail.
 
-**You get the evaluation track with it.** The wheel carries the packed track and six research
-corpora, so `--track default` works immediately. That is roughly 6,200 harmful prompts on your
-disk; the README's "what this repository does not contain" section has the detail.
+**On Linux you also get the quantiser.** With glibc 2.35 or newer, pip picks a wheel carrying llama.cpp's binaries, so
+`convert` and `quantise` work straight away. Elsewhere the universal wheel installs without them. `senbonzakura doctor`
+says which one you got.
 
-**On Linux you get the quantiser too.** pip picks the most specific wheel that fits, so glibc 2.35
-or newer gets one carrying llama.cpp's binaries and `convert` and `quantise` work straight away.
-Everywhere else the universal wheel installs and works without them. `senbonzakura doctor` says
-which one you received.
-
-:::: warning A wheel you build from a clone does not carry `--track default`
-A `pip install` carries the track, as the paragraph above says; a wheel built from a plain clone
-does not. The two `.bin` blobs in `src/senbonzakura/data/` are generated rather than committed,
-because they hold harmful prompts, so a build from a clone carries neither. The tool installs,
-imports and answers `--help` exactly as normal, and then fails on `--track default`. That is not a
-subtle failure once you meet it, but nothing warns you beforehand, which is why it is here.
-
-Build them from a clone before building the wheel:
+:::: warning A wheel built from a clone does not carry `--track default`
+The two `.bin` blobs in `src/senbonzakura/data/` are generated, not committed, because they hold harmful prompts. A wheel
+built from a clone installs, imports and answers `--help`, then fails on `--track default`, and nothing warns you first.
+Build the blobs before building the wheel:
 
 ```sh
 senbonzakura corpora          # public corpora, pinned commits
@@ -42,20 +29,17 @@ python tools/packaging/pack_track.py --track <your-track>
 ```
 
 ::: warning `senbonzakura corpora` needs the GitHub CLI
-It fetches from public sources through `gh`, deliberately, so that no credential is ever handled
-by this project's own code. Without it the command exits 1 and says so. Install `gh` from
-<https://cli.github.com>, run `gh auth login`, then run this again.
+It fetches through `gh`, so no credential is handled by this project's own code. Without `gh` it exits 1 and says so.
+Install it from <https://cli.github.com>, run `gh auth login`, then run this again.
 :::
 
-The first needs only the network. The second needs a track, which is either
-[one you built](/guide/the-track) or the gated dataset.
+The first step needs only the network. The second needs a track: [one you built](/guide/the-track), or the gated dataset.
 ::::
 
-The first brings everything: torch, transformers, accelerate, optuna, and the rest, and there is
-nothing else to choose. Nothing is behind an extra.
+The install brings everything (torch, transformers, accelerate, optuna and the rest). Nothing is behind an extra.
 
-It is **70 packages and 5.9 GB**, measured 2026-09-28 in an empty virtualenv on Python 3.14. That
-count is what `pip list` shows you, and it breaks down like this:
+It is **70 packages and 5.9 GB**, measured 2026-09-28 in an empty virtualenv on Python 3.14. The count is what `pip list`
+prints:
 
 | | |
 |---|---|
@@ -66,23 +50,14 @@ count is what `pip list` shows you, and it breaks down like this:
 | Rows that are pip and setuptools rather than dependencies | 2 |
 | Rows that are this project (`senbonzakura`, `senbonzakura-check`) | 2 |
 
-Sixteen CUDA and Triton wheels are where almost all of the 5.9 GB goes.
+Sixteen CUDA and Triton wheels account for almost all of the 5.9 GB. Different interpreters ship different defaults, so
+this count decays without anyone editing it. That's why the interpreter and date are given, and why a test checks every
+page that quotes these numbers.
 
-**This is the one place these figures are measured**, and the count is what `pip list` prints
-rather than a tidied version of it, because the tidied version is what somebody then compares
-against their own terminal and finds disagrees.
+## Choosing torch for your machine
 
-Until 2026-09-26 this page understated all three, from a measurement taken on an older Python two
-weeks earlier, and the quickstart and the README had drifted apart from it and from each other. A
-reader who installed the tool and counted found the disagreement before we did. Different
-interpreters ship different defaults, so a count of this kind decays without anybody editing the
-file it sits in, which is why the interpreter and the date are given beside it and why a test now
-checks that every page quoting these numbers quotes the same ones.
-
-The second exists because **pip picks by platform, not by hardware**. PEP 508 environment
-markers describe the interpreter, the operating system and the architecture, and there is no
-marker for "has an NVIDIA GPU". A wheel runs no code at install time, so it cannot look. So what
-you get depends on your operating system rather than on what is in the machine:
+pip picks by platform, not by hardware. The marker system knows the interpreter, OS and architecture, and nothing about
+whether a GPU is present:
 
 | Your machine | What pip alone gives you |
 |---|---|
@@ -91,150 +66,93 @@ you get depends on your operating system rather than on what is in the machine:
 | macOS on Apple silicon | a build that uses Metal. Correct |
 | Windows with a GPU | **a CPU-only build. Your card will sit idle** |
 
-### If your disk is tight, move the model cache
+::: tip Why the Windows row is in bold
+PyPI's Windows torch is 124 MB and CPU-only, and the CUDA build is not on PyPI at all. A gaming laptop with a 3060 installs
+a torch that cannot see the card, and nothing warns you. The search then runs on CPU and takes a day instead of an hour.
+:::
 
-Models go to Hugging Face's cache, not into this tool's directory, and they are the largest thing
-you will download: Qwen3-1.7B is about 3.8 GB and a bigger model is proportionally worse. The cache
-defaults to `~/.cache/huggingface`, so on a machine whose home partition is nearly full it fills
-the wrong disk and nothing here warned you.
+`senbonzakura setup` asks the driver (torch would report only what the installed build can reach), says what it found, and
+prints the one command that fixes it. It changes nothing unless you add `--apply`.
 
-Point it somewhere with room:
+### No graphics card? Install a CPU torch first
 
-```sh
-export HF_HOME=/mnt/big-disk/huggingface
-```
-
-Set it before the first run, in your shell profile if you want it to stick. Nothing in this project
-needs the cache in any particular place.
-
-`senbonzakura doctor` does **not** currently report where the model cache is, or how much room is
-left on the disk holding it. It reports this tool's own track cache, which is small. So if you move
-`HF_HOME`, nothing here will confirm it took effect. `hf env` will: it prints `HF_HUB_CACHE`, which
-is the directory the weights actually land in. (Not `huggingface-cli env`, which is deprecated and
-no longer runs, and which this project already strips out of upstream advice for being stale.)
-
-### If you have no graphics card, choose your torch first
-
-The table's second row is avoidable, and until 2026-10-11 this page described the problem without
-giving you the way round it. Install torch from the CPU index before the tool, and the fifteen CUDA
-packages never arrive:
+To avoid the 15 CUDA packages, install torch from the CPU index before the tool:
 
 ```sh
 pip install --index-url https://download.pytorch.org/whl/cpu torch
 ```
 
-Then install the tool as the section above shows. pip finds torch already satisfied and leaves it
-alone. This is exactly what the Docker image
-does, and it is why that image is **2.11 GB rather than about 6 GB**. That figure is measured; the
-pip route's own total is not, so treat the saving as the same shape rather than the same number.
+pip then leaves that torch alone. This is what the Docker image does, which is why the image is **2.11 GB rather than about
+6 GB**. That figure is measured. The pip route's total is not, so treat the saving as the same shape, not the same number.
 
-What you give up is the card you haven't got. Every instrument runs on a processor: `compass`,
-`drift`, `score`, `check`, `doctor`, `convert`, `quantise`. The abliteration itself runs too, and
-slowly enough that the no-card section of [the quickstart](/guide/quickstart#without-a-graphics-card)
-tells you not to plan on it.
+You give up the card, not the instruments. `compass`, `drift`, `score`, `check`, `doctor`, `convert` and `quantise` all run
+on a processor. Abliteration runs too, slowly. See [the quickstart](/guide/quickstart#without-a-graphics-card).
 
-If you later get a card, `senbonzakura setup` notices that torch is a CPU build while a card is
-present. When it can read the CUDA version your driver supports, it prints the exact command to
-swap the build out. When it can't read it, it says so and names the channels to choose from rather
-than guessing one for you. `senbonzakura doctor` tells you which build you're on either way.
+### Disk tight? Move the model cache
 
-::: tip Why the Windows row is in bold
-PyPI's Windows torch is 124 MB and CPU-only; the CUDA build is not on PyPI at all. So a gaming
-laptop with a 3060 in it installs a torch that cannot see the card, and nothing warns you. The
-search then runs on CPU and takes a day instead of an hour.
-:::
+Model weights go to Hugging Face's cache, `~/.cache/huggingface` by default, and they are the largest download. Qwen3-1.7B
+is about 3.8 GB. To use a bigger disk:
 
-`senbonzakura setup` asks the driver (not torch, which would report what the installed build can
-reach rather than what the machine has), says what it found, and prints the one command that
-fixes it. It changes nothing unless you add `--apply`.
+```sh
+export HF_HOME=/mnt/big-disk/huggingface
+```
 
-If you'd rather type `python -m senbonzakura` than `senbonzakura`, both work and they're the
-same thing.
+`senbonzakura doctor` reports the track cache, not the model cache, so it won't confirm the move. `hf env` prints
+`HF_HUB_CACHE`, the directory the weights actually land in.
 
-**Coming from 0.3.x?** Nothing about your install changes: 0.3.0 also installed torch by
-default. If you tracked `dev` in early September you were told to add an `[abliterate]` extra;
-that extra still resolves, and now installs exactly what a bare install does.
-
-## Reading datasets straight off the HuggingFace Hub
+## Reading datasets from the Hub
 
 ```sh
 pip install 'senbonzakura[hub]'
 ```
 
-The tool doesn't need the `datasets` package for ordinary work. It reads and writes tracks
-with pyarrow, and every file format it accepts (`.txt`, `.csv`, `.json`, `.jsonl`,
-`.parquet`) works without it. What needs the extra is pointing a flag at a Hub id like
-`--good-ds tatsu-lab/alpaca`, which has to go and fetch it. Ask for one without the extra
-and the tool says so and names what to install.
-
-If you're packaging this for a distribution, that's the reason for the split: `datasets`
-isn't in Debian at all, and pyarrow is.
+Every file format the tool accepts (`.txt`, `.csv`, `.json`, `.jsonl`, `.parquet`) works without the extra. It's needed only
+for a Hub id such as `--good-ds tatsu-lab/alpaca`, and the tool names what to install if you ask without it.
 
 ## What comes in the box, including the part people don't expect
 
-The wheel carries the evaluation track and six public research corpora, so `--track default`
-and `--good-ds advbench` work with no network. That is roughly 6,200 harmful prompts sitting
-inside your site-packages.
+The wheel carries the evaluation track and six public research corpora, so `--track default` and `--good-ds advbench` work
+with no network. That is roughly 6,200 harmful prompts inside your site-packages.
 
-They're wrapped rather than plaintext, which stops a scraper finding them by accident and
-stops nothing else: the key ships beside them and `src/senbonzakura/bundled.py` says so in as
-many words. Every one of them is a public research dataset. The tool prints the attribution
-and the licence the first time it loads one, because several of them require it.
+They're wrapped rather than plaintext. That stops a scraper finding them by accident and nothing else, because the key ships
+beside them (`src/senbonzakura/bundled.py` says so). Each one is a public research dataset, and the tool prints the attribution
+and licence the first time it loads one, because several require it.
 
-If you'd rather not have them, build the wheel yourself without running
-`senbonzakura corpora` and `tools/packaging/pack_track.py`; everything except the bundled defaults
-still works, and the tool tells you what to run if you ask for one.
+To leave them out, build the wheel without running `senbonzakura corpora` and `tools/packaging/pack_track.py`. Everything except
+the bundled defaults still works.
 
-A man page goes to `share/man/man1/senbonzakura.1`, and `man senbonzakura` finds it
-whenever the environment you installed into is the one you're using. `man` builds its
-search path from `PATH`: for every `.../bin` on it, `man` also looks in the sibling
-`.../share/man`. So activating the virtualenv is all it takes.
+### The man page
 
-```sh
-man senbonzakura        # with the virtualenv active
-```
-
-If it says `No manual entry`, the install route is what decides it.
+The man page installs to `share/man/man1/senbonzakura.1`. `man senbonzakura` finds it when the environment you installed into is
+the one you're using, so activating the virtualenv is enough.
 
 | Route | Works? | Why |
 |---|---|---|
 | Virtualenv, activated | Yes | The venv's `bin` is on `PATH`, so its `share/man` is on the manual path |
 | `pip install --user` | Yes, if `~/.local/bin` is on `PATH` | Same rule, applied to `~/.local` |
-| `pipx install` | No | The executable is linked into `~/.local/bin`, but the page stays in pipx's own virtualenv, which never reaches `PATH` |
+| `pipx install` | No | The executable is linked into `~/.local/bin`, but the page stays in pipx's own virtualenv |
 
-For the pipx case, or any other time you want the page without activating anything,
-point `man` straight at the file:
+For pipx, point `man` at the file directly:
 
 ```sh
 man "$(python -c 'import sysconfig,pathlib; print(pathlib.Path(sysconfig.get_path("data"))/"share/man/man1/senbonzakura.1")')"
 ```
 
-Measured on Debian's `man-db` 2026-09-26. **This page used to say the page probably
-wouldn't be found, and that was wrong**: the machine it was written on had a broken
-`man` binary, and a local fault got written down as a property of the tool.
+## If you're checking our numbers
 
-## If you're checking our numbers rather than using the tool
-
-Install against the pinned set instead:
+Install against the pinned set:
 
 ```sh
 pip install . -c constraints.txt
 ```
 
-**This one needs Python 3.12 or newer**, even though the tool itself runs on 3.10. The numpy
-release pinned in `constraints.txt` dropped support for 3.11, so on 3.10 or 3.11 the command
-above fails to resolve and pip's message names only the package it could not find, which reads
-like a broken pin rather than the wrong interpreter. Measured 2026-09-22, on a dependency
-scanner that had quietly built itself a 3.11 environment and reported our pins as broken.
+**This one needs Python 3.12 or newer**, even though the tool runs on 3.10. The numpy release pinned in `constraints.txt`
+dropped 3.11. On 3.10 or 3.11 the command fails, and pip's message names only the package it couldn't find, which looks like
+a broken pin.
 
-`constraints.txt` is the exact version of every dependency the published numbers were measured
-with, read off the machine that produced them rather than resolved fresh. The ordinary install
-above uses version *ranges*, which tell you what a run could have used; this tells you what it
-did.
-
-One thing it deliberately doesn't pin is torch's CUDA build suffix, so the file installs on a
-machine without a GPU. The version is the part that changes arithmetic; the suffix changes how
-many seconds it takes.
+`constraints.txt` records the exact version of every dependency the published numbers were measured with. The ordinary install
+uses ranges, which say what a run *could* have used. It deliberately leaves out torch's CUDA suffix, so the file installs on a
+machine without a GPU.
 
 ## Do you need a GPU?
 
@@ -247,19 +165,15 @@ For editing a model, yes, realistically. For everything else, no.
 | Running the test suite | Nothing. CPU, no downloads, no card |
 | Building the corpus, checking contamination | Nothing |
 
-The 6 GB figure isn't a recommendation, it's a confession: this whole project is built
-around one 6 GB laptop card, which is exactly why every model it's ever been run on is
-under 3B parameters. [Limits](/guide/limits) is blunt about what that means for the
-numbers, and the table in [what size card](#what-size-card) is where the figure comes
-from. 1.7B is the only row anybody has run; everything above it is arithmetic.
+The 6 GB figure is a limit, not a recommendation. This project was built around one 6 GB laptop card, which is why every model
+it has run is under 3B parameters. [Limits](/guide/limits) explains what that means for the numbers. 1.7B is the only row anyone
+has run. The rest is arithmetic.
 
 ## What size card {#what-size-card}
 
-Uncensoring rewrites real weight matrices, and there are two ways to run it. Loading the whole
-model sets the floor by arithmetic: 16-bit weights are two bytes per parameter, and you need
-headroom on top for activations and for the reference copy the divergence measurement compares
-against. The table below is that case. Streaming edits the checkpoint a layer at a time and needs
-far less (see [the way out](#the-way-out) below), at the price of being slower.
+Loading the whole model sets the floor by arithmetic: 16-bit weights are two bytes per parameter, plus headroom for activations
+and for the reference copy the divergence measurement compares against. Streaming needs far less, at the price of speed. See
+[the way out](#the-way-out) below.
 
 | Model size | Weights at 16-bit | Card that will do it, loading the whole model |
 |---|---|---|
@@ -268,86 +182,46 @@ far less (see [the way out](#the-way-out) below), at the price of being slower.
 | 8B | 16 GB | 24 GB |
 | 30B | 60 GB | 80 GB |
 
-Only the first row is measured. The rest is the arithmetic plus headroom, and it is the honest
-shape of the answer rather than a benchmark.
+Only the first row is measured. The rest is arithmetic plus headroom.
 
 ::: warning A mixture-of-experts model needs room for every expert, not the active ones
-This is the one that catches people, because the headline number invites the opposite reading. A
-model described as "30B total, 3B active" routes each token through a small fraction of itself, so
-it *runs* like a 3B model. Uncensoring is not inference: it edits the weights, and it has to edit
-**all** of them, because refusal does not politely confine itself to the experts that happen to be
-active. Size the card (or the disk, when streaming) for the total, 30B, not the 3B it advertises.
+A model described as "30B total, 3B active" runs like a 3B model, but uncensoring edits the weights, and it has to edit **all**
+of them. Size the card, or the disk when streaming, for the 30B total.
 :::
 
-**`--load-in-4bit` does not help here and the tool refuses it on the editing path.** A 4-bit
-tensor cannot be rewritten in place, which is the same reason a GGUF cannot be uncensored. It is
-accepted on the measuring commands, where nothing is being rewritten.
+**`--load-in-4bit` doesn't help the editor, and the tool refuses it on the editing path.** A 4-bit tensor can't be rewritten in
+place. It's accepted on the measuring commands, where nothing is rewritten.
 
-### Models trained at very low precision cannot be edited at all, by us or by anybody
+### Models trained at very low precision cannot be edited
 
-That refusal is narrower than the real limit, so here is the real one.
+Some models are **trained** at around 1.6 bits per weight, not squeezed afterwards. The training compensates for the squeezing.
+Our edit rotates a sheet of those weights slightly, and snapping the rotated values back to the allowed levels undoes that
+compensation. The result is worse in ways nobody can predict, so the edit destroys the thing it is editing. This gap is not
+closed.
 
-A growing number of models are **trained** at very low precision rather than squeezed down
-afterwards: around 1.6 bits per weight, where an ordinary model uses 16. The training knows about
-the squeezing and compensates for it, which is why the result stays good. The usual name for this
-is quantisation-aware training.
+Measuring still works. Running a low-precision model is what it was built for, so every instrument here can check what somebody
+else's edit did to one.
 
-Our edit cannot touch those models, and the reason is arithmetic rather than effort. Think of each
-weight as a dial that can only point at three positions. The edit works by rotating a whole sheet
-of those dials slightly, and the rotated positions fall between the three. To store the result you
-have to snap every dial back to its nearest allowed position, and that snapping is what the
-original training spent its whole run compensating for. Do it afterwards, in one pass, with none
-of that compensation, and you get a model that is worse in ways nobody can predict. So the edit
-destroys the thing it is editing.
+**On a card too small.** `accelerate` places what fits and pushes the rest to host RAM or disk. Host RAM is slow and works. Disk
+**does not work**. A disk-offloaded tensor hands back a fresh copy on each read, so an edit would be written to something discarded,
+and the model would come out unedited with nothing reporting it. The tool refuses, names the weight, and says what to do. The refusal
+fires after the download and load, so do this arithmetic first.
 
-This is not a gap we expect to close soon, and we would rather say so than imply otherwise.
+### The way out {#the-way-out}
 
-**What does still work is the measuring.** Reading a model is just running it, and running a
-low-precision model is exactly what it was built for. So if somebody else has uncensored one of
-these, by whatever method, every instrument here can measure what their edit did to it: the
-refusal rate, the harm recognition, the fluency, the capability cost. You cannot use this tool to
-edit a 1.6-bit model and you can use it to check one.
-
-**What happens if you try it anyway on too small a card:** `accelerate` will place what fits and
-push the rest to host RAM or to disk. Host RAM is slow and works. Disk **does not work**, and the
-tool refuses rather than pretending: a disk-offloaded tensor hands back a fresh copy on every read,
-so the edit would be written into something discarded before the next forward pass and the model
-would come out unedited, still refusing, with nothing reporting it. The refusal names the weight
-and tells you to load with more VRAM or more host-RAM headroom.
-
-**That limit is about writing, not reading, and the difference is the way out.** {#the-way-out} A forward pass only
-reads the weights, so disk offload is perfectly sound for anything that measures rather than edits.
-`senbonzakura stream-extract` takes the directions off a checkpoint larger than your card and your
-RAM put together, one group of layers at a time, and `senbonzakura stream-bake` applies them the
-same way. `senbonzakura budget --model <a local checkpoint>` prints what a given model will ask of
-the machine before you commit to a run, though it needs the checkpoint on disk already, so it
-answers "should I have done this" better than "should I".
-
-These are in [the command reference](/reference/cli) with their flags. They were missing from this
-page until 2026-10-11, which meant a reader whose machine was too small was told the tool could not
-help them, when the half they wanted worked.
-
-Worth knowing about *when* that refusal arrives: it fires as the first edit is applied, which is
-after the download and the load. On a large model that is a long wait before being told the card is
-too small, so do this arithmetic first.
+That limit is about writing, not reading. A forward pass only reads, so disk offload is sound for anything that measures. Streaming
+takes the directions off a checkpoint larger than your card and RAM together, one group of layers at a time: `senbonzakura
+stream-extract`, then `senbonzakura stream-bake` to apply them. `senbonzakura budget --model <a local checkpoint>` estimates what a
+model will ask of the machine. See [the command reference](/reference/cli) for the flags.
 
 ## Converting and quantising needs one system library
 
-If you install a platform wheel (one whose filename ends in something other than `py3-none-any`),
-it carries the pinned `llama.cpp` binaries so that `convert`, `quantise` and `imatrix` work
-without a source checkout.
+A platform wheel carries the pinned `llama.cpp` binaries, so `convert`, `quantise` and `imatrix` work without a source checkout. The
+binaries are built against OpenMP. A Python wheel can't ask the system for that library, so on a slim container or a fresh CI runner
+they can fail to start. Measured on 2026-09-11, the same wheel fails inside `python:3.13-slim` and runs on Ubuntu under WSL, which has
+`libgomp1`. The fault belongs to the image, not the wheel.
 
-Those binaries are built against OpenMP, and a Python wheel has no way to ask your system for a
-system library. On most desktop Linux installs it is already there. On a slim container image, a
-minimal server, or a fresh CI runner it often is not, and the binaries cannot start.
-
-**It is a property of the image, not of the wheel**, and the same wheel goes both ways. Measured
-on 2026-09-11: inside `python:3.13-slim` the quantiser will not start; on Ubuntu under WSL, from
-the identical wheel, `doctor` reports "llama-quantize vendored, runs", because Ubuntu carries
-`libgomp1` already. So a report of this from one machine says nothing about another, and
-re-vendoring fixes neither.
-
-`senbonzakura doctor` tells you which library is missing and what to install:
+`senbonzakura doctor` names the missing library:
 
 ```
 ✗  llama-quantize   present at .../llama-quantize and cannot start: a shared library is
@@ -356,11 +230,7 @@ re-vendoring fixes neither.
                        libgomp1: apt-get install -y libgomp1
 ```
 
-Re-installing the package will not help, because the binary is correct and the system is missing
-a dependency of it.
-
-**If you would rather not think about this**, use the container image, which carries the library
-and is checked at build time:
+Reinstalling won't help. The binary is correct and the system is missing a dependency. The container image carries the library:
 
 ```
 docker run --rm -v "$PWD:/work" ghcr.io/elementmerc/senbonzakura:v0.5.1 doctor
@@ -368,43 +238,34 @@ docker run --rm -v "$PWD:/work" ghcr.io/elementmerc/senbonzakura:v0.5.1 doctor
 
 ## The optional extras
 
-None of these is needed for a normal run, and the tool works without all of them.
+None is needed for a normal run.
 
 | Extra | What it adds |
 |---|---|
-| `quant` | 4-bit loading through bitsandbytes, for *scoring* a model too big to sit on your card |
+| `quant` | 4-bit loading through bitsandbytes, for *scoring* a model too big for your card |
 | `completion` | tab completion for bash, zsh and tcsh |
-| `hub` | reading datasets straight off the HuggingFace Hub (see above) |
-| `abliterate` | nothing. It is an alias kept so 0.3.x instructions still resolve |
+| `hub` | reading datasets from the Hub (see above) |
+| `finetune` | the adapter path of `tamper --method lora` (see [does the edit hold up](/guide/robustness)) |
+| `abliterate` | nothing. It is an alias kept so older instructions still resolve |
 | `all` | every one of the above |
 
-**`pip install "senbonzakura[quant]"`** adds 4-bit loading through bitsandbytes, so you can *score* a
-model that's too big to sit on your card in full precision:
+**`pip install "senbonzakura[quant]"`** lets you *score* a model too big for your card:
 
 ```sh
 senbonzakura score --load-in-4bit
 ```
 
-Note the word "score". This is a measurement option, not an uncensoring one, and you can't
-use it for the editing half. The reason is a bit lovely: uncensoring works by rewriting
-weights so they no longer point along the refusal direction, and that rewrite is a
-multiplication done in place. A 4-bit tensor isn't a grid of numbers you can multiply, it's
-a compressed sketch of one, and you can't do surgery on a sketch. So the editor loads
-in full precision and there's no flag to talk it out of that.
+This is a measurement option, not an uncensoring one. Uncensoring rewrites weights with an in-place multiplication, and a 4-bit
+tensor is a compressed sketch of those weights. The editor loads in full precision, and there's no flag to override that.
 
-**`pip install "senbonzakura[completion]"`** gets you tab completion for bash, zsh and tcsh. It's
-generated on demand, the same one-time dance `pip`, `gh` and `poetry` all use:
+**`pip install "senbonzakura[completion]"`** gives you tab completion:
 
 ```sh
 senbonzakura --print-completion bash | sudo tee /etc/bash_completion.d/senbonzakura
 ```
 
-Without the extra, the `--print-completion` flag simply isn't there. Nothing else changes.
-
 ## Where next
 
-- [Quickstart](/guide/quickstart) is two commands and an edited model.
-- [Which models it can open](/reference/models) if you want to check yours is supported.
-- [Your first run](/guide/first-run) for what those commands are actually doing.
-- [Running the tests and contributing](/contributing) if you are here to work on the tool
-  rather than to use it.
+- [Quickstart](/guide/quickstart): two commands and an edited model.
+- [Which models it can open](/reference/models), if you want to check yours is supported.
+- [Your first run](/guide/first-run), for what those commands do.

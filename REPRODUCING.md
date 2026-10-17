@@ -1,90 +1,44 @@
 # Reproducing the published numbers
 
-What a published figure came from, and what you would run to produce that file yourself.
+Every figure this project quotes falls into one of three groups.
 
-The point of this file is narrow and worth stating. A claim that traces to a paragraph is not
-checkable. A claim that traces to a committed artefact can be read without trusting us, and a
-claim that traces to a command can be re-taken on your own hardware and disagreed with.
+1. **It traces to a committed file.** The compass figures, the per-seed drift and the head-to-head. You can read them from a file in this repository with no hardware, and re-take them with hardware.
+2. **It traces to a run whose logs are not committed.** The evidence for the Gemma withdrawal ([`docs/guide/limits.md`](docs/guide/limits.md)) and the count of rejected candidate directions in [what is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know). Both pages say so where the number appears.
+3. **Neither.** A number with no source beside it is a defect. Please open an issue.
 
-The figures this project quotes fall into three groups, and naming them is more honest than
-implying there is only one.
-
-1. **It traces to a committed artefact.** That is the table below: the compass AUCs, the
-   per-seed coherence drift, and the head-to-head. Every one of these can be read out of a
-   file in this repository with no hardware and no network, and re-taken with hardware.
-2. **It traces to a run whose logs are not committed.** The two that carry weight are the
-   evidence for the Gemma withdrawal (`docs/guide/limits.md`) and the count of rejected
-   candidate directions in
-   [what is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know).
-   Both pages state what the number is and that you cannot currently check it. That is worth
-   less than an artefact and it is said out loud where the number is quoted.
-3. **Neither.** If a number is quoted anywhere in the documentation, is not in the table below,
-   and has nothing beside it saying where it came from, that is a defect: please open an issue.
-   That rule is why group 2 is written down rather than left to look like group 1.
-
-## Before anything: what you need
-
-**Both of these, and each carries something the other does not.**
+## Setup
 
 ```sh
-git clone https://github.com/elementmerc/senbonzakura     # the artefacts
+git clone https://github.com/elementmerc/senbonzakura     # the committed artefacts
 cd senbonzakura
-pip install senbonzakura==0.4.0                           # the tool and the track
+pip install senbonzakura==0.4.0                           # the tool and the bundled track
 ```
 
-The clone is what holds `evidence/` and `head-to-head/`, and every verification command below
-reads a path inside one of them. **No install carries those files**, so a reader who ran only the
-pip install meets `FileNotFoundError` on the first command in the table. Found on 2026-09-26 by
-someone following this document as written, one revision after it was corrected in the other
-direction.
+You need the clone. `evidence/` and `head-to-head/` are not in the package, so the commands below fail with `FileNotFoundError` without it. You need the pip install as well, because the wheel carries the two `.bin` blobs and the bundled track that a source build lacks. The version is pinned because a figure can only be re-taken against the code that produced it.
 
-The install is what holds the tool and the bundled evaluation track, so `--track default` resolves.
-A source build carries neither of the two `.bin` blobs, which is why this says `pip install` rather
-than `pip install .`, and why the version is pinned: this document states figures, and a figure is
-only re-takeable against the code that produced it.
-
-If you only want to **read** the committed numbers rather than re-take them, the clone alone is
-enough, and `senbonzakura-check` installs in a second with no dependencies at all.
-
-The version is pinned deliberately: this document states figures, and a figure is only re-takeable
-against the code that produced it. `senbonzakura-check` resolves automatically, and the wheel
-carries the bundled evaluation track, so the commands below have their corpus already.
-
-**This told you to build from the repository until 2026-09-26**, with a pair of `git+` URLs and a
-warning that `@dev` was load-bearing. That was correct while PyPI served only the withdrawn 0.3.0
-and `senbonzakura-check` was not published at all. Both are now on PyPI at 0.4.0, and the source
-build was the worse route for this document in particular: it carries neither `.bin` blob, so a
-reader following it could not use `--track default` and could not re-take anything.
-
-To stand exactly where the numbers were taken, add the pinned set. It needs Python 3.12 or newer,
-for the reason `docs/guide/install.md` gives:
+To stand exactly where the numbers were taken, use the pinned set. It needs Python 3.12 or newer, as [`docs/guide/install.md`](docs/guide/install.md) explains:
 
 ```sh
 pip install . -c constraints.txt      # from a clone
 ```
 
-`requirements.lock` carries the same versions with hashes, if you want the bytes checked as well
-as the versions.
+`requirements.lock` carries the same versions with hashes, if you want the bytes checked too.
 
-A GPU is needed to edit a model. **Nothing in the table below needs one to verify**, because the
-artefacts are committed: you can check every published figure against its file with no hardware at
-all, and re-take it with hardware if you want to.
+Reading the committed numbers needs only the clone. Re-taking one needs a GPU.
 
 ## The committed evidence
 
 | Directory | What is in it |
 |---|---|
 | `evidence/compass-2026-07-30/` | Harm-recognition AUC for two base models, with the null controls beside them |
-| `evidence/k-sweep-2026-08-13/` | Per-seed coherence drift for the one-direction against two-direction comparison |
+| `evidence/k-sweep-2026-08-13/` | Per-seed coherence drift for one direction against two |
 | `head-to-head/results/` | Thirty artefacts: ten arms, three instruments against another tool, on one corpus and one budget |
 
-Result files have the `prompt` and `generation` fields stripped. That is not tidying: this
-repository does not carry model generations or harmful prompts, and `CONTRIBUTING.md` explains
-why that is a firm rule.
+Result files have the `prompt` and `generation` fields stripped. This repository does not carry model generations or harmful prompts. [`CONTRIBUTING.md`](CONTRIBUTING.md) explains why.
 
-## Claim to artefact to command
+## Compass figures
 
-### The compass figures, quoted in the README and in `paper.md`
+Quoted in the README and in `paper.md`.
 
 | Claim | Value | Field | Artefact |
 |---|---|---|---|
@@ -92,8 +46,7 @@ why that is a firm rule.
 | Length-only control, both models | 0.6564 | `controls.length_only_auc` | the same two files |
 | Qwen3-0.6B harm-recognition AUC | 0.6616 | `auc` | `evidence/compass-2026-07-30/base-qwen3-0.6b.json` |
 
-The control is recorded at full precision, `0.6563985752549933`, and quoted rounded to four
-places to sit beside the two AUCs, which the files record rounded already.
+The control is stored at full precision (`0.6563985752549933`) and quoted to four places.
 
 Read all three without running anything:
 
@@ -106,10 +59,7 @@ for name in ('base-qwen3-1.7b', 'base-qwen3-0.6b'):
 "
 ```
 
-Re-take them. This needs a GPU and the corpus, and the split is the part that matters. The
-recipe lives beside the artefacts, in
-[`evidence/compass-2026-07-30/README.md`](evidence/compass-2026-07-30/README.md), and it is
-carried here verbatim so there is one command rather than two that can disagree:
+To re-take them, use the recipe in [`evidence/compass-2026-07-30/README.md`](evidence/compass-2026-07-30/README.md). It is copied here word for word so that there is one command, not two that can disagree. `<track>` is what `senbonzakura track` wrote.
 
 ```sh
 python -m senbonzakura.margin --model Qwen/Qwen3-1.7B \
@@ -120,56 +70,25 @@ python -m senbonzakura.margin --model Qwen/Qwen3-1.7B \
     --out base-qwen3-1.7b.json
 ```
 
-**The `--harmless-matched` line cannot be followed as written.** Nothing in this repository builds
-a `good_matched_ds` directory. `senbonzakura track` does not write one (see
-[the track guide](docs/guide/the-track.md)), no other command does, and the set was retired as a
-track partition on 2026-10-01 (see the `good_matched_ds is not part of the track` item in
-[`DEFERRED.md`](DEFERRED.md)). The one copy that existed was a hand-built set of 280 rows at a path
-outside this repository, and it is not carried here. If you point the flag at a path that does not
-exist, the run stops with a message telling you to pass "a directory built by `senbonzakura track`",
-which that step does not produce.
+- **The `--harmless-matched` line cannot be followed as written.** Nothing in this repository builds a `good_matched_ds` directory, and `senbonzakura track` does not write one ([the track guide](docs/guide/the-track.md)). The one copy that existed was hand-built, sat outside this repository, and is not carried here. Pointing the flag at a missing path stops the run with a message asking for a directory built by `senbonzakura track`, which that step does not produce. The ledger chose not to build a replacement. On 2026-09-02 the old set scored 0.722 on topic match against 0.718 for the general corpus, where a perfect match scores 0.299. The item is in [`DEFERRED.md`](DEFERRED.md).
+- To re-take the numbers without the topic-matched control, delete that line. The file then has no `topic_matched` entry, so the construct-validity check is missing from it.
+- **Every other flag is load-bearing.** The skips are the boundaries recorded in the track's `track.json`. Without them the compass falls back to 128 and 320, warns, and still writes a file that looks like the published one.
+- **The 0.6616 row is a null.** The interval sits astride the length-only control at 0.6564, so the instrument does not separate the two groups on the smaller model. The file records that the model answered `HARMFUL` to all 4,504 harmful prompts and all 4,504 harmless ones.
 
-To re-take the AUC and the length-only control without the topic-matched control, delete the
-`--harmless-matched` line. The run then writes no `topic_matched` entry, so the construct-validity
-check described below is missing from that file. Making the check reproducible needs a builder step
-that writes a matched harmless set and records its digest in `track.json`. The ledger chose not to
-build one, on a measurement from 2026-09-02 (Qwen3-1.7B): the topic-match score read 0.722 for the
-old set against 0.718 for the general corpus, where a perfect match scores 0.299.
+## Multi-direction result
 
-**Every flag except `--harmless-matched` is load-bearing.** The skips are the boundaries recorded
-in the track's `track.json`, and a compass run given none of them falls back to the older defaults
-of 128 and 320, warns that the number may include rows the search selected on, and still writes a
-file that looks like the published one. `<track>` is what `senbonzakura track` wrote.
-
-**The second row is the one to look at**, and it is the reason this project believes what it says
-about controls. 0.6616 against a length-only control at 0.6564 is not a weak result, it is a null:
-the interval sits astride the control. The same file records that the model answered `HARMFUL` to
-all 4,504 harmful prompts and all 4,504 harmless ones.
-
-### The multi-direction result, quoted in `paper.md`
+Quoted in `paper.md`.
 
 | Claim | Artefact |
 |---|---|
-| Five seeds, one direction against two, no refusal gain this design could detect, at about 1.9 times the divergence on the mean over five seeds (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 dropping the one outlying two-direction seed) | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
+| Five seeds, one direction against two: no refusal gain this design could detect, at about 1.9 times the divergence on the five-seed mean (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side) | `evidence/k-sweep-2026-08-13/drift-per-seed.json` |
 | Both budgets at matched hard refusal, 0.1% against 0.3% | `evidence/k-sweep-2026-08-13/drift-per-seed.json`, `hard_refusal` |
 
-That file exists because the p-value this project was quoted on most often traced to a working
-note nobody outside could open. It is twenty floats and no prompts: ten of divergence, and ten of
-refusal recovered from the run's own database on 2026-09-25, because the 0.1% and 0.3% were the
-premise of the whole comparison and had no artefact behind them until then.
+The file holds per-seed divergence and refusal values and no prompts. The refusal values were recovered from the run's database on 2026-09-25, because they had no artefact before then.
 
-**Which end of that range you get depends on one seed, and on the estimator.** The mean over all
-five seeds is 1.8757. Dropping the one outlying two-direction seed gives 1.4472. This file put
-the low end at 1.5 until 2026-09-25, and that came from an unstated switch to medians (1.5073)
-with 1.45 rounded up, which widened the project's own negative result by a tenth. The estimator
-is named here so nobody has to work out which one produced the number.
+The ratio depends on one seed and on the estimator. The mean over all five seeds is 1.8757. Dropping the one outlying two-direction seed gives 1.4472. An earlier version of this file quoted 1.5, which came from a median. The figures here are means.
 
-**Read that result with its limit attached.** Those arms ran on 2026-08-13, before the held-out
-direction score existed, so their second directions were chosen by a filter since found to accept
-every candidate it was shown. What they measure is that *arbitrary* second directions cost drift,
-which is a weaker claim than the thesis the table gets read against. The artefact says so in its
-own `caveat` field. A re-run under the fixed selector is scheduled, and until it lands this is a
-known limit rather than a settled answer.
+**Read it with its limit attached.** These arms ran on 2026-08-13, before the held-out direction score existed. Their second directions were chosen by a filter that accepted every candidate it was shown, so they measure that *arbitrary* second directions cost drift. That is a weaker claim than the thesis the table is read against. The artefact's own `caveat` field says so. A re-run under the fixed selector has not been done, so this is a known limit, not a settled answer.
 
 ```sh
 python3 -c "
@@ -182,98 +101,45 @@ print(d['caveat'])
 "
 ```
 
-### The head-to-head, quoted in `docs/guide/benchmark.md`
+## Head-to-head
 
-Thirty artefacts, which is ten arms measured by three instruments, committed under
-`head-to-head/results/`. The whole comparison runs as one command, and it takes hardware and
-hours:
+Thirty artefacts under `head-to-head/results/`: ten arms, measured by three instruments against another tool. The whole comparison runs as one command. It takes hardware and hours.
 
 ```sh
 senbonzakura head-to-head --help
 ```
 
-The command is `head-to-head`, not `bench`. This file said `bench` until 2026-09-25, and the
-parser does not refuse an unknown first word: it takes it as the model to edit and prints the
-abliterator's help, exiting 0. So a reader checking the benchmark got a plausible screen with
-nothing about the benchmark on it, and the same wrong word without `--help` would have gone
-looking for a model of that name on the Hub and started editing its weights.
+The command is `head-to-head`, not `bench`. An earlier version of this file said `bench`. The parser takes an unknown first word as a model name, so that printed the abliterator's help and exited 0 rather than describing the benchmark.
 
-The keyword-rate row on that page was corrected on 2026-09-21: it had been quoting a superseded
-run on the one axis where we lose. The page carries the correction rather than only the corrected
-number.
+The keyword-rate row in [the benchmark guide](docs/guide/benchmark.md) was corrected on 2026-09-21. It had quoted a superseded run on the one axis where we lose.
 
-## Checking our numbers the way we check other people's
+## Checking results
 
-The companion package reads result files, from this tool or from others, and reports how a figure
-could be wrong: a rate on a sample too small to carry it, a proportion outside zero to one, a
-figure reported on the rows it was selected on. It needs no model, no corpus and no network.
+The companion checker reads result files, from this tool or from others. It reports how a figure could be wrong: a rate on too small a sample, a proportion outside zero to one, or a figure reported on the rows it was selected on. It needs no model, corpus or network.
 
 ```sh
 senbonzakura check head-to-head/results/ --min-applied 2
 senbonzakura check evidence/
 ```
 
-`--min-applied` is worth using and worth understanding. A file counts as checked when a single
-check applied to it, so a run where almost nothing applied looks exactly like a clean run in the
-exit code. CI asks for at least 2 per artefact, which is the floor the committed evidence actually
-supports rather than a number chosen to pass.
+`--min-applied` matters. A file counts as checked when one check applied to it, so a run where almost nothing applied looks clean. CI asks for at least 2 per artefact. The checker also reads result files from [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) and [Inspect](https://inspect.aisi.org.uk).
 
-Point it at somebody else's files too. It understands result files from
-[lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) and
-[Inspect](https://inspect.aisi.org.uk).
+## What a result file records
 
-## What a result file says about how it was made
+Each result file carries a `provenance` block: tool version and commit, Python version, platform and package versions. It is not complete. Checked on 2026-10-10 against `head-to-head/results/2026-09-10/`:
 
-A measuring command writes a `provenance` block into its result file. One function builds it,
-`provenance()` in `src/senbonzakura/crashsafe.py`, so every command that uses it records the same
-fields. The block is not complete, and a reader rerunning a number needs to know which parts are
-missing. Checked on 2026-10-10 against the files in `head-to-head/results/2026-09-10/`:
+- Python is recorded as a version (`3.12.3`), not as an interpreter path. Record `sys.executable` yourself when you reproduce a run.
+- The corpus revision and the model's Hub revision are not recorded. The label `senbon-seed42` is a name, not an identity.
+- The drift files and the summary carry no environment at all. Do not assume they came from the same environment as the scored file beside them.
 
-| Field | `scored-senbon-seed42.json` | `drift-senbon-seed42.json` and `headtohead-summary.json` |
-|---|---|---|
-| Tool version, git commit, whether the tree was dirty | Recorded: `0.4.0.dev0`, commit `a75ffee`, not dirty | No provenance block |
-| Python version | Recorded as a version only: `3.12.3` | No provenance block |
-| Path of the Python interpreter that ran | **Not recorded** | No provenance block |
-| Platform string, GPU name, device | Recorded | No provenance block |
-| Package versions (torch, transformers and so on) | Recorded | No provenance block |
-| Corpus revision (the pinned dataset version) | **Not recorded** | No provenance block |
-| Model revision (the Hub commit actually served) | **Not recorded**: only the label `senbon-seed42` | No provenance block |
+## What you cannot reproduce from this repository
 
-Three things follow from that table.
+**The corpus.** The harmful prompt set is not here. The evaluation track is a gated dataset. [The track guide](docs/guide/the-track.md) explains the split and how to build an equivalent from public sources. This limit is deliberate: a fully reproducible harmful corpus in a public repository would be a harmful corpus in a public repository.
 
-- **Python is recorded as a version, not a path.** The field comes from `platform.python_version()`,
-  which gives `3.12.3` for every interpreter at that version. A system Python and a virtual
-  environment built from it look identical in the file. Record `sys.executable` yourself when you
-  reproduce a run.
-- **The drift files and the summary carry no environment at all.** Nothing in them ties the drift
-  numbers to the interpreter, packages or commit recorded in the scored file beside them. The
-  files do not say the two came from the same environment, so do not assume it.
-- **Nothing says which checkpoint or dataset version a number came from.** The label
-  `senbon-seed42` is a name, not an identity. `src/senbonzakura/stamps.py` has a helper,
-  `model_identity`, that records the checkpoint's id and revision, but the 2026-09-10 scored file
-  does not carry its output. Whether later files do is a separate question this table does not
-  answer.
-
-## What you cannot reproduce from this repository, and why
-
-**The corpus.** The harmful prompt set is not here. The evaluation track is published as a gated
-dataset, and `docs/guide/the-track.md` explains the split and how to build an equivalent one from
-public sources. This is the deliberate limit on reproducibility in this project, and it is a
-trade: a fully reproducible harmful corpus in a public repository is a harmful corpus in a public
-repository.
-
-**Anything above 3B parameters.** No measurement above 3B still stands. Qwen3-4B WAS run, in
-July 2026, and those figures are withdrawn: the scorer had thinking mode switched on, so the
-replies being scored were not the replies the search had picked its winner on. Nothing has been
-re-run above 3B since, because the card this project owns cannot hold one. The instruments also weaken as the model
-shrinks, which the compass row above shows better than any sentence could.
+**Anything above 3B parameters.** No measurement above 3B stands. Qwen3-4B was run in July 2026, and those figures are withdrawn. The scorer had thinking mode on, so it scored replies the search had not picked its winner on. Nothing above 3B has been re-run, because the GPU this project owns cannot hold one. The instruments also weaken as the model shrinks, as the compass table shows.
 
 **The abliterated weights.** No abliterated checkpoint is published with this software.
 
 ## If a number does not reproduce
 
-Tell us. A figure that does not reproduce is the most useful issue this project can receive, and
-it has happened before: several published numbers have been withdrawn after exactly that. Include
-the command, the artefact you got, and `senbonzakura doctor` output.
-[What is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know)
-is the running record of which claims survived.
+Tell us. A figure that does not reproduce is the most useful issue this project can receive, and several published numbers have been withdrawn after exactly that. Include the command, the artefact you got and the output of `senbonzakura doctor`. [What is and is not established](https://elementmerc.github.io/senbonzakura/guide/what-we-know) is the running record of which claims have survived.

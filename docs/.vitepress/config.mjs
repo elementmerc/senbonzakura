@@ -78,7 +78,7 @@ export default {
     nav: [
       { text: 'Guide', link: '/guide/what-it-is', activeMatch: '/guide/' },
       { text: 'Reference', link: '/reference/cli', activeMatch: '/reference/' },
-      { text: 'Contribute', link: '/contributing' },
+      { text: 'Contribute', link: 'https://github.com/elementmerc/senbonzakura/blob/main/CONTRIBUTING.md' },
       {
         // NOT a version number. The site went live in this range, and baseline section 16 keeps
         // unreleased versions out of public artefacts: naming one in the nav of a published site
@@ -118,7 +118,6 @@ export default {
           items: [
             { text: 'The method', link: '/guide/how-it-works' },
             { text: 'The track', link: '/guide/the-track' },
-            { text: 'Contamination', link: '/guide/contamination' },
             { text: 'Quantisation', link: '/guide/quantisation' },
             { text: 'The evaluation track: dataset card', link: '/evaluation-track-card' },
             { text: 'Where the corpus came from', link: '/corpus-provenance' },
@@ -129,7 +128,6 @@ export default {
           items: [
             { text: 'The compass', link: '/guide/compass' },
             { text: 'Does the edit hold up', link: '/guide/robustness' },
-            { text: 'The finetuning engine', link: '/guide/finetuning' },
             { text: 'Failing a build on a regression', link: '/guide/gating' },
             { text: 'Benchmarking against another tool', link: '/guide/benchmark' },
             { text: 'How this compares to other tools', link: '/comparison' },

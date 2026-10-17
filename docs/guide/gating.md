@@ -1,52 +1,14 @@
 # Failing a build on a regression
 
-`senbonzakura baseline` writes down what a measurement was. `senbonzakura gate` compares a later
-measurement against it and exits non-zero when the property moved. Together they are how you stop
-a change quietly making a model worse.
+`senbonzakura baseline` writes down what a measurement was. `senbonzakura gate` compares a later measurement against it and
+exits non-zero when the property moved. Together they stop a change from quietly making a model worse.
 
 Neither command needs a GPU, a model or a network. They read JSON and write JSON.
 
-## The picture first
-
-Think of a baseline as a photograph with the camera settings written on the back. A gate is
-somebody holding a new photograph next to it and saying whether the thing in the picture moved, or
-whether you just changed the lens.
-
-```text
-  a run  ──►  result.json  ──►  senbonzakura baseline  ──►  baselines/coherence.json
-                                                                      │
-  a later run  ──►  result.json  ──►  senbonzakura baseline  ──►  later.json
-                                                                      │
-                                         senbonzakura gate ◄──────────┘
-                                                  │
-                                       exit 0  or  exit 1
-```
-
-The second `baseline` call is the step people skip. The gate compares two **recorded**
-measurements, never a recorded one against a raw result artefact, because a raw artefact does not
-say how many seeds the figure rests on and the gate will not guess.
-
-### If you ran `senbonzakura measure`, point `baseline` at one of the files beside the summary
-
-`measure` runs several instruments at once and writes `measure.json`, which is an index of them
-rather than a measurement. It has no single figure in it, so there is nothing for `baseline` to
-record, and it says as much if you try. Each instrument writes its own file in the same directory,
-and those do carry a figure and the conditions it was taken under:
-
-```
-senbonzakura baseline out/score.json --seeds 42,43,44,45,46 --out baselines/refusal.json
-```
-
-The reason it is not one step is worth a sentence, because it looks like a missing feature. Every
-recorded measurement states the conditions it was taken under, and these instruments genuinely
-differ on several of them: they measure different properties, on different inputs, over different
-rows. A summary carrying one value for each of those would be making a claim that is true of one
-instrument and false of the rest, which is exactly what the gate exists to catch somebody doing.
-
 ## A worked example you can run
 
-Everything below was run to produce the output shown. No model is involved; the inputs are result
-artefacts carrying a stamped `metrics` block, which every scoring command in this tool writes.
+Everything below was run to produce the output shown. No model is involved. The inputs are result artefacts with a stamped
+`metrics` block, which every scoring command here writes.
 
 ### 1. Record the baseline
 
@@ -63,17 +25,16 @@ baseline written to baselines/coherence.json: coherence at 3.0100 nats-per-token
     senbonzakura gate --baseline baselines/coherence.json --current later.json
 ```
 
-`--seeds` is stated by you and never inferred. One artefact is one run, and a baseline claiming a
-spread it does not have is worse than no baseline: the gate would then accept a change that moved
-the property, because it thinks the interval is wider than it is.
+`--seeds` is stated by you and never inferred. A baseline that claims a spread it doesn't have would let the gate accept a change
+that moved the property.
 
-If the artefact stamped more than one metric, the command refuses and names every candidate, so
-pass `--metric coherence` (or `--metric refusal_rate.senbonzakura-ruler`) to choose.
+If the artefact stamped more than one metric, the command refuses and names them all. Pass `--metric coherence` (or
+`--metric refusal_rate.senbonzakura-ruler`) to choose. The output file is never overwritten. A new baseline is a new file.
 
-The output file is never overwritten. A new baseline is a new file, so a baseline cannot be edited
-into agreeing with the run it was supposed to judge.
+`measure` writes an index, `measure.json`, not a measurement, so `baseline` has nothing to record from it. Point `baseline` at one
+of the instrument files beside it.
 
-### 2. Record the new run the same way, then gate it
+### 2. Record the new run, then gate it
 
 ```sh
 senbonzakura baseline after.json --seeds 42,43,44,45,46 --out later.json
@@ -89,8 +50,6 @@ gate OK: coherence: within interval
   own is not a finding.
 ```
 
-Exit status 0.
-
 A run that did:
 
 ```
@@ -100,8 +59,7 @@ gate FAIL: coherence: REGRESSED
   lower is better.
 ```
 
-Exit status 1, which is what makes it a gate. In a CI step, run both commands bare and let the
-step fail on any non-zero status:
+In CI, run both commands bare and let the step fail on any non-zero status:
 
 ```yaml
 - name: The edit did not cost coherence
@@ -110,9 +68,7 @@ step fail on any non-zero status:
     senbonzakura gate --baseline baselines/coherence.json --current later.json
 ```
 
-That is correct and it is conservative: it goes red on a regression and red on a refusal, which is
-the right way round for both. Read the status yourself only when you want to tell them apart, and
-then read the actual number rather than "did it fail":
+That's conservative in the right way: it goes red on a regression and on a refusal. To tell them apart, read the status:
 
 ```sh
 set +e
@@ -129,42 +85,48 @@ esac
 
 ### Two lines not to write
 
-Both of these look right and are wrong, and they are wrong in the same way: **they ask "did it
-fail" of a command that answers three things.**
+Both look right and are wrong, for the same reason: **they ask "did it fail" of a command that answers three things.**
 
 ```sh
 senbonzakura gate --baseline b.json --current c.json || echo "coherence regressed"
 ```
 
-A refused comparison prints "coherence regressed". Nothing regressed. Nothing was measured
-against anything, and somebody is now looking for a change in the model instead of a mismatch in
-their baseline.
+A refused comparison prints "coherence regressed". Nothing regressed. Nothing was compared, and somebody is now hunting for a
+change in the model instead of a mismatch in the baseline.
 
 ```sh
 if senbonzakura gate --baseline b.json --current c.json; then ship; fi
 ```
 
-A refused comparison does not ship, which sounds safe, and says nothing about why. The build is
-red for a reason nobody is told, so the fix people reach for is re-recording the baseline until it
-goes green, which is the one repair that makes the gate meaningless.
+A refused comparison doesn't ship, and says nothing about why. The usual fix is re-recording the baseline until it goes green,
+which makes the gate meaningless.
 
-The `case` block above is longer than either line and it is the shortest version that cannot lie.
+The `case` block above is longer than either line, and it's the shortest version that can't lie.
+
+## The three exit codes
+
+A CI step that branches on "non-zero" treats two different answers as one. A regression is a finding about the model. A refusal is
+a finding about your pipeline.
+
+| Status | Means | What to do |
+|--:|---|---|
+| 0 | `gate OK` | Nothing. The property did not move outside its interval |
+| 1 | `gate FAIL` | A real regression. The change moved the property in the worse direction |
+| 2 | `gate REFUSED` | The two measurements are not comparable. Nothing was compared, so this is **not** a pass and **not** a regression |
+
+`baseline` also exits 2 when it refuses to record: an artefact with more than one stamped metric, or an output path that already
+holds a baseline.
 
 ## Why it compares intervals and not numbers
 
-Two measurements of the same model differ run to run. A gate that fired whenever the number moved
-would fire constantly and get switched off, which is worse than having no gate: a disabled check
-reads as a passing one on the dashboard.
+Two measurements of the same model differ run to run. A gate that fired on every movement would get switched off, and a disabled
+check looks like a passing one on the dashboard. So overlapping intervals mean no evidence the property moved. The direction matters
+too: `coherence` is in nats per token, where lower is better, so moving **up** outside the interval is the regression.
 
-So the comparison is between intervals. Overlapping intervals mean there is no evidence the
-property moved, and the point estimate's drift is reported but is not the verdict. The direction
-matters too: `coherence` is measured in nats per token, where lower is better, so moving **up**
-outside the interval is the regression and moving down is not.
+## What the gate refuses to compare
 
-## What the gate refuses to do
-
-It refuses to compare two measurements that are not comparable, and it says which field disagreed.
-A baseline carries the conditions it was taken under, and all of these have to match:
+A baseline records the conditions it was taken under. A comparison is refused unless all of these match, and the refusal names the
+field that disagreed:
 
 | Field | Why a difference makes the comparison meaningless |
 |---|---|
@@ -176,7 +138,7 @@ A baseline carries the conditions it was taken under, and all of these have to m
 | `prompt_format` | Three copies of the prompt renderer drifted once, and a table was published across the gap |
 | `precision` | A 4-bit reading and a bfloat16 reading of the same model are different measurements |
 | `tool_version` | The edit and the scorer both live in this package |
-| `seeds` | The random seeds a sampled figure was drawn over, so two runs on different seed sets are not compared. A method that draws no samples says so (`no-seed`), which is a different statement from a missing field |
+| `seeds` | The seeds a sampled figure was drawn over. A method that draws no samples says so (`no-seed`), which is different from a missing field |
 
 What a refusal looks like:
 
@@ -190,105 +152,43 @@ its filename what changed. Comparing across a mismatch is how a drifted prompt r
 published table and a passing build.
 ```
 
-A refusal here is the gate working. The alternative is a number that looks like a comparison and
-is not one, which is the single defect this whole tool exists to find.
+A refusal is the gate working.
 
-## The three exit codes
+## Keeping the history
 
-A CI step that branches on "non-zero" is treating two different answers as one. They are not the
-same, and the difference is worth wiring up: a regression is a finding about the model, and a
-refusal is a finding about your pipeline.
-
-| Status | Means | What to do |
-|--:|---|---|
-| 0 | `gate OK` | Nothing. The property did not move outside its interval |
-| 1 | `gate FAIL` | A real regression. The change moved the property in the worse direction |
-| 2 | `gate REFUSED` | The two measurements are not comparable. Nothing was compared, so this is **not** a pass and **not** a regression |
-
-Status 2 is the one to be careful with. A step written as `gate || echo "regression"` reports a
-mismatched baseline as a regression, and a step written as `if gate; then ok; fi` treats it as a
-failure without saying the comparison never happened.
-
-## Recording the baseline itself
-
-`senbonzakura baseline` refuses rather than guessing, in two cases worth knowing before they
-interrupt a build. Both exit 2, the same status `gate` uses for "I did not do the comparison".
-
-An artefact with more than one stamped metric:
-
-```
-refused:
-  this artefact stamped 2 metrics, so --metric has to say which one: coherence,
-  refusal_rate. Guessing between them would gate a later run on a property
-  nobody chose.
-```
-
-An output path that already holds a baseline:
-
-```
-refused:
-  baselines/coherence.json
-  already exists, and baselines are never overwritten in place. A new baseline
-  is a new file: name it for what changed, and keep the old one so the
-  ...
-```
-
-## Keeping the history, so March is still evidence in June
-
-By default the gate reads two files, decides, and writes nothing. Pass `--history` and every run
-leaves a record behind, pass or fail.
+Pass `--history` and every run leaves a record, pass or fail:
 
 ```sh
 senbonzakura gate --baseline baselines/coherence.json --current later.json \
   --history gate-history/
 ```
 
-Each record holds what was compared, what the verdict was, and the whole measurement rather than
-just its number, so somebody disputing the verdict later can re-judge it from the conditions it
-was taken under. Records are named after their own contents, which means two things worth
-knowing. A re-run of the same comparison records it once, so a job killed halfway is safe to
-re-run. And nothing is ever overwritten: a different comparison is a different name.
+Each record holds the comparison, the verdict and the whole measurement, so a disputed verdict can be re-judged. Records are named
+after their contents, so a re-run records once and nothing is overwritten. If the directory can't be written, the verdict still
+stands. A full disk must not turn a regression into a pass.
 
-If the directory cannot be written to, the gate says so and the verdict stands. Whether your disk
-is full is a fact about your disk, and a full disk must not turn a regression into a pass or a
-pass into a regression.
+## Addresses instead of files
 
-## Fetching a baseline instead of re-measuring it
-
-Every recorded measurement carries the digest of its own contents, printed as
-`sha256:` followed by sixty-four characters. That is its address, and two measurements that say
-the same thing share one.
+Each recorded measurement carries a `sha256:` digest of its contents. With `--store` pointing at a directory, either file can be given
+as an address:
 
 ```sh
 senbonzakura gate --store baselines/ \
   --baseline sha256:8392ca6c81f978b6...  --current out/this-run.json
 ```
 
-With `--store` pointing at a directory, either file may be given as an address rather than a
-path, and the gate looks it up. The point is cost: a team gating several models a day
-re-measures a baseline it already holds unless there is a name under which the old one can be
-found, and re-measuring is what makes a gate too expensive to run on every change.
-
-The address is not the same thing as `input_digest`, which says which input the number was taken
-on. A thousand measurements of one corpus share an `input_digest` and have a thousand addresses.
-
-One useful side effect: because the address covers the contents, a recorded measurement that has
-been edited since no longer matches its own stamp, and the gate refuses it rather than comparing
-against a number nobody measured.
+This saves re-measuring a baseline you already hold. An edited measurement no longer matches its own digest, so the gate refuses it.
 
 ## What a pass does not mean
 
-Printed by the command itself, every time, and worth repeating here:
+The command prints this every time:
 
 > A pass means one measured property did not move outside its interval, on one track, under the
 > conditions the baseline records. It is not a statement that the model is safe, that other
 > properties held, or that the track represents anything beyond itself.
 
-A green gate on coherence says nothing about refusal, and a green gate on refusal says nothing
-about capability. Gate the properties you care about, each with its own baseline file.
-
-That sentence on its own is not much use, because "one property, on one track" does not say
-which. So the command prints the slice beside it, every run:
+A green gate on coherence says nothing about refusal, and the reverse holds too. Gate each property you care about with its own baseline.
+The command also prints the slice it checked:
 
 ```
   Checked: coherence on the fixed-passage partition, n=1, seeds [42],
@@ -296,9 +196,6 @@ which. So the command prints the slice beside it, every run:
   Not checked: every other property, every other partition, and anything this
            metric does not measure.
 ```
-
-A reader can then tell a gate over one passage from a gate over a whole corpus without going to
-look for the baseline file.
 
 ## Where next
 

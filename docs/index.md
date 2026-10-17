@@ -4,8 +4,7 @@ hero:
   name: Senbonzakura
   text: The world's top open-weight AI model workshop
   tagline: >
-    Measure, uncensor and audit.     Refusal removal for open-weight language models, and the instruments to tell you
-    whether it worked. Including the runs where the answer was no.
+    Measure, uncensor and audit. Refusal removal for open-weight language models, and the tools to check whether it worked.
   image:
     src: /mark.svg
     alt: Senbonzakura
@@ -21,40 +20,27 @@ hero:
       link: /guide/what-we-know
     - theme: alt
       text: Contribute
-      link: /contributing
+      link: https://github.com/elementmerc/senbonzakura/blob/main/CONTRIBUTING.md
 
 features:
   - title: Publishes the runs that went against it
-    details: >
-      Ideas this project was built on have been tested and dropped when the measurement said so,
-      and the withdrawals are written up rather than quietly deleted. Every figure carries the
-      conditions it was measured under.
-    link: /guide/what-we-know
-    linkText: What is and is not established
-  - title: Ships its own instruments
-    details: >
-      A compass that asks whether the model still recognises harm, held-out arms, seeded
-      bootstrap intervals, and null controls printed beside every result.
-    link: /guide/compass
-    linkText: Measuring the result
-  - title: Says what it does not know
-    details: >
-      Withdrawn claims stay on the page with the reason. Numbers carry the conditions that
-      qualify them, next to the number rather than three hundred lines below it.
+    details: Withdrawn claims stay on the record, with the reason. Every figure carries its conditions.
     link: /guide/what-we-know
     linkText: What is established
+  - title: Ships its own instruments
+    details: A compass for harm recognition, held-out arms, bootstrap intervals and null controls.
+    link: /guide/compass
+    linkText: The compass
+  - title: Says what it does not know
+    details: Limits sit next to the numbers they qualify.
+    link: /guide/limits
+    linkText: Limits and known defects
 ---
 
 ## What it makes
 
-A model that will answer requests the original refused, including harmful ones. That is the
-point, and it is permanent in the weights. The base model's licence still governs the result, and
-a released wheel carries roughly 6,200 harmful prompts so it runs offline. Which artefact carries
-what is set out in the [evaluation track card](/evaluation-track-card): the repository itself
-carries none of them, and neither does a build from a clone. A `pip install
-senbonzakura` does: the published wheel carries the track.
+A model that will answer requests the original refused, including harmful ones. The change is permanent in the weights. The base model's licence still governs the result.
 
-Everything else here is about whether the removal can be measured honestly, which only matters
-once that paragraph is understood.
+A released wheel carries roughly 6,200 harmful prompts so it runs offline. The repository and a build from a clone carry none of them. The [evaluation track card](/evaluation-track-card) says which artefact carries what.
 
-[What it is](/guide/what-it-is) covers it properly.
+[What it is](/guide/what-it-is) explains the tool. The [guide](/guide/) covers the rest.

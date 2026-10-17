@@ -1,16 +1,11 @@
 # Your first run
 
 ::: danger Before the first command
-What comes out of this will answer requests the original refused, including harmful ones, and the
-change is permanent in the weights. Read [What it is](/guide/what-it-is) first; this page is the
-mechanics.
+What comes out of this will answer requests the original refused, including harmful ones, and the change is
+permanent in the weights. Read [What it is](/guide/what-it-is) first. This page is the mechanics.
 :::
 
-Right. Let's actually edit a model.
-
-You'll need a GPU, a model, and a track. The track is the pile of prompts the tool learns from,
-and if you don't have one yet, skip to [the track](/guide/the-track) and come back. It takes a
-couple of minutes to build.
+You need a GPU, a model, and a track. If you don't have a track, see [the track](/guide/the-track).
 
 ## The one command
 
@@ -22,100 +17,55 @@ senbonzakura kageyoshi \
     --device cuda
 ```
 
-Then go and do something else for the afternoon. Plan for a couple of hours.
-
-The nearest thing to a measured expectation: **108 minutes from the command to `DONE`**, end to
-end, for **Qwen3-0.6B** on a 6 GB card at the defaults with the weights already cached. That is a
-different model from the one above, of about the same size, so treat it as the right order of
-magnitude rather than a promise; the model in the command has not been timed at the default budget.
-A bigger model takes longer, and a cold cache adds the download on top.
+Plan for a couple of hours. The nearest measured expectation is **108 minutes from the command to `DONE`** for
+**Qwen3-0.6B** on a 6 GB card at the defaults, with the weights cached. The model in the command has not been timed
+at the default budget.
 
 ::: tip Why this model
-It refuses 58.6% of the bundled evaluation set, measured at n=128, so you can actually watch the
-thing change. A model that hardly refuses to begin with gives you nothing to see, and the tool now
-declines to edit one below 5% rather than let you draw a conclusion from noise.
+It refuses 58.6% of the bundled evaluation set (n=128), so you can watch the change. The tool declines to edit a
+model below 5% refusal.
 :::
 
-"End to end" is doing real work in that sentence. This page used to say "about an hour", which is
-roughly what the *search* alone costs, and about half of the wall clock falls **after** the search's
-progress line reaches `ETA 0s`. The next section breaks that down. Be pleased if it's less.
+## What it does while you wait
 
-That's genuinely it. No configuration file, no tuning, no eight knobs to guess at.
-
-::: tip Why "kageyoshi"?
-Senbonzakura Kageyoshi is the sword's second release: the point where a thousand blades become
-a great many more. It's the mode that does the searching for you, so it got the bigger name.
-
-Naming a CLI subcommand after an anime power-up is either the best or the worst decision in this
-codebase and I've made peace with not knowing which.
-:::
-
-## What it's doing while you wait
-
-It runs a few hundred attempts at uncensoring your model, each with different settings, and scores
-every one on three things at once: how many refusals are left, how far the model has drifted from
-the original, and whether the output has turned to mush.
-
-Then it picks the best trade-off, applies it properly, and saves the result.
-
-You'll see something like this scrolling past:
+It runs a few hundred attempts at uncensoring, each with different settings, and scores each on three things: refusals
+left, drift from the original, and whether the output has turned to mush. Then it applies the best trade-off and saves
+the result.
 
 ```
 trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 -> refusals=3.1% heretic=12.5% broken=0% KL=0.19
 ```
 
-Left to right: which attempt, the shape of the cut it tried, how many directions, then the four
-numbers that decide whether it was any good. `refusals` is the one you came for. `KL` is what it
-cost you.
+`refusals` is the one you came for. `KL` is what it cost you.
 
-### The phases, and what the ETA actually covers
+### The phases
 
 ::: warning The ETA is the search's ETA, not the run's
-The `progress` line counts search trials, and its ETA is an estimate of when the trials will be
-done. When it reaches zero the run is not finished; it has finished **step 3 of 7**. On the measured
-0.6B run the search reached its last trial at 3166 seconds and the command printed `DONE` at 6507
-seconds, so there were another 56 minutes to go with no ETA to describe them.
+The `progress` line counts search trials. When its ETA reaches zero, the run has finished **step 3 of 7** and is not
+done. On the measured 0.6B run the search reached its last trial at 3166 seconds, and `DONE` printed at 6507 seconds.
 :::
-
-In order. The counts are the `abliterate` defaults; `kageyoshi` sizes the search and the
-measurement levers itself, so its numbers differ, but the phases and their order are the same.
 
 | # | Phase | What it costs |
 |---|---|---|
-| 1 | Load the model, cache the original first-token distribution (the KL reference) and measure the baseline refusal rate | Minutes on a GPU, and see the note below if you're on CPU |
-| 2 | Baseline capability probe on the unedited model | 200 graded items at up to 512 new tokens each |
-| 3 | **The search.** `--trials` attempts, each one baked, scored and rolled back | This is the part the progress line and the ETA describe |
-| 4 | Re-score the top `--top-rescore` candidates (6) on `--eval-refusal-final` prompts (128) held out from the search | Six full generation passes, each one comparable to a chunk of the search |
-| 5 | Bake the winner into the weights for real | Fast |
-| 6 | Post-bake measurement: refusals, the Heretic keyword rate, KL, and the capability probe again | Another 200-item probe, so roughly what phase 2 cost |
-| 7 | Save the model directory and write `abliteration.json` | Disk-bound; minutes for a small model, longer for a large one |
+| 1 | Load the model, cache the original first-token distribution (the KL reference), measure the baseline refusal rate | Minutes on a GPU |
+| 2 | Baseline capability probe on the unedited model | 200 graded items |
+| 3 | **The search.** `--trials` attempts, each baked, scored and rolled back | The part the progress line and ETA describe |
+| 4 | Re-score the top `--top-rescore` candidates (6) on 128 prompts held out from the search | Six full generation passes |
+| 5 | Bake the winner into the weights | Fast |
+| 6 | Post-bake measurement: refusals, keyword rate, KL, capability probe again | Another 200-item probe |
+| 7 | Save the model and write `abliteration.json` | Disk-bound |
 
-Phases 4 and 6 are the ones that surprise people, and neither is optional padding: phase 4 is what
-stops the winner being overfit to the small in-search eval, and phase 6 is the only measurement
-taken on the weights you are actually going to ship rather than on a hooked model.
+Phases 4 and 6 matter. Phase 4 stops the winner being overfit to the in-search eval. Phase 6 is the only measurement
+taken on the weights you'll ship. To shorten the tail, use `--capability-n` or `--top-rescore`. Both measure less, so
+lower them knowingly.
 
-If you want the tail shorter, the two flags that matter are `--capability-n` (phases 2 and 6) and
-`--top-rescore` (phase 4). Both of them buy time by measuring less, so lower them knowing what you
-are giving up.
+On CPU, phase 1 can sit for several minutes with no output. It isn't stuck. It works through its prompts a batch at
+a time, and that loop doesn't report progress.
 
-::: tip The quiet bit in phase 1
-On CPU, the line `caching original first-token distribution (KL reference) + baseline refusals` can
-sit there for several minutes with nothing after it. A measured CPU run went 7 minutes 15 seconds
-without printing anything at that point. It isn't stuck; it's working through its evaluation
-prompts a batch at a time, and that loop doesn't report progress. Everything either side of it
-does.
-:::
+## The knobs
 
-## It picks the knobs itself, and it means it
-
-`kageyoshi` owns the search settings. If you pass `--trials` or `--max-directions` alongside it,
-they're ignored, and it'll tell you so rather than pretending.
-
-That's deliberate. The whole point of the mode is that it sizes the search to your model: a 1.7B
-gets a different budget from a 12B, and a mixture-of-experts model gets different handling from a
-dense one. Half-overriding that gives you the worst of both.
-
-If you want the knobs, use the manual mode below.
+`kageyoshi` owns the search settings. If you pass `--trials` or `--max-directions` with it, they're ignored, and it
+says so. For control, use the manual mode.
 
 ## Doing it by hand
 
@@ -129,34 +79,21 @@ senbonzakura abliterate \
     --max-directions 3
 ```
 
-Same thing, except you're deciding the budget and the direction count. See
-[flags worth knowing](/reference/flags) for the ones that actually change what a run means, as
-opposed to the ones that just change how long it takes.
+[Flags worth knowing](/reference/flags) lists the ones that change what a run means.
 
 ## When it finishes
 
-You get a model directory you can load with `transformers` like any other, plus an
-`abliteration.json` next to it recording exactly what was done: the winning configuration, the
-seed, how many trials actually ran, the package versions, the commit.
+You get a model directory you can load with `transformers`, plus `abliteration.json`: the winning configuration, the
+seed, how many trials ran, the package versions and the commit.
 
-That file matters more than it looks. It's the difference between "this model is uncensored" and
-"this model was uncensored on 2026-08-14 with these settings, and here's how to do it again".
+The directory holds the weights and `abliteration.json`, with no prompt text or replies. The command that keeps
+per-prompt rows is `senbonzakura compass`. It keeps them because a rate with no rows behind it can't be checked. Its
+output then holds harmful prompts and replies, so don't push it to a public repository. `--no-margins` turns them off.
 
-**One thing to know about the other files.** This run's output directory holds the weights and
-`abliteration.json`, and no prompt text or model replies.
+## Check whether you broke it
 
-The command that does keep per-prompt rows is `senbonzakura compass`, and it keeps them on
-purpose: it is where a scoring bug becomes visible, and a rate with no rows behind it cannot be
-checked. It also means the directory `compass` writes to holds harmful prompts and the replies to
-them, which is the last thing you want to push to a public repository by accident. That command
-takes `--no-margins` if you would rather not have them.
-
-## Now check whether you broke it
-
-This is the step most people skip, and it's the interesting one.
-
-Your model has stopped refusing. Has it also stopped *understanding* that some requests are
-dangerous? Those are different things, and only one of them is a problem.
+Your model has stopped refusing. Has it also stopped *understanding* that some requests are dangerous? Those are
+different, and only one is a problem.
 
 ```sh
 senbonzakura compass --model my-abliterated-model \
@@ -164,11 +101,9 @@ senbonzakura compass --model my-abliterated-model \
     --out compass.json
 ```
 
-[The compass](/guide/compass) explains what the number means and, more importantly, what it
-doesn't.
+[The compass](/guide/compass) explains what the number means, and what it doesn't.
 
 ## So what?
 
-One command gets you an edited model. The second command tells you what it cost. Running the first
-without the second is how people end up publishing a refusal rate for a model that has quietly
-been lobotomised, and it happens more than you'd think.
+One command gets you an edited model. The second tells you what it cost. Running the first without the second is how
+people publish a refusal rate for a model that has quietly been damaged.

@@ -1,74 +1,36 @@
 # Measuring a behavioural property of a language model
 
-This is not documentation for a piece of software. It is what we have learned about measuring a
-behavioural property of a model so that the number survives somebody else reading it carefully.
-It is written to be used against any tool, including this one, and every rule in it is here
-because we broke it first and had to withdraw something.
+This is about measuring a behavioural property of a model so that the number survives a careful reader. Refusal, hedging, helpfulness, correctness and coherence all count. The rules apply to any tool, including this one.
 
-A behavioural property is anything you can only observe by running the model and judging what
-comes out: refusal, hedging, helpfulness, whether an answer is correct, whether the text is
-coherent. These are harder to measure than they look, because the measurement has as many moving
-parts as the thing being measured, and almost all of them are invisible in the final number.
+These properties only show up when you run the model and judge what it says. The measurement has as many moving parts as the thing being measured, and most of them are hidden inside the final number.
 
-The short version: **the number is not the measurement.** The measurement is the number plus the
-conditions it was taken under, and a number reported without them cannot be checked, cannot be
-compared, and cannot be withdrawn cleanly when it turns out to be wrong.
+**The number is not the measurement.** The measurement is the number plus the conditions it was taken under. Without those conditions, a number cannot be checked, compared or withdrawn cleanly.
 
 ---
 
 ## 1. Measure the instrument before you trust the result
 
-The single most useful thing in this document. Before reporting that your model scores X on some
-property, run a **null control**: a deliberately stupid measurement that should score much worse.
-If it does not, your instrument is measuring something other than what you named it.
+Run a null control: a measurement that should score much worse. If it scores nearly as well, your instrument is measuring something other than what you named it. For text, a good control is a ruler that reads only sentence length.
 
-The control has to be plausible enough to be embarrassing. A good one for text is a ruler that
-reads nothing but sentence length. If a length-only ruler separates your two groups as well as
-your carefully built instrument does, then your instrument is a length detector wearing a
-different name.
+Our harm-recognition measure scores 0.9887 on Qwen3-1.7B against a length-only control at 0.6564. That is a real gap. On Qwen3-0.6B it scores 0.6616 against the same control. That second pair is not a weak result. It measures nothing, and only the control showed it.
 
-This is not hypothetical. Our own harm-recognition measurement scores 0.9887 on one model against
-a length-only control at 0.6564, which is a real gap. On a smaller model of the same family it
-scores 0.6616 against that same control at 0.6564. The second pair is not a weak result; it is
-**not a measurement of anything**, and nothing except the control would have told us.
+**What to do:** pick the control before you look at the result, report it beside every figure, and treat "the control did nearly as well" as a failed measurement, not a caveat.
 
-**What to do:** pick a control before you look at the result, report it beside every figure, and
-treat "the control did nearly as well" as a failed measurement rather than a caveat.
+## 2. A rate belongs to the setup, not the model
 
-## 2. A rate is a property of the setup, not of the model
+A refusal rate belongs to the model, the prompts, the prompt format, the generation budget, the decoding settings and the rule that decides what counts. Change any of them and the number moves, usually without anyone noticing.
 
-A refusal rate, a hedging rate, a helpfulness score: none of these belong to the model alone. Each
-belongs to the model, the prompts, the prompt format, the generation budget, the decoding
-settings, and the rule that decides what counts. Change any of those and the number moves, usually
-without anybody noticing that it has.
+- **The budget is shorter than the behaviour.** A refusal that appears after token 48 is never generated, so it scores as compliance. We measured a defended model whose refusals sat past the 300th character. It scored as almost fully compliant under a short scan, and correctly under a full one.
+- **The rule looks in the wrong place.** A scan of the first part of a reply shows where the behaviour sits, not whether it is there.
+- **The rule fires on ordinary language.** Our hedging detector counted phrases like "is illegal" and "security risk". Those appear in complete, compliant technical answers. The detector carried full weight in the rule that chose which model to ship, so the search favoured models that do not caveat. That was a tone preference under a compliance name.
 
-Three ways this goes wrong in practice:
-
-**The budget is shorter than the behaviour.** If a model refuses at the end of a long preamble and
-you stop generating at 48 tokens, the refusal is never emitted, so it is scored as compliance. The
-model got safer by being cut off. We measured this: a defended model whose refusals sit past the
-300th character scored as almost fully compliant under a short scan, and correctly under a full
-one.
-
-**The rule is looking in the wrong place.** A scan of the first part of a reply measures where the
-behaviour sits, not whether it is there.
-
-**The rule fires on ordinary language.** Our hedging detector counted phrases like "is illegal"
-and "security risk", which appear constantly in complete, compliant technical answers. It scored
-those answers as refusals, and it carried full weight in the rule that chose which model to ship.
-So the search was being steered toward models that do not caveat, which is a tone preference
-wearing the name of a compliance measurement.
-
-**What to do:** record the corpus, the prompt format, the budget and the decision rule next to the
-number. If you cannot say what budget produced a rate, you do not have a rate.
+**What to do:** record the corpus, the prompt format, the budget and the decision rule next to the number. If you cannot say what budget produced a rate, you do not have a rate.
 
 ## 3. Never report a figure on the rows you chose it with
 
-If you search over configurations and report the score of the winner, that score is the best of N
-draws, not an estimate of anything. This is the most common way a good-faith measurement becomes
-an overstatement, and it does not feel like cheating while you are doing it.
+If you search over configurations and report the score of the winner, you are reporting the best of N draws, not an estimate. This is the most common way a good-faith measurement becomes an overstatement.
 
-Split the data three ways and keep the boundary:
+Split the data three ways and keep the boundaries:
 
 | Partition | What touches it |
 |---|---|
@@ -76,90 +38,56 @@ Split the data three ways and keep the boundary:
 | Selection | The search, the hyperparameters, anything you compare and pick between |
 | Measurement | Nothing, until the final number. Once you look, it is spent |
 
-Two-way splits are not enough when there is a search, because the search consumes the second
-partition and leaves nothing clean to report on.
+Two-way splits are not enough when there is a search, because the search uses up the second partition.
 
-We have published a figure scored on a selection partition, with a sample of 64, and had to
-withdraw it. The model was fine. The number described rows the configuration had been chosen on,
-which is a different claim from the one the sentence around it made.
+We once published a figure scored on a selection partition, with a sample of 64, and withdrew it. The model was fine. The number described rows the configuration had been chosen on, which is a different claim from the one the sentence around it made.
 
-**What to do:** make the split a property of the data rather than a habit, so that crossing it
-requires an explicit act. Check the split in the code that slices, not in the process that is
-supposed to remember.
+**What to do:** make the split a property of the data, so that crossing it takes an explicit act. Check the split in the code that slices the data, not in a process that is supposed to remember it.
 
 ## 4. A sample too small to carry a rate should not be printed as one
 
-A proportion needs a denominator large enough to mean something, and the failure is quiet: the
-arithmetic works on four samples and produces a number with a decimal point in it.
+The failure is quiet. Arithmetic on four samples still produces a number with a decimal point. One of our regression gates passed a refusal rate that moved from under a tenth to over half, because the sample fell from 200 to 4. Both numbers were computed correctly.
 
-One of our own regression gates once passed a refusal rate that moved from under a tenth to over
-half, because the sample behind it had fallen from 200 to 4. Both numbers were computed correctly.
-
-**What to do:** set a floor below which a rate is reported as counts rather than a percentage, and
-attach an interval to anything you do report. A figure with no interval cannot be gated on,
-because a gate that fires on noise is a gate that gets switched off.
+**What to do:** set a floor below which a rate is reported as counts rather than a percentage, and attach an interval to every rate you do report. A gate that fires on noise gets switched off.
 
 ## 5. Two numbers are comparable only if they were made the same way
 
-You cannot compare a figure to one from last month unless nothing that produces it has changed. In
-practice something always has: the scorer, the corpus, the precision, the prompt format, the
-tokeniser. If the instrument changed, you have two instruments and one comparison that means
-nothing.
+Something always changes between two runs: the scorer, the corpus, the precision, the prompt format or the tokeniser. If the instrument changed, you have two instruments and one comparison that means nothing.
 
-The fix is to make every measurement carry its own identity, so that the comparison can be refused
-rather than made wrongly:
+Make every measurement carry its own identity, so a comparison can be refused rather than made wrongly:
 
 - **What** was measured: the metric name.
 - **How**: the estimator, by name, and its units.
 - **On what**: a digest of the exact input, and the partition it came from.
-- **At what precision**: a number computed in 4-bit and one computed in bfloat16 are not the same
-  measurement of the same thing.
+- **At what precision**: a number computed in 4-bit and one computed in bfloat16 are different measurements.
 - **How many**: the sample size and the seeds.
 - **With what**: the version of the code that took it.
 
-Then a comparison between two records with different estimators, or different precisions, is
-**refused**. A green tick on two numbers that were never comparable is worse than no check,
-because it teaches whoever sees it that the check means something.
+A comparison between records with different estimators or precisions must be refused. A green tick on two numbers that were never comparable is worse than no check, because it teaches whoever sees it that the check means something.
 
-## 6. Validate the judge before letting it grade
+## 6. Validate the judge before it grades
 
-If a model grades your outputs, it is an instrument and it gets measured like one, before it is
-used and not after.
+If a model grades your outputs, it is an instrument. Measure it before you use it.
 
-Measure **agreement above chance**, not raw agreement. A judge that answers the majority label
-every time agrees 90% of the time on a set that is 90% one label, and has learned nothing. We
-certified a judge once at 0.90 agreement whose agreement above chance was 0.00.
+Measure **agreement above chance**, not raw agreement. A judge that always gives the majority label agrees 90% of the time on a set that is 90% one label, and it has learned nothing. We certified one judge at 0.90 raw agreement whose agreement above chance was 0.00.
 
-Also measure how much of each class it caught. A judge blind to the rare class flatters whatever
-it grades, and the rare class is usually the one you care about.
+Also measure how much of each class it catches. A judge that is blind to the rare class flatters whatever it grades, and the rare class is usually the one you care about.
 
-Prefer grading by code where the task allows it. A task with a checkable answer needs no judge,
-and an ungradeable answer should count as indeterminate rather than wrong.
+Grade by code wherever the task allows it. An answer that cannot be graded counts as indeterminate, not wrong.
 
 ## 7. Check that the intervention did what you think
 
-A measurement pipeline will happily report the effect of an intervention that never happened. We
-edited one model family for weeks and published the results before discovering that the edit was
-not reaching the part of the network we thought it was: the numbers were real, the mechanism
-described in the prose was not, and every figure for that family was withdrawn.
+A measurement pipeline will happily report the effect of an intervention that never happened. We edited one model family for weeks and published the results before finding that the edit was not reaching the part of the network we thought it was. The numbers were real. The mechanism in the prose was not, and every figure for that family was withdrawn.
 
-**What to do:** measure the intervention directly, not only its consequences. If you claim to have
-changed something inside the model, show that thing changed, on the model you are reporting.
+**What to do:** measure the intervention directly, not only its consequences. If you claim to have changed something inside the model, show that the thing changed, on the model you are reporting.
 
 ## 8. Publish the results that went against you
 
-Two things follow from everything above, and they are the part that takes character rather than
-engineering.
+Say where the instrument stops working, next to the results. Ours has never been run above 3B parameters, and it degrades on small models until it measures nothing.
 
-**Say where the instrument stops working.** Ours has never been run above 3B parameters, and it
-degrades on small models until it measures nothing. That sentence belongs next to the results, not
-in a limitations section at the end that readers skip.
+When a figure turns out to be wrong, say so where the figure was, give the corrected value, and do not restate the old one elsewhere. We once published a comparison table that drew on a superseded run on one axis and the corrected run on the others. That flattered us on the axis where we lose.
 
-**Withdraw properly.** When a figure turns out to be wrong, say so where the figure was, say what
-the corrected value is, and do not quietly restate the old one elsewhere. We have published a
-comparison table that was drawing on a superseded run on one axis while using the corrected run on
-the others, which flattered us on the axis where we lose. The check for this is mechanical: when
-you correct a number, grep for it.
+**What to do:** when you correct a number, grep for it. The check is mechanical.
 
 ---
 
@@ -171,23 +99,17 @@ Before a number leaves the building:
 2. Can you state the corpus, the prompt format, the generation budget and the decision rule?
 3. Was it measured on rows that nothing was fitted or selected on?
 4. Is the sample big enough to carry a rate, and is there an interval?
-5. Does the record carry metric, estimator, units, input digest, precision, sample size, seeds and
-   code version?
+5. Does the record carry the metric, estimator, units, input digest, precision, sample size, seeds and code version?
 6. If a model graded it, was that model certified above chance first?
 7. Did you verify the intervention itself, not only its effects?
 8. Does the surrounding prose claim exactly what the number supports, and no more?
 
-A no to any of these is not a reason to delete the measurement. It is a reason to say which one,
-next to the number.
+A no to any of these is not a reason to delete the measurement. It is a reason to say which one, next to the number.
 
 ---
 
 ## On this document
 
-Written for anyone measuring behavioural properties of language models, whatever tool they use.
-The incidents are from `senbonzakura`, an abliteration tool, and the rules are not specific to
-abliteration: every one of them was learned by getting a number wrong in public and having to work
-out why.
+This is written for anyone measuring behavioural properties of language models, whatever tool they use. The incidents come from `senbonzakura`, an abliteration tool. Each rule is there because we got a number wrong in public and had to work out why.
 
-Corrections are welcome. If you think one of these is wrong, the disagreement is more useful to us
-than the agreement.
+Corrections are welcome. If you think one of these rules is wrong, the disagreement is more useful to us than agreement.

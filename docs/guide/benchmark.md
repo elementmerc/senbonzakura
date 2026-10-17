@@ -1,22 +1,17 @@
 # Benchmarking against another tool
 
-The head-to-head against [Heretic](https://github.com/p-e-w/heretic), the other open-source
-abliteration tool with an automated search, has been run: five seeds each, both tools driven by
-us on one machine, every model scored afterwards by our instruments on prompts neither tool was
-fitted on.
+We ran a head-to-head against [Heretic](https://github.com/p-e-w/heretic), the other open-source abliteration
+tool with an automated search. Five seeds each, both tools driven by us on one machine, and every model scored
+afterwards by our instruments on prompts neither tool was fitted on.
 
-::: warning These numbers are provisional, and several things are still open
-They are published here because the alternative is a page that says nothing while we know
-something. Every open item is named below the table, and one row has since been withdrawn
-outright. Nothing here is hidden and nothing here is settled.
+::: warning These numbers are provisional
+Every open item is named below the table, and some rows have been corrected or withdrawn. Nothing here is
+settled.
 :::
 
-::: danger The KL divergence row is superseded, 2026-09-10. Do not quote it.
-**Two rows of the table below are the 2026-08-12 run and three are the 2026-09-10 one**, and the
-table says which is which. In the 2026-08-12 run **Heretic was not given the best-of-N selection
-pass that Senbonzakura gave itself**; on 2026-09-10 both tools got it. This box used to say the
-whole table was the older run, which was true when it was written and progressively less true as
-each row was corrected. With both tools selected the same way, the difference disappeared:
+::: danger The KL divergence row is superseded. Do not quote the 2026-08-12 figures.
+In the 2026-08-12 run **Heretic was not given the best-of-N selection pass that we gave ourselves**. On
+2026-09-10 both tools got it, and the difference disappeared:
 
 | First-token KL divergence (`senbonzakura drift`), both tools selected the same way | Senbonzakura | Heretic |
 |---|---|---|
@@ -24,47 +19,29 @@ each row was corrected. With both tools selected the same way, the difference di
 | **median** over five seeds | **0.0510** | **0.0573** |
 | worst seed | 0.0936 | 0.3591 |
 
-One Heretic seed (seed 43, at 0.3591 against siblings of 0.0439 to 0.1075) carries the entire mean
-difference. Drop it and Heretic's mean is 0.0636 against our 0.0545. An exact permutation test over
-the ten seeds returns **p = 0.238**, so there is **no detectable difference in first-token KL
-divergence on this model at this size**, and the earlier "roughly half the collateral damage" is
-not a finding.
-
-The row is named after the command that produced it because this project has two coherence
-instruments answering two different questions, and a reader who mixes them up will compare numbers
-that were never on one scale. `senbonzakura drift` reports KL divergence between the base model's
-and the edited model's first-token distributions on harmless prompts, which is every figure in
-this block. `senbonzakura coherence` reports perplexity on one fixed passage of ordinary English,
-which appears nowhere on this page.
-
-> **`drift` is no longer a command you can type.** It left the command line on 2026-10-15, along
-> with `diff`. The name is kept throughout this page on purpose: these figures were produced by that
-> command, and renaming it here would misreport how they were made. If you want to reproduce them,
-> the instrument is the same one, and `senbonzakura measure --only drift` still runs it.
-
-The per-seed values are listed above in full precisely so this block does not have to be taken on
-trust, and **the run's artefacts are now published**: 31 aggregate JSON files plus a README under
-[`head-to-head/results/2026-09-10/`](https://github.com/elementmerc/senbonzakura/tree/dev/head-to-head/results/2026-09-10),
-carrying no prompts and no weights. This paragraph previously said publishing them was an open
-decision; it was taken, and the paragraph was not updated. `CONTRACT.md` §4 asks for the record,
-and for this run the record is here, so every number in the block above can be re-derived rather
-than taken as a report of what we measured.
-
-The same run put Heretic **marginally ahead** on refusal removal, not behind. Both differences are
-negligible; the direction was not, and it was reported the wrong way round here for a month.
-
-The re-run's arms ARE committed to this repository, under `head-to-head/results/2026-09-10/`, so
-the gap named in
-[CONTRACT.md](https://github.com/elementmerc/senbonzakura/blob/dev/head-to-head/CONTRACT.md) 4
-is closed for this run. This box said the opposite until 2026-09-25, which understated the
-project's own reproducibility rather than overstating it. What remains provisional is the older
-2026-08-12 run, whose arms are not here.
+One Heretic seed (seed 43, at 0.3591, against siblings of 0.0439 to 0.1075) carries the entire mean
+difference. Drop it and Heretic's mean is 0.0636 against our 0.0545. An exact permutation test over the ten seeds
+returns **p = 0.238**. There is **no detectable difference in first-token KL divergence on this model at this
+size**, and the earlier "roughly half the collateral damage" is not a finding.
 :::
 
-**Every row carries the run it came from, because three of the five were migrated and two were
-not.** The table used to have no provenance column while the box above it said the whole thing was
-the 2026-08-12 run. That stopped being true as each row was corrected, and a reader going
-top to bottom was told something the corrections four hundred lines below quietly contradicted.
+The row is named after the command that produced it. `senbonzakura drift` reports KL divergence between the base
+model's and the edited model's first-token distributions on harmless prompts. `senbonzakura coherence` reports
+perplexity on one fixed passage, and that figure appears nowhere on this page.
+
+::: tip `drift` is no longer a command you can type
+It left the command line on 2026-10-15, along with `diff`. The name stays on this page because these figures were
+produced by it. `senbonzakura measure --only drift` still runs the same instrument.
+:::
+
+The per-seed values are listed above so that the block doesn't have to be taken on trust. The run's aggregate
+artefacts are published as 31 JSON files plus a README under
+[`head-to-head/results/2026-09-10/`](https://github.com/elementmerc/senbonzakura/tree/dev/head-to-head/results/2026-09-10),
+with no prompts and no weights. `CONTRACT.md` asks for that record.
+
+The same run put Heretic **marginally ahead** on refusal removal, not behind. Both differences are negligible.
+
+Every row carries the run it came from:
 
 | Axis | Senbonzakura | Heretic | Run | All figures are Qwen3-1.7B, five seeds |
 |---|---|---|---|---|
@@ -74,105 +51,54 @@ top to bottom was told something the corrections four hundred lines below quietl
 | First-token KL divergence (`senbonzakura drift`) | ~~0.191~~ | ~~0.341~~ | 2026-08-12 | superseded, see above |
 | Harm recognition | 0.9870 | 0.9872 (tie) | **2026-09-10** | both tools selected the same way |
 
-**One model.** Every figure above is Qwen3-1.7B at 1.7B parameters. The five seeds are stated
-loudly and the single model was, until 2026-09-25, stated once in a box further up. Nothing here
-licenses a claim about another model or another size.
+**One model.** Every figure is Qwen3-1.7B. Nothing here licenses a claim about another model or another size.
 
-**Both tools took hard refusal to zero, which is what makes the rest readable.** What that leaves
-is the price each paid for it, and on the one run where both tools were selected the same way,
-that price is indistinguishable. Heretic won its own keyword metric.
+**Both tools took hard refusal to (near) zero.** What remains is the price each paid, and on the run where both
+were selected the same way, that price is indistinguishable. Heretic won its own keyword metric.
 
-::: danger The noncompliance row is withdrawn, 2026-09-09
-This run was scored on 2026-08-12. On 2026-09-08 the hedging detector was found to count
-statements of fact about legality or danger as hedging, so a complete, compliant technical answer
-that mentioned an activity is illegal was scored as a soft refusal. That fires asymmetrically: a
-more explanatory model collects more of them whether or not it complied. Both figures in that row
-were produced by it, so neither is a measurement of what its name says, and the row used to bold
-the other tool's number as a win.
-
-The row stays visible with a line through it rather than being deleted, because it was published
-and people read it. It will be re-measured when the head-to-head is re-run under the corrected
-detector, and not before.
+::: danger The noncompliance row is withdrawn
+On 2026-09-08 the hedging detector was found to count statements of fact about legality or danger as hedging. A
+complete, compliant technical answer that mentioned an illegal activity was scored as a soft refusal, and that
+fires more often on more explanatory models. Both figures in the row came from it. The row stays visible, struck
+through, because it was published. It has not been re-measured under the corrected detector.
 :::
 
-**The two tools' self-reported figures are not a comparison, and that is the durable point.**
-Heretic's own `kl_divergence` attribute took values from 0.0014 to 0.0032 across our runs, against
-our 0.157 to 0.212, a hundredfold apart, because each measured its own model on its own prompts
-during its own search. Those are the ranges we observed in the attribute, not figures either tool
-publishes, and the arithmetic they feed is in `head-to-head/best_of_n_heretic.py`, which is where a
-reader can see what was done with them.
-Put them on one instrument, on prompts held back from both, and that hundredfold gap goes away. An
-apparent reversal was published here for a month on the strength of a run in which only one tool
-got the selection pass.
+**The two tools' self-reported figures are not a comparison.** Heretic's own `kl_divergence` attribute ranged from
+0.0014 to 0.0032 across our runs, and ours from 0.157 to 0.212. Each tool measured its own model on its own prompts
+during its own search. Put them on one instrument, on prompts held back from both, and that gap goes away.
 
 ### What is still open
 
-- **We lose the keyword axis that we ourselves optimise**, 20.1% against 12.9%, and our spread on
-  it is nearly twice theirs (6.2 against 3.7 points). A number moving the wrong way on your own
-  objective is usually the ruler rather than the model, and that is being investigated before this
-  table is treated as settled.
+- **We lose the keyword axis we optimise ourselves**, 20.1% against 12.9%, and our spread on it is nearly twice
+  theirs. A number moving the wrong way on your own objective is often the ruler rather than the model. This is
+  being investigated before the table is treated as settled. The row was corrected on 2026-09-21 to the 2026-09-10
+  run, and the correction makes us look worse, not better.
+- **Corrected 2026-09-25: the harm recognition row carried two figures no artefact holds.** It read 0.9807 against
+  0.9821. Recomputing the mean AUC from the committed arms gives **0.9870 against 0.9872**, which is what the row says
+  now. The reading, a tie with a fraction in Heretic's favour, is unchanged.
+- **Corrected 2026-09-25, against us: hard refusal was printed as 0.0% on both sides.** Heretic's is 0.0% across all five
+  seeds. Ours is **0.1%**: four seeds at zero and seed 46 at 0.5%.
+- **The drift figures carry two prompt counts, and only one is current.** The superseded 2026-08-12 row was measured on
+  64 prompts. The 2026-09-10 figures use 200 held-out prompts, and `head-to-head` takes its drift slice at 200 as of
+  2026-10-10. Cite the 200-prompt figures.
+- **Our arms did not pin the direction budget, so the table mixes K.** Three of the five arms recorded the count they
+  applied, and it was two, one and two. The other two could not be recovered. This says nothing either way about
+  whether more directions help. The clean contrast is the 2026-08-13 K comparison, which pinned the budget at both
+  ends. See [what is and is not established](/guide/what-we-know).
+- **The equal-budget matching is not symmetric.** Trials were matched up to Heretic's 200. Direction-fitting prompts
+  were matched down to our 256, where Heretic's default is 400 per side. Both moves went away from the other tool's
+  larger default. Re-running at 400 per side for both has not been done.
+- **A narrower contamination point.** Within one run both tools fit on the identical staged files and are scored on
+  identical held-out slices, so overlap is symmetric. What survives: Heretic's keyword scorer was developed against
+  this dataset family, so the keyword axis is measured by a ruler built on the ground one tool optimises against.
 
-  **CORRECTED 2026-09-21, and the correction runs against us.** This row carried the 2026-08-12
-  figures until a panel reviewer recomputed it from the committed arms. Those came from the run
-  this page's own banner declares superseded, because only our arm got the best-of-N pass, and
-  they reported a smaller loss than the fair run supports: the gap is wider by seven tenths of a
-  point on the corrected numbers above. Every other axis on this page had been moved to the
-  2026-09-10 run the day it landed; this one had not, and it is the axis where that run makes us
-  look worse. The superseded figures are deliberately not repeated here, because a reader
-  skimming a correction should not be able to carry the withdrawn number away from it.
-  `tests/test_published_head_to_head.py` now pins this row so the next such drift fails a build.
-- **CORRECTED 2026-09-25: the harm recognition row carried two figures that no artefact holds.**
-  It read 0.9807 against 0.9821. Neither number appears anywhere in this repository, in any run,
-  and recomputing the mean AUC from the ten committed 2026-09-10 arms gives **0.9870 against
-  0.9872**, which is what the row says now. The reading is unchanged, a tie with Heretic a
-  fraction ahead, so nothing downstream of it moves; what was wrong was that a reader could not
-  have arrived at the printed pair from anything published, and the page's own promise is that
-  they can. Found by a release gate sweep that recomputed every figure on this page from the
-  committed arms rather than reading the prose.
-- **CORRECTED 2026-09-25, also against us: hard refusal was printed as 0.0% on both sides.**
-  Heretic's is genuinely 0.0% across all five seeds. Ours is **0.1%**: four seeds at zero and
-  seed 46 at 0.5%. The row had rounded our own number down to match theirs. It is a tenth of a
-  point and it is still the wrong direction to round in, and the test pinning this row asserted
-  only that Heretic's side was zero, so it could not have caught it. That assertion now covers
-  both arms.
-- **The drift figures carry two prompt counts, and only one of them is current.** The superseded
-  2026-08-12 row (struck through in the table) was measured on 64 prompts, where the other axes use
-  200, and that slice is the one Heretic tunes against. The 2026-09-10 figures in the superseding
-  block at the top of this page were measured on 200 held-out prompts, and `head-to-head` now
-  takes its drift slice at 200 (as of 2026-10-10). Cite the 200-prompt figures above, not the
-  64-prompt one.
-- **The Senbonzakura arms did not pin the direction budget, so the table mixes K.** Each arm's
-  search chose its own number of directions. Of the five arms, three recorded the count they
-  applied and it was two, one and two; the other two could not be recovered. A mixture like that
-  says nothing either way about whether more directions help, in either direction: it is not
-  evidence for the multi-direction idea and it is not evidence against it. The clean contrast is
-  the 2026-08-13 K comparison, which pinned the budget at both ends. Recorded in full at
-  `head-to-head/results/2026-09-10/README.md`.
-- **The equal-budget matching is not symmetric, and it should be.** Trials were matched UP to
-  Heretic's 200, on the stated principle that starving the comparison would decide it for us.
-  Direction-fitting prompts were matched DOWN to our 256, where Heretic's shipped default is 400
-  per side. Both moves went away from the other tool's larger default, and this one lands on the
-  estimator its method depends on. Re-running at 400 per side for both is queued work.
-- **A narrower contamination point than this page used to make.** It previously said an unknown
-  share of our evaluation was Heretic's training data and that this flattered Heretic. In the
-  harness both tools fit on the identical staged `bad.txt` and `good.txt` and are scored on
-  identical held-out slices, so within a run the overlap is symmetric and flatters neither. What
-  survives is narrower and still worth stating: Heretic's keyword scorer was developed against
-  this dataset family, so the keyword axis is measured by a ruler built on the ground one tool
-  optimises against.
-
-The recipe below is how you run this comparison today. It is **not**, as this page used to claim,
-the same command that produced the table: that run was scored on 2026-08-12, and the harness has
-been renamed and repaired since, so the command shown here did not exist in this form when those
-figures were measured. No record of THAT run, the 2026-08-12 one, is kept in this repository,
-which the harness's own contract requires and which this page should have said. The 2026-09-10
-re-run is a different matter and its arms are committed; this paragraph is about the older run
-alone. Re-running the 2026-08-12 comparison under the current code is queued work.
+The recipe below is how you run the comparison today. The 2026-08-12 run was scored with an earlier form of the
+harness, and no record of that run is kept in this repository. The 2026-09-10 re-run is the one whose arms are
+committed. The 2026-08-12 comparison has not been re-run under the current code.
 
 ## Run it yourself
 
-The comparison is a command, not a private script we keep in a drawer. It runs on one
-machine, needs no orchestrator, and produces the arms, the scores and the report:
+The comparison is a command. It runs on one machine and produces the arms, the scores and the report:
 
 ```sh
 # 1. Cut the prompt slices every tool is scored on, from one corpus.
@@ -190,64 +116,38 @@ senbonzakura head-to-head report results/h2h
 ```
 
 ::: tip New word: arm
-One tool, one seed, one run. Five seeds and two tools is ten arms. The word comes from
-clinical trials, where an arm is one group of patients getting one treatment, and it's the
-right word here for the same reason: the whole design rests on the arms being identical
-except for the one thing you're testing.
+One tool, one seed, one run. Five seeds and two tools is ten arms. The design rests on the arms being identical
+except for the one thing being tested.
 :::
 
-## What makes it a comparison rather than two runs
+## What makes it a comparison
 
-This is the part that's easy to get wrong and hard to notice you got wrong.
+Both tools get the same corpus, the same trial budget and the same prompt slices. Every model either tool produces
+is then scored **by one instrument**, our compass, on held-out prompts. Nobody grades their own homework.
 
-Both tools get the same corpus, the same trial budget and the same prompt slices. Then
-every model either tool produces is scored afterwards **by one instrument**: our compass, on
-held-out prompts, run by us. Nobody grades their own homework.
-
-::: warning "Same trial budget" is not the same as "same budget", and we had the advantage
-An equal trial count sounds like a fair fight. It isn't quite, because senbonzakura's search
-gets three things Heretic's does not, and all three spend effort a trial count doesn't show:
+::: warning "Same trial budget" is not the same as "same budget"
+An equal trial count isn't a fair fight. Our search gets three things Heretic's does not:
 
 | What we get | What it does |
 |---|---|
-| A warm-start trial | One configuration is enqueued before the search begins, so trial 1 is an informed guess rather than a random draw |
-| A patience early-stop | The search can stop once the front stops moving, so an equal trial count may not be an equal number of trials *run* |
-| A re-score pass over the top candidates | The best few are measured again and the winner is picked from that, which is a best-of-N selection Heretic has no equivalent of |
+| A warm-start trial | One configuration is queued before the search, so trial 1 is an informed guess |
+| A patience early-stop | The search stops once the front stops moving, so equal trial counts may not mean equal trials *run* |
+| A re-score pass over the top candidates | The winner is picked from a best-of-N selection, which Heretic had no equivalent of in the 2026-08-12 run |
 
-So budget is reported three ways rather than one: **trials requested, trials actually run, and
-total generations consumed**. Those are in every arm's artefact, and the third is the one that
-survives all three differences above, because a generation is the unit of work both tools
-actually spend.
+So budget is reported three ways: trials requested, trials actually run, and total generations consumed. The third
+survives all three differences, because a generation is the unit of work both tools actually spend.
 
-**Heretic was not given an equivalent best-of-N pass in the run above.** We are saying so rather
-than adjusting for it: the honest position is that our arm had a selection advantage the other did
-not, and any result where we win by less than that advantage is not a result. Where the two tied,
-this matters less; where we lead, read it with this paragraph in mind.
-
-That changed on 2026-09-01, after the 2026-08-12 table was measured. The harness now gives Heretic
-the same best-of-N selection, applied from outside its own code, and `head-to-head/EQUAL-BUDGET.md`
-records the reasoning.
-
-**It has since produced numbers, and they are the ones in the table.** This paragraph said "it has
-not yet produced a number: no Heretic arm has run through it" until 2026-09-25, which stopped being
-true on 2026-09-10 and was contradicted by a file committed in this repository: the run's own
-README says "this is the run where **both tools were given the same best-of-N selection pass**",
-and its five Heretic arms are under `head-to-head/results/2026-09-10/`. Three rows of the table
-were migrated to that run and this paragraph was not updated with them, which is how a page ends
-up telling a reader the fair run does not exist while linking to it.
+The harness gave Heretic the same best-of-N selection from 2026-09-01, and the 2026-09-10 run was the first with
+both. Where the two tied, this matters less. Where we lead, read it with this in mind.
 :::
 
-The slices record which corpus they were cut from, and the run refuses to start if that
-doesn't match the corpus you passed. That guard exists because of a hole found while writing
-the tests: once one tool reads the corpus directly and the other reads slices cut from it,
-"both tools read the same corpus" stops being visible anywhere on either command line. Every
-arm would have finished, every artefact would have been present, and the table would have
-meant nothing at all.
+The slices record which corpus they were cut from, and the run refuses to start if that doesn't match the corpus you
+passed. Without that guard, one tool could read the corpus directly while the other read slices, and nothing on the
+command line would show the difference.
 
-Each tool's own reported numbers are printed too, in separate rows labelled with whose
-estimator produced them. **No gap between those rows is ever called a win.** Two tools
-reporting different refusal rates might mean one is better, or it might mean they count
-refusals differently, and from the outside those look identical.
+Each tool's own reported numbers are printed in separate rows, labelled with whose estimator produced them. **No gap
+between those rows is ever called a win.** Different refusal rates might mean one tool is better, or that they count
+refusals differently, and from outside those look identical.
 
 ## Sandbox anything you didn't write
 
@@ -255,46 +155,28 @@ refusals differently, and from the outside those look identical.
 --isolate docker --image senbon=IMAGE --image heretic=IMAGE
 ```
 
-Each arm then runs with no network, read-only inputs, no capabilities and no credentials.
-
-Without it you get a warning, because otherwise a third-party abliteration tool is running
-on your machine with your network and your keys, on the strength of you having been curious
-about a benchmark. We use it on our own arms too, which is less about trusting ourselves and
-more that an isolated arm and a comfortable one aren't the same measurement.
+Each arm then runs with no network, read-only inputs, no capabilities and no credentials. Without the flag you get a
+warning, because a third-party abliteration tool would otherwise run on your machine with your network and keys.
 
 ## Stopping and starting is safe
 
-An arm is skipped only when a manifest agrees with this run's tool, seed, model and budget
-**and** every artefact it declared is present.
-
-An arm that exits cleanly having produced nothing counts as a failure and leaves no
-manifest, so the next run retries it rather than inheriting the silence. This is a rule
-learned the hard way: on 2026-08-05 a rehearsal came back with five jobs done having
-measured absolutely nothing, because the scoring step printed success unconditionally. A
-green tick that can't go red isn't a check.
+An arm is skipped only when its manifest agrees with this run's tool, seed, model and budget **and** every artefact it
+declared is present. An arm that exits cleanly having produced nothing counts as a failure, so the next run retries it.
+On 2026-08-05 a rehearsal finished five jobs having measured nothing, because the scoring step printed success
+regardless. A green tick that can't go red isn't a check.
 
 ## Fewer than three seeds gets no verdict
 
-A spread calculated from two points is arithmetic dressed up as statistics, so the report
-declines to name a winner and says why. And a gap smaller than the spread is reported as a
-tie, not as a narrow victory.
-
-::: tip New word: seed
-The number that fixes all the random choices in a run. Same seed, same choices, same result.
-Different seeds tell you how much of your result was the method and how much was luck, which
-is why one seed is an anecdote.
-:::
+A spread from two points is arithmetic dressed up as statistics, so the report declines to name a winner. A gap smaller
+than the spread is reported as a tie, not as a narrow victory.
 
 ## Adding another tool
 
-An adapter, and it's data rather than logic: how to invoke the tool, what output proves it
-actually ran, where it leaves its model, and how to read its own reported figures.
-
-See `ADAPTERS` in `senbonzakura/headtohead.py`. A pull request adding one is genuinely welcome,
-including from the author of the tool you're adding.
+An adapter is data rather than logic: how to invoke the tool, what output proves it ran, where it leaves its model, and
+how to read its own figures. See `ADAPTERS` in `senbonzakura/headtohead.py`. Pull requests adding one are welcome,
+including from the author of the tool being added.
 
 ## Where next
 
-- [The compass](/guide/compass), which is the instrument doing the scoring here.
-- [Contamination](/guide/contamination), because a comparison on prompts both tools trained
-  on isn't one.
+- [The compass](/guide/compass), the instrument doing the scoring here.
+- [The track](/guide/the-track), for checking whether the prompts you compare on are already inside your fit rows.

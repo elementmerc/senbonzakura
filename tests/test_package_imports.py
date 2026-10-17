@@ -241,7 +241,6 @@ def test_no_user_facing_document_calls_the_adapted_function_a_verbatim_copy():
             "(`_heretic_norm`) copied verbatim",
         ],
         "CITATION.cff": ["A keyword metric is copied verbatim"],
-        "docs/architecture.md": ["keyword metric in `metrics.py` is copied verbatim"],
         "README.md": ["is shared code and it is kept byte-identical"],
     }
     root = Path(__file__).resolve().parent.parent

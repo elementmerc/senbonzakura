@@ -138,7 +138,6 @@ CAVEATED_SURFACES = (
     "paper.md",
     "docs/guide/what-we-know.md",
     "docs/guide/prior-art.md",
-    "docs/architecture.md",
     "man/senbonzakura.1",
     # THE FILE A SCEPTIC OPENS FIRST, added 2026-09-25 once it carried the caveat. It was the last
     # surface quoting these arms without one, which is the wrong way round: a reproduction document

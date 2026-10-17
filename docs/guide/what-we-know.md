@@ -1,192 +1,115 @@
 # What is and is not established
 
-This is the page about the claim on the tin: that removing several refusal directions beats
-removing one.
-
-Here's the summary, and I'd rather you got it from me in the first paragraph than worked it
-out from the appendix.
+This page covers the claim on the tin: that removing several refusal directions beats removing one.
 
 ::: warning The short version
 **We tested it, and on the one model we can measure properly, two directions did worse than one.**
-Two directions cost about **1.9 times** the collateral damage of one, on the mean over five seeds a
-side (95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 on the mean
-dropping the one outlying two-direction seed, which is a sensitivity check rather than the bottom
-of an interval).
+Two directions cost about **1.9 times** the collateral damage of one, on the mean over five seeds a side
+(95% interval 1.2 to 3.1, percentile bootstrap over the five seeds a side; 1.4 on the mean dropping the one
+outlying two-direction seed, which is a sensitivity check rather than the bottom of an interval).
 
-**That is not the same as the claim being false**, and where this page and the CHANGELOG differ the
-CHANGELOG is the wording to trust: whether removing several directions beats removing one is
-**unanswered**. Three things stand between the result and the claim. It is one model. The feature
-had never worked at all until it was rewritten on 2026-08-03, so the arms predate the held-out
-direction selection the tool now ships, which means what they price is an *arbitrary* second
-direction rather than a chosen one. And the two arms are comparable on collateral damage because
-both landed at the floor on refusal, 1 hard refusal in 1000 against 3 in 1000, which is a
-difference no test could call apart (Fisher exact, two-sided, p = 0.62) rather than two arms tuned
-to meet at one rate.
+**That is not the same as the claim being false.** Whether removing several directions beats removing one is
+**unanswered**. Three things stand between the result and the claim. It is one model. The extractor had never
+worked before 2026-08-03, so the arms predate the held-out direction selection the tool now ships. That means
+what they price is an *arbitrary* second direction, not a chosen one. And the two arms are comparable on
+collateral damage because both landed at the floor on refusal, 1 hard refusal in 1000 against 3 in 1000. That
+is a difference no test could call apart (Fisher exact, two-sided, p = 0.62), so the arms weren't tuned to meet
+at one rate.
 :::
 
-The rest of this page is how we got there, because the failures are more instructive than
-the result would have been.
+## The feature that never worked
 
-## The feature that never once worked
+The comparison meant to settle the question was built to test whether removing several directions beats one: two
+arms, five seeds each, held out, identical except for the direction budget. It finished and had a p-value.
 
-Start with the comparison that was supposed to settle it.
+**Both arms had removed exactly one direction per layer.** No second candidate cleared the refusal-separation
+threshold at any of the model's 29 layers, so the surgery in the two arms was identical. The comparison compared
+two searches, not two direction budgets, and it was withdrawn the same day.
 
-A run on Qwen3-1.7B, built specifically to test whether removing several directions beats
-removing one: two arms, five seeds each, held out, everything identical except the
-direction budget. Clean design. It finished, it had a p-value, it looked great.
+The reason no second candidate passed is worse than strict. The check compares the average harmful reply against
+the average harmless one, measured along a direction constructed to sit at right angles to both averages. A
+difference measured along a perpendicular axis is zero, every time, by construction. **No direction could pass that
+check, on any model, at any setting.** It was a metal detector wired so the coil could never complete a circuit.
 
-**Both arms had removed exactly one direction per layer.**
-
-The extra capacity existed in the data structure and simply never got filled. No second
-axis cleared the tool's own refusal-separation threshold at any of the model's 29 layers,
-so the surgery in the two arms was byte-for-byte identical. The comparison compared two
-searches, not two direction budgets, and it got withdrawn the same day.
+Across two model families and three prompt sets, that check rejected **13,970 candidate directions, every one**.
 
 ::: tip New words: refusal-separation threshold
-The check that decides whether a candidate direction actually carries refusal, rather than
-carrying something else that happens to be nearby. It's the gate between "I found a
-direction" and "I found a refusal direction", and the whole multi-direction idea rests on
-it.
+The check that decides whether a candidate direction carries refusal, rather than something nearby. The whole
+multi-direction idea rests on it.
 :::
 
-### And then it got worse
+**So what:** every run before 2026-08-03 applied exactly one direction, whatever it was asked for.
 
-The obvious next question is why no second axis ever cleared the threshold. The comfortable
-answer would have been "refusal in Qwen3-1.7B just is one direction", which is a
-respectable scientific finding and would have been a nice paper.
+*Source, stated rather than implied: the 13,970 figure is a count from the run logs of that sweep, which are not
+published. It is a measurement, not an estimate, and you cannot currently check it. `REPRODUCING.md`, in the
+repository root, says a quoted number with no published source is a defect, so it is named here rather than left
+as a number with no provenance.*
 
-It's not that.
+## What's been fixed, and what hasn't
 
-The check compares the average harmful reply against the average harmless one, measured
-along a direction that was **constructed to sit at right angles to both of those
-averages**. Measure a difference along an axis that's perpendicular to the difference and
-you get zero. Every time. By construction.
+Candidate directions now come from clustering the harmful prompts and taking each cluster's own average against the
+harmless average. Because each candidate is built from its own group, it separates the two sets by construction. The
+tool allows **up to eight directions per layer**. Eight is a ceiling, not a count any run reached, and this page
+doesn't record how many a run applied.
 
-So it wasn't strict. It was unsatisfiable. **No direction could pass that check, on any
-model, at any setting, ever.**
+The threshold meant to vet candidates rejected nothing at all: all 678 candidates scored between 0.90 and 9.02
+against a bar of 0.5. The cause was the same circularity. A candidate's score was computed on the same rows its
+direction was built from, so it could not come out small. Each candidate is now fitted on half its rows and scored
+on the half it never saw. The threshold also has a measured floor: directions built from random subsets of the
+harmful prompts, scored the same way. A candidate has to beat their 95th percentile, taken at nearest rank. That's
+a 5% false-keep rate per candidate by design.
 
-If you want the physical version: it's a metal detector wired so the coil can never
-complete a circuit. It sweeps the beach beautifully. It has never once beeped. And for
-months you conclude, reasonably, that this is a beach with no metal on it.
+*Source, stated rather than implied: the 678 count and the 0.90 to 9.02 range are read from that run's logs, which
+are not published. Measured, not estimated, and not checkable by a reader.*
 
-Measured across two model families and three prompt sets: **13,970 candidate directions,
-every single one rejected, none of them close.**
+**What is still open is the part the fix doesn't reach.** A held-out score says a direction separates harmful
+prompts from harmless ones. It doesn't say *why*. A cluster about explosives separates from the harmless prompts
+partly because it's about explosives, and it separates just as well on rows it never saw. Cut along it and you've
+removed the model's chemistry, not its reluctance.
 
-**So what:** every run this project made before 2026-08-03 applied exactly one direction,
-whatever it was asked for. The tool named after a sword that splits into a thousand blades
-had been using one blade since the day it was written. 🥲
-
-*Source, stated rather than implied: the 13,970 figure is a count from the run logs of that
-sweep, which are not published. It is a measurement, not an estimate, and you cannot currently
-check it. `REPRODUCING.md`, in the repository root, says a quoted number with no published source is
-a defect, and by that rule this is one; it is named here rather than quietly left as a number
-with no provenance.*
-
-## What's been fixed
-
-The extractor was rewritten the same day.
-
-Candidate directions now come from clustering the harmful prompts and taking each cluster's
-own average against the harmless average. The important word is *own*: a candidate now
-separates the two groups **by construction**, which is the exact opposite of the previous
-arrangement, where it was built unable to.
-
-On the same four probes it now finds and applies **up to eight directions per layer** where
-it previously found one. Eight is a ceiling the tool allows, not a count any run reached: this
-page doesn't record how many directions a run actually applied, and the threshold meant to vet
-them rejected nothing at all (see below).
-
-## What hasn't
-
-The feature now does something. That is not the same as the claim being true, and the
-README won't say otherwise until two things are measured.
-
-**Do the extra directions carry refusal, or do they carry topic?** Still open, but for a
-narrower reason than before.
-
-The threshold meant to answer this rejected nothing at all: all 678 candidates scored between
-0.90 and 9.02 against a bar of 0.5. On 2026-08-16 we found out why, and it wasn't leniency. A
-candidate direction is a cluster's mean minus the harmless mean, and the score judging it was a
-difference of those same means, computed on those same rows. It was asking whether the quantity
-a vector was built to maximise is large along that vector. It cannot come out small. The bar was
-never doing anything, on any run, ever.
-
-*Source, stated rather than implied: the 678 count and the 0.90 to 9.02 range are read from that
-run's logs, which are not published. Measured, not estimated, and not currently checkable by a
-reader. Same defect class as the figure earlier on this page, and named for the same reason.*
-
-That's fixed. Each candidate is now fitted on half its rows and scored on the half it never saw,
-and the threshold has a measured floor beside it: directions built from random subsets of the
-harmful prompts, carrying nothing, scored through the identical path. A candidate has to beat
-their 95th percentile, taken at nearest rank so the bar is a score some null actually reached. That
-is a 5% false-keep rate per candidate by design, which is a weaker bar than beating every null and
-a far stronger one than the constant it replaced.
-
-**What's still open is the part the fix doesn't reach.** A held-out score says a direction
-separates harmful prompts from harmless ones. It doesn't say *why*. Cluster your harmful prompts
-and one cluster will be about, say, explosives. That cluster separates from the harmless prompts
-partly because it's about explosives, not because of anything to do with refusal, and it
-separates just as well on rows it never saw. Cut along it and you haven't removed the model's
-reluctance, you've removed its chemistry.
-
-Telling those apart needs the subject matter held still, so refusal is the only thing left to
-vary. It's the move a medical study makes when it compares patients against matched controls
-rather than against the general population.
-
-On 2026-09-02 we measured how badly the unmatched comparison fails, on synthetic data where we
-knew the answer in advance. Two worlds, identical except that one contains refusal and the other
-contains none at all. Every candidate in both should be rejected in the second world.
+Telling those apart needs the subject matter held still, the way a medical study compares patients against matched
+controls. On 2026-09-02 we measured how badly the unmatched comparison fails, on synthetic data where the answer was
+known. Two worlds, identical except that one contains refusal and the other doesn't. Every candidate should be
+rejected in the second.
 
 | how a candidate is judged | world with no refusal | world with refusal |
 |---|---|---|
 | against harmless prompts in general | 3.547 | 3.703 |
 | against harmless prompts on the same subject | **0.319** | **4.369** |
 
-Read the top row twice. **The two worlds score the same**, so no threshold anywhere on that scale
-could separate them, and no choice of statistic changes that. We tried four. The bottom row is the
-same data judged against matched controls: the world with no refusal lands on the scale's own
-"nothing here" value, and the world with refusal stands clear.
+Read the top row twice. **The two worlds score the same**, so no threshold on that scale could separate them, and
+we tried four statistics. The bottom row is the same data judged against matched controls: the world with no
+refusal lands on the scale's "nothing here" value, and the world with refusal stands clear.
 
-*Source, stated rather than implied: these four values come from a synthetic experiment whose
-result files are held outside this repository and are not published, so a reader cannot re-derive
-them from anything here. The experiment is synthetic by design, which is the point of it (the two
-worlds are constructed, so what refusal is present is known rather than inferred), but that does
-not make the numbers checkable. Same defect class as the two above.*
+*Source, stated rather than implied: these four values come from a synthetic experiment whose result files are held
+outside this repository and are not published, so a reader cannot re-derive them here. The experiment is synthetic by
+design, which is the point, but that does not make the numbers checkable.*
 
-Two things follow, and the second was a surprise.
+Two things follow from this.
 
-The first is that the tool now has `--matched-scoring`, which picks each candidate's controls from
-the harmless prompts nearest it in content. **It's on by default, and it changes what every
-separation number means.** This page said it was off until 2026-09-28, which had been false since
-the default flipped on 2026-09-17: so the regime every separation number is now produced under is
-one this page described as inactive, and it still hasn't been measured on a real model. Pass
-`--no-matched-scoring` for the older comparison, which is worth doing only to reproduce an older
-run.
+The first is `--matched-scoring`, which picks each candidate's controls from the harmless prompts nearest to it in
+content. **It is on by default, and it changes what every separation number means.** It has been on since
+2026-09-17, and it still hasn't been measured on a real model. Pass `--no-matched-scoring` to reproduce an older run.
 
-That leaves three candidate selection regimes in play, and it's worth being blunt about which one
-the published numbers came from. The 2026-08-13 arms, the only multi direction evidence here, ran
-unmatched and in sample against a filter that rejected nothing. What ships today is matched by
-default. **The published evidence corresponds to neither**, which is a limit on reading those arms
-as evidence about the tool you can install.
+That leaves three candidate selection regimes in play. The 2026-08-13 arms, the only multi-direction evidence here,
+ran unmatched and in sample against a filter that could not reject anything. What ships today is matched by default.
+**The published evidence corresponds to neither**, which limits how far those arms can speak about the installed tool.
 
-The second is that **a topic-matched harmless corpus would not have been enough on its own**. In
-the numbers above the harmless side already had the same mix of subjects as the harmful side, and
-the unmatched comparison still couldn't tell the two worlds apart. The matching has to happen when
-each candidate is scored, not only when the corpus is built. This page previously said the dataset
-was the missing piece; that was half the answer.
+The second is that **a topic-matched harmless corpus would not have been enough on its own**. In the numbers above
+the harmless side already had the same subject mix, and the unmatched comparison still couldn't tell the two worlds
+apart. The matching has to happen when each candidate is scored, not only when the corpus is built.
 
-One honest caveat: those figures are synthetic. Whether subject matter swamps refusal by that much
-inside a real model is still unmeasured, and until it is, this question stays open.
+One honest caveat: those figures are synthetic. Whether subject matter swamps refusal by that much inside a real model
+is unmeasured, so the question stays open until it is measured.
 
-**Does removing several directions beat removing one?** We ran it, and the answer on the one
-model we can measure properly is **no**. See the next section.
+**Does removing several directions beat removing one?** We ran it. On the one model we can measure properly, the answer
+is **no**. The next section has the run.
 
-## The answer: run on 2026-08-13, noncompliance column scored later
+## The answer: run on 2026-08-13
 
-One direction against two. Same tool, same corpus, same search budget, same five seeds, one
-parameter apart, with the direction budget pinned at both ends so neither arm could drift into
-the other's territory. Every resulting model was then scored by one instrument on 200 prompts
-that nothing was fitted or selected on.
+One direction against two. Same tool, same corpus, same search budget, same five seeds, one parameter apart, with the
+direction budget pinned at both ends. Every resulting model was scored by one instrument on 200 prompts that nothing
+was fitted or selected on.
 
 | Direction budget | Coherence drift | Hard refusal | Noncompliance |
 |---|---|---|---|
@@ -194,94 +117,66 @@ that nothing was fitted or selected on.
 | Two | 0.0932 (spread 0.0482) | 0.3% | ~~4.2%~~ |
 
 ::: warning The noncompliance column is withdrawn, 2026-09-09
-The arms ran on 2026-08-13; the noncompliance column was scored separately on
-2026-09-07, which is why two dates appear on this page. The next day the hedging detector was found to count
-statements of fact about legality or danger as hedging, so a complete, compliant technical answer
-that mentioned an activity is illegal was scored as a soft refusal. Both figures came from it.
-
-The conclusion of this section does not rest on them: it is argued on coherence drift at matched
-hard refusal, and hard refusal is measured by a different ruler that this defect did not touch.
-The column is struck through rather than deleted because it was published.
+The arms ran on 2026-08-13. The noncompliance column was scored separately on 2026-09-07. The next day the hedging
+detector was found to count statements of fact about legality or danger as hedging, so a compliant technical answer
+was scored as a soft refusal. Both figures came from it. The conclusion does not rest on them. It rests on coherence
+drift at matched hard refusal, and hard refusal is measured by a different ruler that this defect did not touch. The
+column is struck through because it was published.
 :::
 
-Both budgets removed hard refusal, which is what makes the rest readable: this is a comparison
-at matched refusal, where the only thing left to differ is the price paid for it. Two directions
-did about **1.9 times the collateral damage** and bought nothing this design could have
-detected, and they were less predictable seed to seed (the spread is nearly three times as wide).
+Both budgets removed hard refusal, so this is a comparison at matched refusal, and the only thing left to differ is
+the price paid. Two directions cost about **1.9 times the collateral damage**, bought nothing this design could have
+detected, and were less predictable seed to seed (the spread is nearly three times as wide).
 
-**Both halves of that need saying precisely, and until 2026-09-28 neither did.**
+**The cost.** 1.9 is the ratio of the means over five seeds a side. Its 95% interval is 1.2 to 3.1, a percentile
+bootstrap over the five seeds a side. The 1.4 figure is a sensitivity check, the ratio with the outlying two-direction
+seed dropped. It is not the lower end of the interval. The interval is four times wider than a span joining the two
+figures would suggest, and that span is withdrawn. The CHANGELOG's 0.4.0 entry carries the old wording and the
+correction.
 
-The cost. 1.9 is the ratio of the means over five seeds a side, and its 95% interval is 1.2 to 3.1, a percentile bootstrap over the five seeds a side. This page used to give the figure as a range
-running from the dropped-seed ratio up to this one, which is a sensitivity check at one end and the
-estimate at the other. Printing the two joined by "to" invited every reader to take it for an
-interval, when the real interval is four times wider. The CHANGELOG's 0.4.0 entry carries the old
-wording and the correction, for anybody who read the figure before today.
+**The absence of a benefit.** Both arms sit on the floor of the refusal measurement, so this design could not have
+shown a gain. One direction already leaves hard refusal at 0.1%, the measurement moves in steps of 0.5 points at 200
+prompts an arm, and the largest gain two directions could have shown is 0.1 points, a fifth of one scorable event. So
+"bought nothing" is what this run can support, and "bought nothing measurable at this operating point" is what it
+means. Whether a second direction buys anything where one leaves refusal standing needs a run where refusal has room
+to move.
 
-The absence of a benefit. Both arms sit on the floor of the refusal measurement, so this design could
-not have shown a gain: one direction already leaves hard refusal at 0.1%, the measurement moves in
-steps of 0.5 of a percentage point at 200 prompts an arm, and so the largest refusal gain two
-directions could ever have demonstrated here is 0.1 of a percentage point, a fifth of one scorable
-event. The one outcome that did have room to move, noncompliance, is the column withdrawn on
-2026-09-09. So "bought nothing" is what this run can support and "bought nothing measurable at this
-operating point" is what it means; whether a second direction buys anything where one direction
-leaves refusal standing is a question these arms were not built to answer, and answering it needs a
-run at an operating point where refusal has room to move.
-
-The gap is 0.0435, and a **two-sided exact permutation test on the difference of means**, over all
-252 ways of splitting these ten seeds, puts it at **p = 0.016**. That is a real difference, and
-stronger than the way this paragraph used to describe it.
-
-The test and its sidedness are named because a reader checking this in 2026-09-26 had to try six
-variants to find the one that reproduces the published figure: the one-sided version of the same
-test gives 0.008, and a reader who landed there first would conclude we had understated our own
-negative result.
+The gap is 0.0435. A **two-sided exact permutation test on the difference of means**, over all 252 ways of splitting
+these ten seeds, puts it at **p = 0.016**. The sidedness is named because the one-sided version gives 0.008, and a
+reader who landed there first would conclude we had understated our own negative result.
 
 ::: tip You can recompute this yourself
 The ten per-seed drift values are committed at
 [`evidence/k-sweep-2026-08-13/drift-per-seed.json`](https://github.com/elementmerc/senbonzakura/blob/dev/evidence/k-sweep-2026-08-13/drift-per-seed.json),
-and so are the ten per-seed hard refusal fractions behind the 0.1% and 0.3% column, recovered from
-the run's own database on 2026-09-25 after a review found that column had no artefact behind it.
-`tests/test_published_k_sweep.py` recomputes every figure on this page from that file through
-the project's own estimator. Until 2026-09-10 those numbers lived only in a working note that is
-not in this repository, so the most-quoted figure here traced to nothing a reader could open.
+along with the ten per-seed hard refusal fractions behind the 0.1% and 0.3% column. `tests/test_published_k_sweep.py`
+recomputes every figure on this page from that file through the project's own estimator.
 :::
 
-**A correction, 2026-09-09.** This used to read "clears the pooled spread by about a fifth,
-real but slim", and then said that dropping the worst two-direction seed made the result
-*stronger*. Both sentences came from comparing a gap to a pooled spread, which this project's
-own code now says in as many words is not a test, because it ignores how many observations
-there are. Under the permutation test the second sentence is **wrong**: dropping that seed
-halves the gap, from 0.0435 to 0.0222, and moves p from 0.016 to **0.048**. The result does
-not rest on one bad run, but it is meaningfully weaker without it, and the opposite was
-published here for a month.
+**A correction, 2026-09-09.** An earlier version said that dropping the worst two-direction seed made the result
+*stronger*. That came from comparing a gap to a pooled spread, which ignores how many observations there are. Under
+the permutation test, dropping that seed halves the gap, from 0.0435 to 0.0222, and moves p from 0.016 to **0.048**.
+The result does not rest on one bad run, but it is meaningfully weaker without that seed.
 
-**What it doesn't say.** This is Qwen3-1.7B alone. Refusal geometry may differ on larger models
-or on other families, and the honest position is that the question is open elsewhere and closed
-here. It also doesn't rescue the threshold problem above: these arms ran before the held-out
-score existed, so their directions were selected by a filter that could not reject anything at
-all. "Two directions" means "two directions this tool chose", not "two directions known to carry
-refusal". A re-run under the fixed filter may select different directions, and this table is the
-old filter's answer until it does.
+**What it doesn't say.** This is Qwen3-1.7B alone. Refusal geometry may differ on larger models or other families, so
+the question is open elsewhere and closed here. It also doesn't rescue the threshold problem above. These arms ran
+before the held-out score existed, so their directions were selected by a filter that could not reject anything. "Two
+directions" means "two directions this tool chose", not "two directions known to carry refusal". A re-run under the
+fixed filter may select different directions, and this table is the old filter's answer until it does.
 
-**Why publish a negative result about your own headline feature?** Because the alternative is
-waiting for a friendlier model, and a project whose whole argument is that other people's
-numbers deserve scrutiny doesn't get to make an exception for its own.
+**Why publish a negative result about your own headline feature?** Because the alternative is waiting for a friendlier
+model. A project whose argument is that other people's numbers deserve scrutiny doesn't get an exception for its own.
 
 ## So where does that leave the project
 
-Honestly: with a working single-direction abliterator, an unusually good
-[measurement suite](/guide/compass), and a headline claim that its own measurements do not
-support on the model it can measure best.
+With a working single-direction abliterator, an unusually good [measurement suite](/guide/compass), and a headline claim
+its own measurements do not support on the model it can measure best.
 
-That's a less exciting sentence than the README of most tools in this space, and it's the
-true one. The tool keeps the multi-direction capability because the question is genuinely open
-on architectures we can't yet reach, and because being able to *test* the idea is worth more
-than believing it. By default the search chooses its own budget between one and three
-directions. Left to itself on this model, the count varies from seed to seed: the 2026-09-10
-head-to-head recovered the count for three of its five arms, and they applied two, one and two.
+The tool keeps the multi-direction capability because the question is open on architectures we can't yet reach, and
+because testing an idea is worth more than believing it. By default the search chooses its own budget between one and
+three directions. On this model the count varies from seed to seed: the 2026-09-10 head-to-head recovered the count for
+three of its five arms, and they applied two, one and two.
 
 ## Where next
 
-- [Limits and known defects](/guide/limits) for every other condition attached to every
-  other number here.
-- [The compass](/guide/compass) for the half of the project that does work.
+- [Limits and known defects](/guide/limits) for every other condition attached to the numbers here.
+- [The compass](/guide/compass) for the half of the project that does the measuring.

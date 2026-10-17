@@ -33,9 +33,12 @@ WHY IT IS TORCH-FREE
 `entry.py` dispatches without importing `cli`, so a command that avoids torch starts in
 milliseconds and works on a machine where torch is not installed. Comparing two files does not
 need a tensor library: identity is a byte comparison, and the one place a number is wanted
-(how big the change is) is a decode this module does itself for the three float widths that
-actually occur. A dtype it cannot decode still gets an exact changed-or-not verdict, which is the
-load-bearing half, and the magnitude is reported as unavailable rather than guessed.
+(how big the change is) is an element walk done by the compiled extension
+(`rust/src/modeldiff.rs`), which decodes the float widths that actually occur and pulls in no
+tensor library. The pure Python walk is kept as `_magnitude_reference`, which the test suite
+compares against bit for bit and nothing else calls. A dtype it cannot decode still gets an exact
+changed-or-not verdict, which is the load-bearing half, and the magnitude is reported as
+unavailable rather than guessed.
 
 WHAT IS REFUSED RATHER THAN REPORTED
 
@@ -54,7 +57,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve, checkpoint, crashsafe, say, streaming
+from . import _native, argresolve, checkpoint, crashsafe, say, streaming
 
 HELP = """\
 Compare a checkpoint against the base it claims to come from, tensor by tensor.
@@ -95,8 +98,9 @@ READING_RELATIVE, READING_TOUCHED = "relative", "touched"
 #: human read it.
 SCHEMA = "senbonzakura-modeldiff/1"
 
-#: Float dtypes this module decodes itself, to the struct format and the width in bytes. Anything
-#: else gets an exact identity verdict and no magnitude.
+#: Float dtypes the element walk decodes, to the struct format and the width in bytes. BF16 is
+#: handled by hand in `_decode_chunks` and in the extension, because struct has no BF16 format.
+#: Anything else gets an exact identity verdict and no magnitude.
 DECODABLE = {"F64": ("<d", 8), "F32": ("<f", 4), "F16": ("<e", 2)}
 
 
@@ -121,9 +125,13 @@ CHUNK_ELEMENTS = 4_096
 #: 4.15 million. Rounded down to 4 million because the figure is only ever used to warn somebody
 #: that a run is long, and a warning that overstates the wait is the harmless direction.
 #:
-#: It is pure Python arithmetic on purpose. numpy would be an order of magnitude faster and is not
-#: a dependency of this package, and torch is, but pulling torch in here would put a multi-second
-#: import in front of a command whose promise is that it is cheap.
+#: THIS IS THE PURE PYTHON WALK'S RATE. That walk survives only as `_magnitude_reference`, which
+#: nothing in production calls. The production walk is the compiled extension, measured on
+#: 2026-10-17 at about 575 million elements a second on atlas (one thread, on a machine under load),
+#: so this figure now overstates the wait by roughly fifty times. That is the harmless direction for
+#: a warning, and it is a known overstatement rather than a forgotten one. Correcting it changes a
+#: user-facing estimate, the test that pins it and the thresholds written for the slow rate, so it
+#: is a decision for the operator and not an edit to make alongside the extension.
 #: MEASURED, not guessed, and re-measured on 2026-10-15 against three real bf16 checkpoints on a
 #: sixteen-core server: 11 to 15 million elements a second, where this said 4 million. It feeds a
 #: "this will take about N minutes" estimate, so the stale value told people a job would take three
@@ -192,13 +200,15 @@ def _decode_chunks(raw, dtype):
             yield struct.unpack(f"<{n}{DECODABLE[dtype][0][1]}", piece)
 
 
-def _which_side_is_not_finite(a, b, dtype):
+def _which_side_is_not_finite(a, b, dtype, has_non_finite=_native.diff_has_non_finite):
     """Which of the two tensors holds a non-finite value: "the candidate", "the base" or "both".
 
-    `a` is the candidate and `b` the base, matching the call in `compare`.
+    `a` is the candidate and `b` the base, matching the call in `compare`. `has_non_finite` is the
+    scan for one buffer; the reference path passes its pure Python one, so the reference is not
+    checked by the code it is the reference for.
     """
-    bad_a = any(not math.isfinite(v) for chunk in _decode_chunks(a, dtype) for v in chunk)
-    bad_b = any(not math.isfinite(v) for chunk in _decode_chunks(b, dtype) for v in chunk)
+    bad_a = has_non_finite(a, dtype)
+    bad_b = has_non_finite(b, dtype)
     if bad_a and bad_b:
         return "both sides hold"
     return "the candidate holds" if bad_a else "the base holds"
@@ -231,21 +241,41 @@ def _magnitude(a, b, dtype, on_progress=None):
     value in a candidate is exactly what a diff is for. The identity verdict beside it is still
     exact in every case, because that one is a byte comparison.
     """
+    why = _unmeasurable(a, b, dtype)
+    if why is not None:
+        return None, None, why, None
     width = _width(dtype)
-    if width is None:
-        return None, None, (f"this command does not decode {dtype}, so whether the tensor changed "
-                            f"is exact and how much it changed is unmeasured"), None
-    if len(a) != len(b):
-        return None, None, (f"the two tensors hold {len(a)} and {len(b)} bytes, so there is no "
-                            f"element-by-element comparison to make. They are both {dtype} of the "
-                            f"same declared shape, so one of the two files disagrees with its own "
-                            f"header"), None
+    total = len(a) // width
+    state = (0.0, 0.0, 0.0)
+    for start in range(0, total, CHUNK_ELEMENTS):
+        n = min(CHUNK_ELEMENTS, total - start)
+        lo, hi = start * width, (start + n) * width
+        # A bounded slice per call, so the memory bound holds, and the extension folds each slice
+        # onto the running sums in element order. That order is what makes the result the same
+        # bits as `_magnitude_reference`, whatever CHUNK_ELEMENTS is.
+        state = _native.diff_accumulate(a[lo:hi], b[lo:hi], dtype, state)
+        if on_progress is not None:
+            on_progress(start + n, total)
+    num, base, peak = state
+    return _finish(a, b, dtype, num, base, peak, _native.diff_has_non_finite)
+
+
+def _magnitude_reference(a, b, dtype, on_progress=None):
+    """The pure Python magnitude step, arithmetic unchanged from before the extension existed.
+
+    NOT ON ANY PRODUCTION PATH. It is the reference that `_magnitude` must match bit for bit, and
+    the tests hold it to that over every dtype and at the chunk boundaries. It stays readable on
+    purpose, so a reader who wants to know what the extension computes can read this instead.
+    """
+    why = _unmeasurable(a, b, dtype)
+    if why is not None:
+        return None, None, why, None
     num = base = peak = 0.0
     done = 0
     # `strict=True` on both: the outer zip would otherwise stop at the shorter stream and the inner
     # one at the shorter chunk, and a comparison that silently ignored a tail would report a
     # smaller change than the real one, which is the direction that matters here.
-    total = len(a) // width
+    total = len(a) // _width(dtype)
     for xs, ys in zip(_decode_chunks(a, dtype), _decode_chunks(b, dtype), strict=True):
         for x, y in zip(xs, ys, strict=True):
             d = x - y
@@ -255,6 +285,33 @@ def _magnitude(a, b, dtype, on_progress=None):
         done += len(xs)
         if on_progress is not None:
             on_progress(done, total)
+    return _finish(a, b, dtype, num, base, peak, _has_non_finite_python)
+
+
+def _unmeasurable(a, b, dtype):
+    """Why this pair has no magnitude, or None when it can be measured. Both paths refuse alike."""
+    width = _width(dtype)
+    if width is None:
+        return (f"this command does not decode {dtype}, so whether the tensor changed "
+                f"is exact and how much it changed is unmeasured")
+    if len(a) != len(b):
+        return (f"the two tensors hold {len(a)} and {len(b)} bytes, so there is no "
+                f"element-by-element comparison to make. They are both {dtype} of the "
+                f"same declared shape, so one of the two files disagrees with its own "
+                f"header")
+    if len(a) % width:
+        return (f"the tensors hold {len(a)} bytes, which is not a whole number of {dtype} "
+                f"elements, so the file disagrees with its own header")
+    return None
+
+
+def _has_non_finite_python(raw, dtype):
+    """The reference's version of the per-buffer scan, decoding through `_decode_chunks`."""
+    return any(not math.isfinite(v) for chunk in _decode_chunks(raw, dtype) for v in chunk)
+
+
+def _finish(a, b, dtype, num, base, peak, has_non_finite):
+    """The magnitude triple from the running sums, or the reason those sums cannot be trusted."""
     if not math.isfinite(num) or not math.isfinite(base):
         # WHICH SIDE, because they mean different things. A non-finite value in the CANDIDATE is a
         # broken edit, which is the single most useful thing this command can tell anybody. One in
@@ -267,9 +324,9 @@ def _magnitude(a, b, dtype, on_progress=None):
         # a broken base as "both sides" for exactly that reason.
         #
         # The extra pass is affordable because it runs only when a magnitude has already failed,
-        # which is the rare path. Testing finiteness per element in the loop above would cost a
+        # which is the rare path. Testing finiteness per element in the walk would cost a
         # comparison on every element of every tensor to answer a question almost nobody asks.
-        where = _which_side_is_not_finite(a, b, dtype)
+        where = _which_side_is_not_finite(a, b, dtype, has_non_finite)
         return None, None, (
             f"{where} a value that is not a finite number (a NaN or an infinity), so a "
             f"magnitude cannot be computed. This is not a dtype this command cannot read: "

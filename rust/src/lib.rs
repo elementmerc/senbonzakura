@@ -26,10 +26,56 @@
 //! `abi3-py310` is what keeps that cost flat: one wheel per platform covers 3.10 and everything
 //! after, which is the same cardinality `setup.py` already produces for the vendored binaries.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+pub mod modeldiff;
 pub mod timeline;
+
+/// A plain message for the Python caller. The text is the one `DiffError` already wrote, so a
+/// refusal reads the same whichever side of the boundary noticed it first.
+fn diff_error(err: modeldiff::DiffError) -> PyErr {
+    PyValueError::new_err(err.message())
+}
+
+fn dtype_named(name: &str) -> PyResult<modeldiff::Dtype> {
+    modeldiff::Dtype::parse(name).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "this command cannot decode {name}, so the magnitude of a tensor of that dtype is \
+             not measured"
+        ))
+    })
+}
+
+/// Folds one chunk of a candidate and a base onto a running `(num, base, peak)` state, element by
+/// element and in order, and returns the new state. The Python caller threads the state through
+/// its chunks, so the result is the same bits as one call over the whole tensor.
+#[pyfunction]
+#[pyo3(signature = (candidate, base, dtype, state))]
+fn diff_accumulate(
+    candidate: &[u8],
+    base: &[u8],
+    dtype: &str,
+    state: (f64, f64, f64),
+) -> PyResult<(f64, f64, f64)> {
+    let dtype = dtype_named(dtype)?;
+    let start = modeldiff::Sums {
+        num: state.0,
+        base: state.1,
+        peak: state.2,
+    };
+    let s = modeldiff::accumulate(candidate, base, dtype, start).map_err(diff_error)?;
+    Ok((s.num, s.base, s.peak))
+}
+
+/// True when a buffer holds a NaN or an infinity, for the Python caller to say which side it was.
+#[pyfunction]
+#[pyo3(signature = (raw, dtype))]
+fn diff_has_non_finite(raw: &[u8], dtype: &str) -> PyResult<bool> {
+    let dtype = dtype_named(dtype)?;
+    modeldiff::any_non_finite(raw, dtype).map_err(diff_error)
+}
 
 /// The signature catalogue, as a list of dicts. Callable without evaluating anything, so a caller
 /// can show what is checked for without having a model in hand.
@@ -126,5 +172,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(signatures, m)?)?;
     m.add_function(wrap_pyfunction!(parse_timestamp, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_timeline, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_accumulate, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_has_non_finite, m)?)?;
     Ok(())
 }

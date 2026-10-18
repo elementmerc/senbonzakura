@@ -36,6 +36,7 @@ FLOORS = (
     ("docs/package-lock.json", "vue", "3.5.42"),
     ("docs/package-lock.json", "esbuild", "0.25.0"),
     ("docs/package-lock.json", "vite", "6.4.3"),
+    ("docs/package-lock.json", "source-map-js", "1.2.2"),
 )
 
 

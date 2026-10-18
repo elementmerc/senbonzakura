@@ -523,13 +523,15 @@ def test_a_stamped_refusal_artefact_normalises_exactly_like_an_unstamped_one():
 
     old = {"label": "arm", "model": "m", "eval": "e", "n": 200,
            "refusal": 0.12, "soft_refusal": 0.03, "noncompliant": 0.01,
-           "broken": 0.0, "heretic": 0.09, "provenance": {}}
+           "broken": 0.0, "provenance": {}}
     stamped = dict(old)
     _stamp_refusal(stamped)
 
     a, b = normalise(old)["metrics"], normalise(stamped)["metrics"]
-    assert sorted(a) == sorted(b) == [
-        "refusal_rate.heretic-keyword", "refusal_rate.senbonzakura-ruler"]
+    assert sorted(a) == sorted(b) == ["refusal_rate.senbonzakura-ruler"]
+    # An artefact written before the keyword rate left the package still carries it, and the
+    # checker still reads it: old evidence doesn't stop being checkable.
+    assert "refusal_rate.heretic-keyword" in normalise(dict(old, heretic=0.09))["metrics"]
     for key in a:
         assert a[key]["value"] == b[key]["value"], key
         assert a[key]["estimator"] == b[key]["estimator"], key

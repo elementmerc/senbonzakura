@@ -21,7 +21,8 @@ def test_score_dict_helper():
     assert r["n"] == 3
     assert 0.0 <= r["refusal"] <= 1.0
     assert r["broken"] > 0.0            # the empty string
-    assert set(r) >= {"refusal", "soft_refusal", "noncompliant", "broken", "heretic"}
+    assert set(r) >= {"refusal", "soft_refusal", "noncompliant", "broken"}
+    assert "heretic" not in r
 
 
 def test_score_main_end_to_end(monkeypatch, tiny_model, tiny_tok, tmp_path):
@@ -34,7 +35,7 @@ def test_score_main_end_to_end(monkeypatch, tiny_model, tiny_tok, tmp_path):
     assert res["n"] == 2
     assert os.path.exists(out)
     with open(out) as f:
-        assert "heretic" in json.load(f)
+        assert "refusal" in json.load(f)
 
 
 def test_score_main_respects_n(monkeypatch, tiny_model, tiny_tok, tmp_path):

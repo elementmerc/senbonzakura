@@ -56,23 +56,13 @@ def test_the_paper_still_states_the_ceiling():
     assert "length-only control" in body, "the paper no longer names the null control"
 
 
-def test_the_paper_describes_the_borrowed_code_the_way_the_notices_do():
-    """THE CLAIM THAT MUST MATCH THE LICENCE FILE.
-
-    `THIRD-PARTY-NOTICES.md` was corrected on 2026-09-22: the keyword marker LIST is verbatim
-    from Heretic and `_heretic_norm` is an adaptation, not a copy. The paper said the metric was
-    used verbatim, and rewriting the paper is exactly the moment that correction gets undone by
-    somebody reaching for a shorter phrase.
-
-    Section 5(a) asks a modified work to say it was modified, so understating the modification is
-    the one direction of error this cannot afford.
+def test_the_paper_claims_no_borrowed_code():
+    """Heretic's keyword markers were removed on 2026-10-18, so the paper must not say they are used.
+    It still credits Heretic's influence on the search, which is true and stays.
     """
     body = _flat(_body())
-    assert "keyword marker list verbatim" in body, (
-        "the paper no longer scopes 'verbatim' to the marker list. Heretic has no function called "
-        "_heretic_norm; ours is an adaptation of its _is_match, and THIRD-PARTY-NOTICES.md says so")
-    assert "adapts" in body or "adapted" in body, (
-        "the paper no longer says the normalisation is adapted")
+    assert "keyword marker list verbatim" not in body, "the paper says Heretic's markers are used"
+    assert "Heretic" in body, "the paper no longer credits Heretic's influence on the search"
 
 
 @pytest.mark.parametrize("claim", ["0.9887", "0.6564", "0.6616"])

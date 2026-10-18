@@ -12,7 +12,7 @@ invisible to a reviewer asking "is this correct?", because the answer is always 
 to a suite where every test asks whether a detector computes the right answer and none asks whether
 firing one changes an outcome.
 
-Three of them are covered here, and they are the same defect in three commands:
+Two of them are covered here, and they are the same defect in two commands:
 
   * `validate` computed `reach.architectures_failing` and `e4.degenerate_reason` and returned a
     literal 0 for every outcome it could reach. `reach` is the check that answers "did the edit
@@ -20,9 +20,6 @@ Three of them are covered here, and they are the same defect in three commands:
     answered wrongly on Gemma.
   * The compass printed "THE AUC ABOVE IS NOT A MEASUREMENT OF HARM DISCRIMINATION on this run"
     and exited 0. Its `suspect` key was read nowhere outside its own module.
-  * `headtohead.score_arms` decided an arm was scored on `exit == 0 and the file exists`, so the
-    suspect arm was recorded as fine and its AUC went into the table under the heading "the axis
-    where a comparison means something".
 
 WHAT THESE TESTS ARE FOR, WHICH IS NOT THE SAME AS WHAT THE VERDICTS ARE FOR
 
@@ -34,7 +31,7 @@ import json
 
 import pytest
 
-from senbonzakura import headtohead, margin, validate
+from senbonzakura import margin, validate
 
 
 # ── validate: a bad instrument is not the same thing as an unwelcome result ───────────
@@ -108,75 +105,6 @@ def test_a_record_with_no_readout_at_all_is_not_treated_as_suspect():
     assert margin.suspect_readout_arms({}) == []
     assert margin.suspect_readout_arms(None) == []
     assert margin.suspect_readout_arms({"readout": {"harmful": None, "harmless": None}}) == []
-
-
-# ── the benchmark: the consequence that was missing ───────────────────────────────────
-class _Arm:
-    def __init__(self, tool="senbon", seed=1):
-        self.tool, self.seed = tool, seed
-
-
-def _scored(tmp_path, artefact, *, code=0):
-    """Run score_arms against a fake runner that writes `artefact` as the compass output."""
-    arm = tmp_path / "senbon-seed1"
-    (arm / "model").mkdir(parents=True)
-    (arm / "model" / "config.json").write_text("{}", encoding="utf-8")
-    out = tmp_path / "scores"
-    out.mkdir()
-
-    def runner(argv, log=None):
-        target = out / "scored-senbon-seed1.json"
-        target.write_text(json.dumps(artefact), encoding="utf-8")
-        return code
-
-    r = _Arm()
-    r.arm = arm
-    return headtohead.score_arms([r], harmful=tmp_path / "h", harmless=tmp_path / "l",
-                                 out=out, runner=runner, log=lambda _m: None)
-
-
-def test_a_suspect_compass_arm_is_not_recorded_as_scored(tmp_path, monkeypatch):
-    """THE DEFECT ITSELF: exit 0 plus a file on disk used to be enough.
-
-    The compass wrote its own verdict that the number is not a measurement of harm discrimination,
-    into this very file, and the benchmark read the exit code instead.
-    """
-    monkeypatch.setattr(headtohead, "arm_model_dir", lambda r, a: r.arm / "model")
-    scored = _scored(tmp_path, _compass(harmful_suspect=True))
-    assert scored[0]["ok"] is False
-    assert "not a measurement of harm discrimination" in scored[0]["reason"]
-    assert scored[0]["path"] is None, "an unusable score must not be handed on as a path to read"
-
-
-def test_a_sound_compass_arm_is_still_recorded_as_scored(tmp_path, monkeypatch):
-    monkeypatch.setattr(headtohead, "arm_model_dir", lambda r, a: r.arm / "model")
-    scored = _scored(tmp_path, _compass())
-    assert scored[0]["ok"] is True
-    assert scored[0]["path"] is not None
-
-
-def test_a_score_file_that_cannot_be_read_fails_only_its_own_arm(tmp_path, monkeypatch):
-    """A damaged artefact is this arm's failure, not the sweep's.
-
-    `_read_json` raises on a damaged file, which is right, and letting that escape here would take
-    down the scoring of every arm behind it over one bad file.
-    """
-    monkeypatch.setattr(headtohead, "arm_model_dir", lambda r, a: r.arm / "model")
-    arm = tmp_path / "senbon-seed1"
-    (arm / "model").mkdir(parents=True)
-    (arm / "model" / "config.json").write_text("{}", encoding="utf-8")
-    out = tmp_path / "scores"
-    out.mkdir()
-
-    def runner(argv, log=None):
-        (out / "scored-senbon-seed1.json").write_text("{not json", encoding="utf-8")
-        return 0
-
-    r = _Arm()
-    r.arm = arm
-    scored = headtohead.score_arms([r], harmful=tmp_path / "h", harmless=tmp_path / "l",
-                                   out=out, runner=runner, log=lambda _m: None)
-    assert scored[0]["ok"] is False
 
 
 # ── S4: a probe that could not reach the decision it exists to inform ─────────────────

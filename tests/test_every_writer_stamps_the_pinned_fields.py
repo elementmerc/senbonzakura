@@ -121,14 +121,14 @@ def test_the_helpers_that_stamp_twice_pass_the_fields_through():
     """
     from senbonzakura import score
     res = {"label": "t", "model": "m", "eval": "e", "n": 200,
-           "refusal": 0.094, "heretic": 0.201,
+           "refusal": 0.094,
            "soft_refusal": 0.0, "noncompliant": 0.0, "broken": 0.0}
     fields = {"input_digest": "abc123", "partition": "measure", "prompt_format": "raw",
               "tool_version": "0.4.0", "precision": "bfloat16"}
     score._stamp_refusal(res, dict(fields))
 
     blocks = {k: v for k, v in res["metrics"].items() if k.startswith("refusal_rate.")}
-    assert len(blocks) == 2, f"expected both estimators, got {sorted(blocks)}"
+    assert sorted(blocks) == ["refusal_rate.senbonzakura-ruler"], f"got {sorted(blocks)}"
     for key, block in blocks.items():
         missing = [f for f in fields if block.get(f) in (None, "")]
         assert not missing, (

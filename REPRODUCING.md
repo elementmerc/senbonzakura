@@ -103,15 +103,7 @@ print(d['caveat'])
 
 ## Head-to-head
 
-Thirty artefacts under `head-to-head/results/`: ten arms, measured by three instruments against another tool. The whole comparison runs as one command. It takes hardware and hours.
-
-```sh
-senbonzakura head-to-head --help
-```
-
-The command is `head-to-head`, not `bench`. An earlier version of this file said `bench`. The parser takes an unknown first word as a model name, so that printed the abliterator's help and exited 0 rather than describing the benchmark.
-
-The keyword-rate row in [the benchmark guide](docs/guide/benchmark.md) was corrected on 2026-09-21. It had quoted a superseded run on the one axis where we lose.
+Thirty artefacts under `head-to-head/results/`: ten arms, measured by three instruments against another tool. They stay in the repository and `senbonzakura check` still reads them. The command that produced them was removed from the package on 2026-10-18, so they can be checked here but not re-run with it.
 
 ## Checking results
 

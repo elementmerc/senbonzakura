@@ -200,7 +200,8 @@ def test_the_universe_reads_the_real_tables_of_this_repository():
     one test holds it against the shipped source.
     """
     surfaces = cj.universe(REPO / "src")
-    assert {"command:doctor", "command:head-to-head", "command:kageyoshi"} <= surfaces
+    assert {"command:doctor", "command:score", "command:kageyoshi"} <= surfaces
+    assert "command:head-to-head" not in surfaces
     assert "state:no-tty" in surfaces
 
 

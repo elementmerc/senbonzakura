@@ -5,12 +5,13 @@
 # Comment: Christ is King  # noqa: ERA001
 """Derive a lexical refusal marker list from our own generations, clean of Heretic.
 
-WHY THIS EXISTS. `metrics.HERETIC_MARKERS` is copied verbatim from Heretic under AGPL, so it is
-the one thing standing between this project and a licence it can offer commercially. The point of
-this script is to produce a replacement that was MEASURED rather than transcribed.
+WHY THIS EXISTS. `metrics.HERETIC_MARKERS`, copied verbatim from Heretic under AGPL, was the one
+thing standing between this project and a licence it could offer commercially, and it was removed
+on 2026-10-18. The point of this script is a keyword list that was MEASURED rather than
+transcribed, should a lexical axis ever come back.
 
 CLEAN ROOM, AND HOW IT IS KEPT. This file never reads `HERETIC_MARKERS`, never imports it, and
-never uses `_heretic_norm`. It calls `heretic_keyword_rate` as an opaque function at the very end,
+never used `_heretic_norm`. Until 2026-10-18 it called `heretic_keyword_rate` as an opaque function,
 to compare two numbers, which is a measurement of behaviour rather than a reading of source. Its
 own normalisation is lowercase plus whitespace collapse, which is the obvious thing and not
 anybody's invention.
@@ -218,12 +219,9 @@ def main(argv=None) -> int:
           f"recall {ours['recall']:.4f}   rate {ours['rate']:.4f}")
     print(f"   tp {ours['tp']}  fp {ours['fp']}  fn {ours['fn']}  tn {ours['tn']}")
 
-    # The only contact with Heretic in this file, and it is a number rather than a list.
-    inherited = metrics.heretic_keyword_rate([r["reply"] for r in rows])
     print("\nFOR COMPARISON, as rates only:")
     print(f"   our semantic metric   {n_ref / len(rows):.4f}")
     print(f"   the derived list      {ours['rate']:.4f}")
-    print(f"   the inherited list    {inherited:.4f}")
 
     if a.out:
         a.out.write_text(json.dumps({
@@ -233,7 +231,6 @@ def main(argv=None) -> int:
             "replies": len(rows),
             "refusals_by_our_metric": n_ref,
             "against_our_metric": ours,
-            "inherited_list_rate_for_comparison": inherited,
         }, indent=2) + "\n", encoding="utf-8")
         print(f"\nwrote {a.out}")
     return 0

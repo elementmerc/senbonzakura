@@ -261,9 +261,13 @@ def test_no_markdown_surface_invokes_a_command_that_does_not_exist():
     without it. Until the parser refuses, this test is what stands between a reader and a
     plausible wrong screen.
     """
+    from senbonzakura.entry import NO_LONGER_TYPED
     real = _real_commands()
+    # The changelog records what each release shipped, including commands that have since left. A
+    # name the parser refuses by name is a fair thing for history to mention; anywhere else it isn't.
     offenders = {name: sorted(pages) for name, pages in _invoked_commands().items()
-                 if name not in real}
+                 if name not in real
+                 and not (name in NO_LONGER_TYPED and set(pages) <= {"CHANGELOG.md"})}
     assert not offenders, (
         "these pages show a `senbonzakura <command>` that the parser does not register, and the "
         "parser does not refuse it either: it falls through to the abliterator and exits 0:\n  "

@@ -52,11 +52,10 @@ no further: what it hands back is validated at the boundary below.
 
 NO DEPENDENCE ON THE BORROWED METRIC
 
-This module does not import `metrics`, and it must not. `metrics.HERETIC_MARKERS` and
-`metrics._heretic_norm` come from Heretic under AGPL-3.0-or-later and are not ours to offer on
-other terms (decision Q-39, which rejected a dual licence as "not available" for that reason).
-Anything a pack is sold with therefore has to stand clear of them, and the way to keep that true
-is for the interface between the two trees to have no path to them at all.
+This module does not import `metrics`. That rule was written while `metrics` carried code copied
+from Heretic under AGPL-3.0-or-later (decision Q-39), so anything a pack was sold with had to
+stand clear of it. The copied code was removed on 2026-10-18; the rule stays because a pack's
+interface has no reason to reach the rulers.
 `tests/test_a_preset_pack_resolves_or_says_why.py` imports this module with `metrics` made
 unimportable and fails if it needs it.
 """

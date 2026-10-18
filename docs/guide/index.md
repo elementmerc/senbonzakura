@@ -21,7 +21,6 @@ Read [What it is](/guide/what-it-is) first. Everything else assumes you have.
 - [The compass](/guide/compass)
 - [Does the edit hold up](/guide/robustness)
 - [Failing a build on a regression](/guide/gating)
-- [Benchmarking against another tool](/guide/benchmark)
 - [How this compares to other tools](/comparison)
 
 ## Before you quote a number

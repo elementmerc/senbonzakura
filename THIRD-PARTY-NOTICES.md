@@ -1,96 +1,30 @@
 # Third-party notices
 
-Senbonzakura includes third-party code, which determines the licence of the
-whole project.
+Senbonzakura includes or builds on the third-party work below.
 
-## Heretic
+## Heretic (credit; no code included)
 
-`src/senbonzakura/metrics.py` contains a keyword-marker list (`HERETIC_MARKERS`)
-copied verbatim from Heretic, and a normalisation function (`_heretic_norm`)
-adapted from it:
+Heretic (https://github.com/p-e-w/heretic, Copyright (C) 2025-2026 Philipp
+Emanuel Weidmann and contributors, AGPL-3.0-or-later) shaped this project's
+search, and is credited here for that.
 
-- Project: https://github.com/p-e-w/heretic
-- Copyright (C) 2025-2026 Philipp Emanuel Weidmann and contributors
-- Licence: AGPL-3.0-or-later
-
-They are reproduced so that Senbonzakura's residual-refusal figures stay directly
-comparable to Heretic's own keyword metric. Because this AGPL-licensed code is
-included and distributed, Senbonzakura as a whole is distributed under
-AGPL-3.0-or-later (see [LICENSE](LICENSE)).
-
-### Statement of modification (AGPL-3.0 section 5(a))
-
-**Senbonzakura is a modified work based in part on Heretic, and it is not
-Heretic.** Section 5(a) of the licence requires a work like this one to say so
-prominently and to give a date, so that nobody mistakes our behaviour for
-upstream's.
-
-- **Modified by:** Daniel Iwugo.
-- **First included:** 2026-07-14, in the initial package.
-- **Relicensed to AGPL-3.0-or-later for this inclusion:** 2026-07-17.
-- **Most recent modification to the file carrying it:** 2026-10-17 (this is
-  the date the README's credit section must agree with; the two drifted by six
-  weeks once, which is the one field section 5(a) is actually about). The date
-  moves whenever `metrics.py` is touched, whatever the change was about,
-  because the test asks what git says rather than reading the diff: on
-  2026-10-06 the file gained graded prose measures beside `is_broken`, a
-  repetition rate, a vocabulary ratio and a shortfall against the generation
-  budget, and on 2026-10-07 it gained the aggregate over many replies that
-  reports them. The keyword metric below was not altered by either. `is_broken`
-  itself is unchanged, threshold and window alike.
-
-What was and was not changed, because the distinction is the whole point of the
-notice:
-
-- `HERETIC_MARKERS` is **byte-identical to upstream** and is deliberately kept
-  that way. If it ever drifts, the comparability that is the only reason for
-  copying it is gone, and this notice becomes wrong. `tests/test_metrics.py`
-  pins it by SHA-256 so drift is caught rather than noticed.
-- `_heretic_norm` is an **adaptation, not a copy**, and this entry said
-  otherwise until 2026-09-22. Upstream has no function of that name: the
-  normalisation lives inside a bound method, `_is_match`, together with an
-  empty-response rule and the marker loop. Ours extracts the four normalisation
-  steps into a standalone function, adds a null guard, and leaves the other two
-  behaviours to `is_heretic_refusal`. The behaviour is preserved; the code is
-  restructured. Section 5(a) is about saying a work was modified, so describing
-  an adaptation as a verbatim copy understated exactly the thing the section
-  asks us to state.
-- **Everything around them is ours**, including a stricter `is_refusal`, a soft
-  refusal detector, and the surrounding module. Senbonzakura reports the Heretic
-  keyword rate *alongside* its own metric rather than as its metric.
-- **The search reuses Heretic's PARAMETERISATION, and the notice used to deny
-  it.** It said the search was independent work that did not reimplement
-  Heretic's; an audit on 2026-09-10 put the two search spaces side by side and
-  they match parameter for parameter: `direction_scope` against `dir_mode`,
-  `direction_index`, and the per-component `max_weight`, `max_weight_position`,
-  `min_weight` and `min_weight_distance` profile, including the `-0.25` lower
-  bound whose purpose is to let the MLP profile fall to zero and leave that
-  component untouched. That bound and its reason are a specific numeric design
-  choice of Heretic's, reproduced exactly. Senbonzakura's own CLI help already
-  conceded the point, describing the per-component split as "Heretic-style",
-  while this file, which is the one that is legally load-bearing, denied it.
-
-  What is ours around that parameterisation: the direction extraction, every
-  measurement, a different sampler (NSGA-II rather than TPE), a different
-  objective, different bounds, and the direction-count parameter that has no
-  counterpart upstream. Both works are AGPL-3.0-or-later, so nothing about the
-  licensing turns on this; the claim was simply false and is withdrawn.
-- **One further piece of Heretic IS copied, in the benchmark harness.**
-  `head-to-head/best_of_n_heretic.py` reproduces Heretic's direction block,
-  including its projected-abliteration step, and imports `heretic.config`,
-  `heretic.model` and `heretic.utils` directly. It exists so that the
-  equal-budget selection pass this project applies to its own runs can be
-  applied to Heretic's in the same way, from outside Heretic's code. That file
-  now carries the upstream copyright line and a dated statement of modification
-  directly above the copied functions; until 2026-09-10 it stated only functional
-  provenance, which is a weaker thing than authorship, and this notice described
-  that as the file saying so about itself. Both works are AGPL-3.0-or-later, so
-  the licensing is unaffected; the notice was wrong, and it was found by an audit
-  reading the tree against this file rather than reading this file alone.
-
-A reader comparing a Senbonzakura number to a Heretic number should know that
-only the keyword rate is a like-for-like comparison, and that every other figure
-is measured by our own instrument.
+- **No Heretic code is included.** Until 2026-10-18 `src/senbonzakura/metrics.py`
+  carried Heretic's keyword marker list, copied verbatim, and a normalisation
+  function adapted from it, so that a residual refusal figure could be read on
+  Heretic's ruler beside our own. Both were removed on 2026-10-18, together with
+  the benchmark harness that ran Heretic, which had reproduced part of Heretic's
+  direction code. Every refusal figure the package now reports is measured by its
+  own rulers. Committed artefacts from before that date may still carry a
+  `heretic` field; `senbonzakura check` reads it where it is present.
+- **The search follows Heretic's parameterisation.** An audit on 2026-09-10 put
+  the two search spaces side by side and they match parameter for parameter:
+  the direction scope, the interpolated direction index, and the per-component
+  `max_weight`, `max_weight_position`, `min_weight` and `min_weight_distance`
+  profile, including the `-0.25` lower bound that lets the MLP profile fall to
+  zero. That is Heretic's design, and it is credited as such. What is ours around
+  it: the direction extraction, every measurement, a different sampler (NSGA-II
+  rather than TPE), a different objective, different bounds, and the
+  direction-count parameter that has no counterpart upstream.
 
 ## ggml and llama.cpp
 

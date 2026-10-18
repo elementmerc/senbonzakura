@@ -109,22 +109,6 @@ senbonzakura budget --model ./Qwen3-4B --trials 64 --prompts 48 --tokens 48
 | `track build` | Fetch the harmful and harmless prompt pools at pinned revisions. Refuses to run if an upstream's licence has moved. |
 | `track` | Build an evaluation split, audit one, or check one against a public benchmark for contamination. |
 
-## Comparing tools
-
-| Command | What it does |
-|---|---|
-| `head-to-head stage` | Cut the prompt slices every tool is scored on. **Run this first.** |
-| `head-to-head run` | Run every tool over every seed, score every model with one instrument, and print the verdict. |
-| `head-to-head report` | Read a finished run again, without re-running anything. |
-
-`run` refuses to start without the slices `stage` writes. If an old slices directory stops working after an upgrade, cut it again.
-
-::: warning Check which source you benchmarked
-`run` prints the source tree it is about to measure, and its commit, before the first arm. It defaults to the tree the command was run from. A pip-installed senbonzakura benchmarks site-packages, even from inside a checkout. Pass `--senbon-src DIR` to say which one you mean.
-:::
-
-See [Benchmarking against another tool](/guide/benchmark).
-
 ## Shipping the result
 
 | Command | What it does |

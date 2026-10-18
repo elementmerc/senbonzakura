@@ -227,7 +227,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          python3 tools/ci/check_base_images.py --check --expect 5
+          python3 tools/ci/check_base_images.py --check --expect 4
           status=$?
           set -e
           case "$status" in

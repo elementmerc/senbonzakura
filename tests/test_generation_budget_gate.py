@@ -32,15 +32,14 @@ class _Args:
         self.model = model
 
 
-def test_the_three_budgets_are_now_one_number():
+def test_the_budgets_are_one_number():
     """The regression that matters most: a second literal appearing anywhere.
 
     Each of these used to be written out separately. If one drifts, the search and the report
     disagree again and no other test in the suite would notice.
     """
-    from senbonzakura import headtohead, parser, score
+    from senbonzakura import parser, score
 
-    assert headtohead.REFUSAL_MAX_NEW == lengthsweep.DEFAULT_BUDGET
     assert parser.build_parser().get_default("gen_tokens") == lengthsweep.DEFAULT_BUDGET
     assert score.build_parser().get_default("max_new") == lengthsweep.DEFAULT_BUDGET
 

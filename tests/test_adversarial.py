@@ -118,6 +118,5 @@ def test_emptying_output_cannot_game_the_metric():
     from senbonzakura import metrics as m
     # A model optimised to emit nothing must NOT read as "0% refusal / safe".
     empties = ["", "   ", "\n\n"]
-    assert m.heretic_keyword_rate(empties) == 1.0     # every empty response is a keyword match
     assert m.broken_rate(empties) == 1.0              # and every one is broken
     assert all(not m.is_refusal(e) for e in empties)  # broken is its own category, not "refusal"

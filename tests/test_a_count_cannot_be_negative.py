@@ -266,14 +266,6 @@ SIBLING_REFUSED = [
 ]
 
 #: The same, for the head-to-head family, which needs more required flags to reach its own.
-H2H_REFUSED = [
-    (["--trials", "-3"], "--trials"),
-    (["--trials", "0"], "--trials"),
-    (["--batch", "0"], "--batch"),
-    (["--max-new", "-2"], "--max-new"),
-    (["--skip-harmful", "-5"], "--skip-harmful"),
-]
-
 #: Values that must STILL be accepted, because zero is documented to mean something on each.
 SIBLING_ACCEPTED = [
     ("measure", ["m", "--out", "o", "--capability-n", "0"]),
@@ -307,14 +299,6 @@ def test_a_sibling_command_refuses_a_count_that_means_nothing(command, argv, fla
 def test_a_sibling_command_still_accepts_a_zero_that_means_something(command, argv):
     """The failure that teaches people to turn checking off is refusing a working invocation."""
     _sibling_parser(command).parse_args(argv)
-
-
-@pytest.mark.parametrize(("argv", "flag"), H2H_REFUSED)
-def test_the_head_to_head_refuses_a_count_that_means_nothing(argv, flag, capsys):
-    ap = _sibling_parser("headtohead")
-    with pytest.raises(SystemExit):
-        ap.parse_args(["run", "--model", "m", "--out", "o", "--track", "t", *argv])
-    assert flag in capsys.readouterr().err
 
 
 def test_a_tolerance_cannot_be_negative_or_infinite():

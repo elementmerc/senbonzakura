@@ -97,4 +97,3 @@ Copyright (C) 2026 Daniel Iwugo.
 
 **AGPL-3.0-or-later.** See [LICENSE](LICENSE). If you run a modified version of this code as a network service, section 13 of the AGPL requires you to offer your modified source to the people using it. The bundled evaluation track is CC BY-NC 4.0 (non-commercial), so for commercial use supply your own corpus with `--track`. A model you uncensor keeps its base model's licence.
 
-**Senbonzakura is a modified work based in part on Heretic, and it is not Heretic.** Modified by Daniel Iwugo; first included 2026-07-14, most recently modified 2026-10-17. Only the keyword rate is shared code: its marker list is kept byte-identical and its normalisation is adapted from upstream, so only that number is a like-for-like comparison with Heretic. The full statement is in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

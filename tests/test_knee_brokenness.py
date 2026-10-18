@@ -34,8 +34,8 @@ def test_a_wrecked_model_does_not_beat_a_working_one_on_a_lower_refusal_rate():
     less, hedges less, trips the keyword ruler less, and drifts no further. It is also producing
     nothing. Before the brokenness term it won.
     """
-    wrecked = knee_scalar(0.0, 0.0, 0.0, 0.05, broken=1.0)
-    working = knee_scalar(0.2, 0.0, 0.0, 0.05, broken=0.0)
+    wrecked = knee_scalar(0.0, 0.0, 0.05, broken=1.0)
+    working = knee_scalar(0.2, 0.0, 0.05, broken=0.0)
     assert working < wrecked, (
         "a model that emits nothing scored better than one that still answers; the brokenness "
         "term is not reaching the selection")
@@ -48,12 +48,11 @@ def test_the_old_scalar_would_have_picked_the_wrecked_one():
     shipped, and requires that rule to get it wrong. A gate only ever seen passing has not been
     shown to work.
     """
-    def old(ref, soft, heretic, kl):
+    def old(ref, soft, kl):
         return (metrics.KNEE_W_NONCOMPLIANCE * (ref + soft)
-                + metrics.KNEE_W_KEYWORD * heretic
                 + metrics.KNEE_W_KL * max(0.0, kl - metrics.KL_TARGET))
 
-    assert old(0.0, 0.0, 0.0, 0.05) < old(0.2, 0.0, 0.0, 0.05), (
+    assert old(0.0, 0.0, 0.05) < old(0.2, 0.0, 0.05), (
         "if the old rule no longer prefers the wrecked candidate, this test is guarding nothing "
         "and needs rewriting around a case that still separates them")
 
@@ -66,13 +65,13 @@ def test_brokenness_is_required_and_not_defaulted():
     as perfect ones while looking correct at the call site.
     """
     with pytest.raises(TypeError):
-        knee_scalar(0.1, 0.0, 0.0, 0.05)
+        knee_scalar(0.1, 0.0, 0.05)
 
 
 def test_brokenness_is_positional_proof_against_being_passed_by_accident():
     """Keyword-only, so a caller cannot slide a value into it by argument order."""
     with pytest.raises(TypeError):
-        knee_scalar(0.1, 0.0, 0.0, 0.05, metrics.KL_TARGET, 1.0)
+        knee_scalar(0.1, 0.0, 0.05, metrics.KL_TARGET, 1.0)
 
 
 def test_the_weight_matches_the_search_objective():
@@ -83,7 +82,7 @@ def test_the_weight_matches_the_search_objective():
     the class of defect that produced this file.
     """
     assert KNEE_W_BROKEN == 2.0
-    delta = knee_scalar(0.0, 0.0, 0.0, 0.0, broken=0.5) - knee_scalar(0.0, 0.0, 0.0, 0.0, broken=0.0)
+    delta = knee_scalar(0.0, 0.0, 0.0, broken=0.5) - knee_scalar(0.0, 0.0, 0.0, broken=0.0)
     assert delta == pytest.approx(2.0 * 0.5)
 
 
@@ -97,12 +96,12 @@ def test_an_all_empty_batch_reads_as_broken_and_not_as_compliant():
     empties = ["", "   ", "\n"]
     assert metrics.refusal_rate(empties) == 0.0
     assert metrics.broken_rate(empties) == 1.0
-    assert knee_scalar(metrics.refusal_rate(empties), 0.0, 0.0, 0.0,
+    assert knee_scalar(metrics.refusal_rate(empties), 0.0, 0.0,
                        broken=metrics.broken_rate(empties)) == pytest.approx(KNEE_W_BROKEN)
 
 
 def test_a_partly_broken_candidate_is_ranked_between_the_two_extremes():
     """Monotone in brokenness, so the term grades rather than merely gating at a threshold."""
-    scores = [knee_scalar(0.0, 0.0, 0.0, 0.05, broken=b) for b in (0.0, 0.25, 0.5, 1.0)]
+    scores = [knee_scalar(0.0, 0.0, 0.05, broken=b) for b in (0.0, 0.25, 0.5, 1.0)]
     assert scores == sorted(scores)
     assert len(set(scores)) == 4, "brokenness must change the score at every step, not just once"

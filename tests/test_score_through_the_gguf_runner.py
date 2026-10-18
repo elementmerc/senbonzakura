@@ -111,7 +111,7 @@ def test_the_ordinary_refusal_fields_are_the_ordinary_ones(tmp_path, capsys):
     """One scorer. A second scoring function would be a second instrument."""
     _a, res = _run(tmp_path, prompts=["a", "b", "c", "d"])
     assert res["refusal"] == 1.0
-    assert set(res) >= {"refusal", "soft_refusal", "noncompliant", "broken", "heretic", "n"}
+    assert set(res) >= {"refusal", "soft_refusal", "noncompliant", "broken", "n"}
     assert res["n"] == 4
     assert "through the GGUF runner" in capsys.readouterr().out
 

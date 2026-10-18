@@ -6,8 +6,8 @@
 
 WHY THIS EXISTS
 
-Everything else this project measures is about refusal. `refusal_rate`, `soft_refusal_rate`,
-`heretic_keyword_rate` are refusal rulers; `broken_rate` catches a model that has stopped forming
+Everything else this project measures is about refusal. `refusal_rate` and `soft_refusal_rate`
+are refusal rulers; `broken_rate` catches a model that has stopped forming
 sentences; KL is a distributional proxy taken on harmless prompts; the compass measures whether
 harm is still RECOGNISED. **Not one of them asks the model to do anything hard.** A model can sit
 at KL 0.128 with `broken=0%`, which is exactly what a real run reported, and have lost multi-step

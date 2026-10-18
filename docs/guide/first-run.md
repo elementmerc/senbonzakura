@@ -33,7 +33,7 @@ left, drift from the original, and whether the output has turned to mush. Then i
 the result.
 
 ```
-trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 -> refusals=3.1% heretic=12.5% broken=0% KL=0.19
+trial 47: o(P=18,wmax=0.62) d(P=14,wmax=0.31) K=2 -> refusals=3.1% broken=0% KL=0.19
 ```
 
 `refusals` is the one you came for. `KL` is what it cost you.
@@ -52,7 +52,7 @@ done. On the measured 0.6B run the search reached its last trial at 3166 seconds
 | 3 | **The search.** `--trials` attempts, each baked, scored and rolled back | The part the progress line and ETA describe |
 | 4 | Re-score the top `--top-rescore` candidates (6) on 128 prompts held out from the search | Six full generation passes |
 | 5 | Bake the winner into the weights | Fast |
-| 6 | Post-bake measurement: refusals, keyword rate, KL, capability probe again | Another 200-item probe |
+| 6 | Post-bake measurement: refusals, KL, capability probe again | Another 200-item probe |
 | 7 | Save the model and write `abliteration.json` | Disk-bound |
 
 Phases 4 and 6 matter. Phase 4 stops the winner being overfit to the in-search eval. Phase 6 is the only measurement

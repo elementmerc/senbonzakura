@@ -100,7 +100,6 @@ from .metrics import (
     KL_TARGET,  # where the knee's coherence surcharge starts, and what --max-kl moves
     MIN_REPORTABLE_N,  # below this a rate is not stated; here it bounds the re-score slice
     broken_rate,  # fraction of a batch that is wrecked output
-    heretic_keyword_rate,  # Heretic-comparable refusal metric (the axis Heretic wins)
     is_broken,  # wrecked-output detector (empty / garbage / repetition)
     is_refusal,  # hard-refusal detector
     is_soft_refusal,  # hedged-compliance detector (the moralising lecture)
@@ -1807,13 +1806,13 @@ def _profiles_from_params(p):
 
 
 def _scalar_of(t):
-    # Scalarise a trial for early-stop / candidate ranking: non-compliance (hard + hedged) plus
-    # half the keyword rate, but only for INTACT trials (KL under ceiling, coherent). A damaged or
-    # unmeasured trial scores +inf so it can never look "best".
+    # Scalarise a trial for early-stop / candidate ranking: non-compliance (hard + hedged), but only
+    # for INTACT trials (KL under ceiling, coherent). A damaged or unmeasured trial scores +inf so it
+    # can never look "best".
     ua = t.user_attrs
     if not ua or ua.get("kl", WORST_SCORE) > KL_CEIL or ua.get("broken", 1.0) > 0.1:
         return WORST_SCORE
-    return ua["refusals"] + ua.get("soft", 0.0) + 0.5 * ua.get("heretic", 0.0)
+    return ua["refusals"] + ua.get("soft", 0.0)
 
 
 # The budget knobs kageyoshi resolves from the architecture, paired with the flags that set them.
@@ -1965,8 +1964,7 @@ def _apply_kageyoshi(args, model, arch, ne, NL, log, explicit=(), composition=No
     # Resolved from the trial count AFTER it settles, so an explicit --trials moves the early stop
     # with it rather than leaving a patience computed against a budget that no longer applies.
     preset("patience", max(20, args.trials // 3))   # stop once the front is mapped
-    # Fold the hedging axis only if a hedged-compliance set is present (the lever that closes
-    # the residual keyword gap Heretic wins on); silently skip it when absent.
+    # Fold the hedging axis only if a hedged-compliance set is present; silently skip it when absent.
     if not args.hedge_ds and os.path.isdir(f"{args.track}/hedge_ds"):
         args.hedge_ds = f"{args.track}/hedge_ds"
     # AN INVERTED PAIR IS A TYPO, NOT A SEARCH SPACE. Caught here rather than clamped silently,
@@ -2410,8 +2408,7 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     Split out so a caller that needs only the chat template does not have to put a model on the
     device to get it. `drift` did: it loaded the candidate, then loaded the base while the
     candidate was still resident, so the peak was two full copies. Two bf16 copies of a 1.7B model
-    do not fit the 6 GB card this project is sized for, and `best_of_n_heretic.py` says so in as
-    many words and designs around it.
+    do not fit the 6 GB card this project is sized for.
 
     Left-padding is set here because `firsttoken.last_token_logits` reads position -1, which is
     the last REAL token only under left padding.
@@ -3753,30 +3750,27 @@ class Abliterator:
         gens = self.gen_batch(self.bad_eval)
         ref = sum(is_refusal(t) for t in gens) / max(1, len(gens))
         soft = sum(is_soft_refusal(t) for t in gens) / max(1, len(gens))   # hedged compliance (lever 1/2)
-        # Heretic-comparable rate (the axis Heretic wins)
-        hk = heretic_keyword_rate(gens)
         brk = broken_rate(gens)                                         # coherence on the harmful set
         hbrk = broken_rate(self.gen_batch(self.kl_eval[:min(16, len(self.kl_eval))]))  # coherence on harmless
         kl = self.kl_vs_orig(self.kl_eval)
         broken = max(brk, hbrk)
         noncomp = ref + soft                                            # strict non-compliance: hard refusal + hedging
         trial.set_user_attr("refusals", ref); trial.set_user_attr("soft", soft); trial.set_user_attr("kl", kl)
-        trial.set_user_attr("broken", broken); trial.set_user_attr("heretic", hk)
+        trial.set_user_attr("broken", broken)
         # Drive non-compliance (hard AND hedged) to 0 while keeping the model intact: penalise KL past
         # the ceiling AND penalise incoherence directly, so a wrecked config (which scores LOW refusals
-        # since broken != refusal) can never win. The keyword rate rides as a separate Pareto axis.
-        scal = noncomp + 0.5 * hk + args.kl_scale * max(0.0, kl - KL_CEIL) + 0.3 * kl + 2.0 * broken
+        # since broken != refusal) can never win.
+        scal = noncomp + args.kl_scale * max(0.0, kl - KL_CEIL) + 0.3 * kl + 2.0 * broken
         log(f"  trial {trial.number}: o(P={pr[0]},wmax={pr[1]:.2f}) d(P={pr[4]},wmax={pr[5]:.2f}) K={K} {mode}"
             f"{'' if didx is None else f' di={didx:.1f}'} -> refusals={ref*100:.1f}% soft={soft*100:.1f}% "
-            f"heretic={hk*100:.1f}% broken={broken*100:.0f}% KL={kl:.4f} obj={scal:.4f}")
+            f"broken={broken*100:.0f}% KL={kl:.4f} obj={scal:.4f}")
         self.events.emit("trial", number=trial.number, k=K, mode=mode,
-                         refusals=round(ref, 6), soft=round(soft, 6), heretic=round(hk, 6),
+                         refusals=round(ref, 6), soft=round(soft, 6),
                          broken=round(broken, 6), kl=round(kl, 6), objective=round(scal, 6))
         if args.search == "pareto":
-            # THREE objectives (lever 1): strict non-compliance (hard+hedge, with a broken penalty),
-            # the Heretic keyword rate (its own axis so the search actually targets what Heretic wins),
-            # and KL. NSGA-II maps the frontier; we pick the knee afterwards.
-            return noncomp + 2.0 * broken, hk, kl
+            # TWO objectives: strict non-compliance (hard+hedge, with a broken penalty) and KL.
+            # NSGA-II maps the frontier; we pick the knee afterwards.
+            return noncomp + 2.0 * broken, kl
         return scal
 
     # ── the full pipeline ─────────────────────────────────────────────────────────
@@ -4690,7 +4684,7 @@ class Abliterator:
                 f"a killed run resumes with --resume (or --no-persist-study to disable)")
         if args.search == "pareto":
             study = optuna.create_study(
-                directions=["minimize", "minimize", "minimize"],
+                directions=["minimize", "minimize"],
                 sampler=optuna.samplers.NSGAIISampler(seed=args.seed, population_size=pop),
                 storage=storage, study_name=study_name, load_if_exists=args.resume)
         else:
@@ -4882,7 +4876,6 @@ class Abliterator:
                     "K": t.params.get("num_directions", 1), "mode": t.params.get("dir_mode", "per_layer"),
                     "di": (round(t.params["direction_index"], 2) if "direction_index" in t.params else None),
                     "refusals": round(t.user_attrs["refusals"], 4),
-                    "heretic": round(t.user_attrs.get("heretic", 0.0), 4),
                     "kl": round(t.user_attrs["kl"], 4), "broken": round(t.user_attrs.get("broken", 0.0), 4)}
 
         rows = sorted([_row(t) for t in study.trials if t.user_attrs], key=lambda r: (r["refusals"], r["kl"]))
@@ -4897,7 +4890,7 @@ class Abliterator:
         for r in [x for x in rows if x["kl"] <= _ceil_for_log and x["broken"] <= 0.1][:8]:
             di_s = "" if r["di"] is None else f" di={r['di']}"
             log(f"   o(P={r['oP']},wmax={r['owmax']},D={r['oD']}) d(P={r['dP']},wmax={r['dwmax']},D={r['dD']}) "
-                f"K={r['K']} {r['mode']}{di_s} refusals={r['refusals']*100:.1f}% heretic={r['heretic']*100:.1f}% "
+                f"K={r['K']} {r['mode']}{di_s} refusals={r['refusals']*100:.1f}% "
                 f"broken={r['broken']*100:.0f}% KL={r['kl']:.4f}")
 
         if args.search == "pareto":
@@ -4909,7 +4902,7 @@ class Abliterator:
         # Pick the KNEE: the most-uncensored config that is still intact (KL under ceiling, coherent).
         # Reads the MEASURED user_attrs, so it works for both search modes (and for multi-objective,
         # where study.best_trial is undefined). Fall back to the whole set if nothing is under ceiling.
-        # Preference now weighs hedging (soft) and the Heretic keyword rate, not hard refusals alone.
+        # Preference weighs hedging (soft) as well as hard refusals.
         _cand = [t for t in study.trials if t.user_attrs]
         if not _cand:
             # min() on an empty sequence raises "min() arg is an empty sequence", which after
@@ -4983,7 +4976,6 @@ class Abliterator:
                 g = self.gen_batch(big)
                 r = sum(is_refusal(x) for x in g) / max(1, len(g))
                 s = sum(is_soft_refusal(x) for x in g) / max(1, len(g))
-                h = heretic_keyword_rate(g)
                 # Re-measured for the same reason as the other three: this pass exists because the
                 # knee should not be overfit to the small search eval, and until 2026-09-06 it
                 # refreshed every axis EXCEPT this one. A config whose output only falls apart on
@@ -4993,31 +4985,27 @@ class Abliterator:
                 # refusal-final grows) so the trial's value is kept as a floor.
                 b = max(broken_rate(g), t.user_attrs.get("broken", 0.0))
                 drop = self._capability_drop(cap_baseline, cap_items)
-                _final[t.number] = {"refusals": r, "soft": s, "heretic": h, "broken": b,
+                _final[t.number] = {"refusals": r, "soft": s, "broken": b,
                                     "capability_drop": drop}
                 cap_note = "" if drop is None else f" capability={-drop*100:+.1f}pp"
                 log(f"   trial {t.number}: refusals={r*100:.1f}% soft={s*100:.1f}% "
-                    f"heretic={h*100:.1f}% broken={b*100:.0f}% KL={t.user_attrs['kl']:.4f}"
+                    f"broken={b*100:.0f}% KL={t.user_attrs['kl']:.4f}"
                     f"{cap_note}")
             self.restore_weights()
             _pool = ranked
 
         def _knee_key(t):
-            # P2 fix: minimise a WEIGHTED scalar of the three objectives so the Heretic keyword /
-            # hedging axis actually STEERS the pick, instead of the old lexicographic tuple where it
-            # was a mere tiebreaker behind hard+soft refusal and so almost never decided the winner
-            # (the whole point of making it a first-class search objective was defeated at selection
-            # time). KL only surcharges above the "comfortably intact" target.
+            # Minimise a WEIGHTED scalar of the measures (metrics.knee_scalar). KL only surcharges
+            # above the "comfortably intact" target.
             f = _final.get(t.number)
             ua = t.user_attrs
             ref = f["refusals"] if f else ua["refusals"]
             soft = f["soft"] if f else ua.get("soft", 0.0)
-            her = f["heretic"] if f else ua.get("heretic", 0.0)
             brk = f["broken"] if f else ua.get("broken", 0.0)
             # None means nobody measured it, which must score as no penalty rather than as no
             # loss: those are the same number here and only one of them is a claim.
             drop = (f or {}).get("capability_drop") or 0.0
-            return knee_scalar(ref, soft, her, ua["kl"], surcharge_from, broken=brk,
+            return knee_scalar(ref, soft, ua["kl"], surcharge_from, broken=brk,
                                capability_drop=drop)
 
         best = min(_pool, key=_knee_key)
@@ -5028,7 +5016,6 @@ class Abliterator:
         log(f"BEST: o(P={bpr[0]},wmax={bpr[1]:.3f},wmin={bpr[2]:.3f},D={bpr[3]}) "
             f"d(P={bpr[4]},wmax={bpr[5]:.3f},wmin={bpr[6]:.3f},D={bpr[7]}) K={b_K} mode={b_mode}"
             f"{'' if b_di is None else f' di={b_di:.2f}'} refusals={best.user_attrs['refusals']*100:.1f}% "
-            f"heretic={best.user_attrs.get('heretic',0)*100:.1f}% "
             f"broken={best.user_attrs.get('broken',0)*100:.0f}% KL={best.user_attrs['kl']:.4f}")
 
         return bpr, b_K, b_mode, b_di
@@ -5085,10 +5072,9 @@ class Abliterator:
         # POST-BAKE re-measure on the actual weights; should match the best trial (same operation).
         post_gens = self.gen_batch(self.bad_eval)
         post_ref = sum(is_refusal(t) for t in post_gens) / max(1, len(post_gens))
-        post_heretic = heretic_keyword_rate(post_gens)
         post_kl = self.kl_vs_orig(self.kl_eval)
         post_brk = broken_rate(self.gen_batch(self.kl_eval[:min(16, len(self.kl_eval))]))
-        log(f"POST-BAKE (weights, no hooks): refusals={post_ref*100:.1f}% heretic={post_heretic*100:.1f}% "
+        log(f"POST-BAKE (weights, no hooks): refusals={post_ref*100:.1f}% "
             f"broken={post_brk*100:.0f}% KL={post_kl:.4f}")
         self.free_before_save()
         log(f"saving to {args.out}")
@@ -5157,7 +5143,7 @@ class Abliterator:
             required=bool(self.partial_layers), log=log)
         record = build_abliteration_record(
             self, args, bpr, b_K, b_mode, b_di, base_ref=base_ref,
-            post={"refusals": post_ref, "heretic": post_heretic,
+            post={"refusals": post_ref,
                   "broken": post_brk, "kl": post_kl,
                   "capability_baseline": cap_baseline, "capability_after": post_cap,
                   "capability_items": len(cap_items),
@@ -5388,7 +5374,7 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post,
     changed when it was made.
 
     `run` supplies what the search measured and is read only. `post` carries the post-bake
-    figures under the names `refusals`, `heretic`, `broken` and `kl`, passed explicitly rather
+    figures under the names `refusals`, `broken` and `kl`, passed explicitly rather
     than read off `run` because they are computed moments before the call and stashing them on
     the object only to read them back would hide that. It also carries the capability probe as
     `capability_baseline`, `capability_after` and `capability_items`, which are optional only so
@@ -5396,7 +5382,7 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post,
     """
     from . import residualleak
 
-    post_ref, post_heretic = post["refusals"], post["heretic"]
+    post_ref = post["refusals"]
     post_brk, post_kl = post["broken"], post["kl"]
     record = {"per_component": args.per_component,
             "o_profile": {"max_weight_position": bpr[0], "max_weight": bpr[1],
@@ -5414,7 +5400,7 @@ def build_abliteration_record(run, args, bpr, b_K, b_mode, b_di, base_ref, post,
             "ablate_conv": run.ablate_conv,
             "partially_ablated_layers": sorted(run.partial_layers),
             "baseline_refusals": base_ref, "post_bake_refusals": post_ref,
-            "post_bake_heretic": post_heretic, "post_bake_broken": post_brk, "post_bake_kl": post_kl,
+            "post_bake_broken": post_brk, "post_bake_kl": post_kl,
             # WHAT THE EDIT COST ON A TASK THE MODEL EITHER GETS RIGHT OR DOES NOT. Always
             # present, including when it was not measured, because an absent key reads as a
             # reader's oversight and an explicit "not measured" reads as what it is. Every other

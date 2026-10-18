@@ -60,9 +60,8 @@ residual stream.
 # State of the field
 
 `Heretic` [@heretic2025] is the direct influence on the search, automating ablation parameters
-under a KL constraint. Senbonzakura takes its keyword marker list verbatim and adapts its
-normalisation, which is why this package is AGPL-3.0-or-later, and runs that metric beside its own
-so both tools read on one ruler. `abliterix` [@abliterix2025] is ahead on method breadth,
+under a KL constraint, and Senbonzakura's search follows its parameterisation. Every figure here is
+read on Senbonzakura's own rulers. `abliterix` [@abliterix2025] is ahead on method breadth,
 mixture-of-experts handling and prebuilt configurations.
 
 Wollschläger et al. [@wollschlager2025] show refusal is a cone, and Piras et al.
@@ -90,6 +89,6 @@ build is documented.
 
 `pip install senbonzakura`, on Linux, macOS and Windows, on `transformers` [@wolf2020], PyTorch
 and `Optuna` [@akiba2019]. AGPL-3.0-or-later. Thanks to Philipp Emanuel Weidmann, whose `Heretic` shaped this
-search and whose keyword markers are used here, and to the authors of @arditi2024.
+search, and to the authors of @arditi2024.
 
 # References

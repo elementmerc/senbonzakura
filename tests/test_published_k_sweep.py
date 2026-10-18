@@ -127,7 +127,7 @@ def test_the_published_hard_refusal_column_recomputes(arms):
 # directions are chosen deliberately. A caveat that lives only where a careful reader already
 # is, is not a caveat.
 #
-# Same shape as `tests/test_published_head_to_head.py`: the artefact is the authority and the
+# Same shape as the head-to-head page test had (removed with that command, 2026-10-18): the artefact is the authority and the
 # prose is checked against it, so neither can move without the other.
 
 ROOT_MD = ROOT

@@ -71,7 +71,8 @@ def test_the_breakdown_does_not_carry_a_second_copy_of_the_run_identity():
     """
     arm = jailbreak.arm_result([ANSWER])
     assert not {"label", "model", "eval"} & set(arm["breakdown"])
-    assert {"refusal", "soft_refusal", "noncompliant", "broken", "heretic"} <= set(arm["breakdown"])
+    assert {"refusal", "soft_refusal", "noncompliant", "broken"} <= set(arm["breakdown"])
+    assert "heretic" not in arm["breakdown"]
 
 
 def test_a_sample_too_small_withholds_the_rate_and_keeps_the_counts():

@@ -47,7 +47,7 @@ from senbonzakura import baseimages  # noqa: E402 - after the path insert, as th
 
 #: The files the gate covers, and the number of `FROM` records they are expected to hold.
 PUBLISHED = ("Dockerfile", "Dockerfile.cuda")
-EXPECTED_RECORDS = 5
+EXPECTED_RECORDS = 4
 
 TIMEOUT_S = 60
 

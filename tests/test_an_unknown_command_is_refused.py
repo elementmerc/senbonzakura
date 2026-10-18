@@ -35,7 +35,7 @@ def test_a_renamed_command_is_refused_by_name(word):
 def test_the_documented_mistake_is_the_one_that_started_this():
     message = _not_a_command("bench")
     assert message is not None
-    assert "head-to-head" in message
+    assert "no longer a command" in message
     assert "read as a model" in message, (
         "the refusal should say WHY it refuses rather than ignores, because the reason is the "
         "defect: a positional model argument swallows anything")
@@ -140,4 +140,4 @@ def test_main_exits_two_rather_than_editing_a_model(capsys):
     from senbonzakura import entry
     assert entry.main(["bench", "--help"]) == 2
     err = capsys.readouterr().err
-    assert "head-to-head" in err
+    assert "no longer a command" in err

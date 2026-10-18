@@ -64,14 +64,13 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from senbonzakura import baseimages  # noqa: E402 - after the sys.path insert, as the other tools do
 
-#: The Dockerfiles in scope, relative to the repository root. `head-to-head/Dockerfile.tool` is
-#: included deliberately even though it was already compliant: a gate scoped to the files that
-#: were broken is a gate that stops noticing the day a compliant file regresses.
-DOCKERFILES = ("Dockerfile", "Dockerfile.cuda", "head-to-head/Dockerfile.tool")
+#: The Dockerfiles in scope, relative to the repository root. The benchmark's own image left with
+#: the benchmark on 2026-10-18.
+DOCKERFILES = ("Dockerfile", "Dockerfile.cuda")
 
-#: How many `FROM` records the tree is expected to hold. Two per published image plus one for the
-#: benchmark image. Stated here AND derived from the files, so a truncation on either side shows.
-EXPECTED_FROM_RECORDS = 5
+#: How many `FROM` records the tree is expected to hold: two per published image. Stated here AND
+#: derived from the files, so a truncation on either side shows.
+EXPECTED_FROM_RECORDS = 4
 
 #: Docker Hub's read-only tag endpoint. It answers without a credential and returns the
 #: manifest-list digest, which is the digest a `FROM` line wants: it still selects the right

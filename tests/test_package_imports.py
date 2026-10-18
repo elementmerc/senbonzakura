@@ -105,15 +105,13 @@ def test_the_entry_modules_run_without_a_double_import_warning(module):
 
 
 # ── the licence notice has to be in the artefact, not only in the repository ───────────
-def test_the_statement_of_modification_ships_inside_the_distribution():
-    """AGPL section 5(a) asks the DISTRIBUTED work to say it is modified, not the git tree.
+def test_the_third_party_notices_ship_inside_the_distribution():
+    """The notices have to reach the DISTRIBUTED work, not only the git tree.
 
-    Senbonzakura includes code copied from Heretic, so the whole project is AGPL and section 5(a)
-    requires a prominent notice of modification. That notice lives in THIRD-PARTY-NOTICES.md. The
-    0.3.0 wheel on PyPI listed LICENSE alone, so anyone who installed it received the licence and
-    no statement that this is a modified work: the statement existed exactly where it was not
-    needed. This asserts the file is listed for packaging AND still contains the section it is
-    listed for.
+    The 0.3.0 wheel on PyPI listed LICENSE alone, so anyone who installed it received the licence
+    and none of the notices. This asserts the file is listed for packaging and still carries the
+    credits it is listed for. (It carried an AGPL section 5(a) statement of modification while
+    Heretic's code was included; that code was removed on 2026-10-18.)
     """
     from pathlib import Path
 
@@ -131,134 +129,25 @@ def test_the_statement_of_modification_ships_inside_the_distribution():
         assert (root / name).is_file(), f"{name} is listed for packaging but does not exist"
 
     notice = (root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8")
-    assert "5(a)" in notice, "the notice no longer carries the statement it is packaged for"
-    assert "Heretic" in notice, "the notice no longer names the work this one is derived from"
+    assert "Heretic" in notice, "the notice no longer credits the work the search builds on"
 
 
-def test_the_modification_date_is_not_older_than_the_code_it_describes():
-    """AGPL section 5(a) asks for a notice of modification AND a relevant date.
-
-    A date is only a date if it is true. The notice recorded 2026-07-29 while the file carrying
-    it had been modified on 2026-08-05, so the shipped artefact told a reader the work had not
-    been touched for a week when it had. Nobody would have noticed, because nothing checked: the
-    date was maintained by remembering, which is the same mechanism that let the notice itself
-    ship outside the wheel for a whole release.
-
-    The assertion is one-sided on purpose. The recorded date may run ahead of the last commit,
-    since the commit that updates the notice is itself the modification being described, and a
-    working tree can legitimately be ahead of git. What it may never do is fall behind.
-    """
-    import datetime
-    import re
-    import subprocess
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent
-    carrier = root / "src" / "senbonzakura" / "metrics.py"
-
-    text = carrier.read_text(encoding="utf-8")
-    m = re.search(r"last modified (\d{4}-\d{2}-\d{2})", text)
-    assert m, "the section 5(a) notice in metrics.py no longer records a modification date"
-    recorded = datetime.date.fromisoformat(m.group(1))
-
-    # A SHALLOW CLONE MAKES THIS CHECK MEANINGLESS, and it does not say so, which is worse than
-    # being unavailable. With `fetch-depth: 1` the single fetched commit appears to introduce the
-    # entire tree, so `git log -1 -- <path>` returns the TIP date for every file. On CI this
-    # compared the notice against today and would have failed every day after the notice was
-    # written, while looking like a licence finding. One CI job checks out full history so this
-    # runs somewhere real; everywhere else it skips and says why.
-    shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"],
-                             capture_output=True, text=True, check=False)
-    if shallow.stdout.strip() == "true":
-        pytest.skip("shallow clone: every file's last-commit date is the tip's, so the recorded "
-                    "date cannot be checked against history here")
-
-    r = subprocess.run(
-        ["git", "log", "-1", "--format=%cd", "--date=short", "--", str(carrier)],
-        capture_output=True, text=True, cwd=root, check=False, timeout=60)
-    if r.returncode != 0 or not r.stdout.strip():
-        pytest.skip("no git history here, so the recorded date cannot be checked against it")
-    committed = datetime.date.fromisoformat(r.stdout.strip())
-
-    assert recorded >= committed, (
-        f"the notice says the file was last modified {recorded}, but it was committed on "
-        f"{committed}. Section 5(a) asks for a relevant date and this one is stale.")
-
-
-def test_the_three_places_the_date_is_written_agree():
-    """It appears in the source notice, the packaged statement and the README's credit.
-
-    THE README WAS THE THIRD PLACE AND NOTHING CHECKED IT. This guard covered two of the three
-    until 2026-10-06, while `THIRD-PARTY-NOTICES.md` said in its own words that the date is "the
-    date the README's credit section must agree with". It had drifted the moment the other two
-    were corrected, and the suite was green: a guard covering two of three spellings reports clean
-    on the third, which is the same shape as the bare `import tomllib` that `probe.py` warns about
-    one file over.
-
-    All three are distributed. The source notice ships in the wheel, the notices file ships beside
-    it, and the README is what anybody reads on the repository, so a reader can get three answers
-    to the one question section 5(a) is actually about.
-    """
-    import re
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parent.parent
-    found = {}
-    for label, relative, pattern in (
-            ("metrics.py", "src/senbonzakura/metrics.py",
-             r"last modified (\d{4}-\d{2}-\d{2})"),
-            ("THIRD-PARTY-NOTICES.md", "THIRD-PARTY-NOTICES.md",
-             r"Most recent modification to the file carrying it:\*\* (\d{4}-\d{2}-\d{2})"),
-            ("README.md", "README.md",
-             r"most recently modified (\d{4}-\d{2}-\d{2})")):
-        m = re.search(pattern, (root / relative).read_text(encoding="utf-8"))
-        assert m, f"{label} no longer carries a statement of modification with a date in it"
-        found[label] = m.group(1)
-
-    assert len(set(found.values())) == 1, (
-        f"the three statements of modification disagree: {found}. An installed copy and the "
-        f"repository would carry different answers to the same question, and section 5(a) is "
-        f"about exactly this field.")
-
-
-def test_no_user_facing_document_calls_the_adapted_function_a_verbatim_copy():
-    """Section 5(a) asks a modified work to SAY it was modified, so understating the modification
-    is the one direction of error this notice cannot afford.
-
-    Measured 2026-09-22 against upstream: Heretic has no `_heretic_norm`. Its normalisation lives
-    inside a bound method, `_is_match`, alongside an empty-response rule and the marker loop. Ours
-    extracts the four normalisation steps, adds a null guard, and leaves the rest to
-    `is_heretic_refusal`. The marker LIST is byte-identical; the function is not, and four
-    documents described it as copied verbatim.
-
-    The marker list keeps its own guard: `tests/test_metrics.py` pins it by SHA-256.
+def test_no_code_copied_from_heretic_ships_in_the_package():
+    """Heretic's keyword marker list and its normalisation were removed on 2026-10-18 (the operator's
+    decision), because they were the one piece of code in this package written by someone else
+    under AGPL. This keeps them from coming back by accident: the names are gone from the module,
+    and the notices no longer say any of Heretic's code is included.
     """
     from pathlib import Path
 
-    RETIRED = {
-        "THIRD-PARTY-NOTICES.md": [
-            "and `_heretic_norm` are **byte-identical to upstream**",
-            "(`_heretic_norm`) copied verbatim",
-        ],
-        "CITATION.cff": ["A keyword metric is copied verbatim"],
-        "README.md": ["is shared code and it is kept byte-identical"],
-    }
+    from senbonzakura import metrics
+    for name in ("HERETIC_MARKERS", "_heretic_norm", "is_heretic_refusal", "heretic_keyword_rate",
+                 "KNEE_W_KEYWORD"):
+        assert not hasattr(metrics, name), f"metrics.{name} is back"
     root = Path(__file__).resolve().parent.parent
-    for name, retired in RETIRED.items():
-        # Whitespace collapsed because every one of these documents wraps its prose, so the claim
-        # and the name it is about routinely land on different lines. A line-based version of this
-        # check fired on the corrected wording the first time it ran, which is its own lesson.
-        text = " ".join((root / name).read_text(encoding="utf-8").split())
-        for phrase in retired:
-            assert " ".join(phrase.split()) not in text, (
-                f"{name} is back to describing _heretic_norm as a verbatim copy: {phrase!r}. It "
-                f"is an adaptation of upstream's _is_match, and a 5(a) notice that understates "
-                f"the modification is wrong in the direction the section exists to prevent")
-
     notices = " ".join((root / "THIRD-PARTY-NOTICES.md").read_text(encoding="utf-8").split())
-    assert "adaptation, not a copy" in notices, (
-        "THIRD-PARTY-NOTICES.md no longer states that _heretic_norm is an adaptation, so the "
-        "notice has stopped saying the one thing section 5(a) asks it to say")
+    assert "copied verbatim from Heretic" not in notices, (
+        "THIRD-PARTY-NOTICES.md says Heretic code is included, and none is")
 
 
 def test_every_module_in_the_source_tree_reaches_the_distribution():

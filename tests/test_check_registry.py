@@ -685,7 +685,7 @@ def test_the_checker_finds_nothing_wrong_with_our_own_published_arms(path):
     """POINTED AT OUR OWN EVIDENCE, which is the only honest way to calibrate a checker.
 
     These thirty-one artefacts are the 2026-09-10 head-to-head, committed to this repository and
-    recomputed by `test_published_head_to_head.py`. If a check fires on one, either the artefact
+    recomputed by `test_published_head_to_head.py` until that command left the tool on 2026-10-18. If a check fires on one, either the artefact
     has the defect, in which case the published figure needs re-examining, or the check is wrong,
     in which case it would have fired on a stranger's artefact too.
 

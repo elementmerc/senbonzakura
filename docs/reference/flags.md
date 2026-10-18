@@ -27,11 +27,10 @@ Ablate harder and refusals fall, but so does coherence. Plot one against the oth
 
 ## What the search optimises
 
-Three objectives at once:
+Two objectives at once:
 
 1. **Strict non-compliance**: hard refusals plus hedging.
-2. **The Heretic keyword rate**, kept as its own axis so the comparison with that tool stays on its own terms.
-3. **KL divergence**, which stands in for "is the model still any good".
+2. **KL divergence**, which stands in for "is the model still any good".
 
 ::: tip New words: KL divergence
 A number for how far the edited model's predictions have drifted from the original's. Zero means identical. It is the coherence alarm. If refusals fell to nothing and this number shot up, you removed the model, not the refusal.

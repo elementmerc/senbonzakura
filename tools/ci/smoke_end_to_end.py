@@ -465,8 +465,9 @@ def main(argv=None):
 
     prompts = out / "prompts.txt"
     sys.path.insert(0, str(ROOT / "src"))
-    from senbonzakura.headtohead_stage import load_texts
-    prompts.write_text("\n".join(load_texts(str(TRACK / "good_ds"), 8)) + "\n", encoding="utf-8")
+    from senbonzakura import dataset
+    rows = dataset.resolve(str(TRACK / "good_ds"), strip=False, what="smoke drift prompts")[:8]
+    prompts.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     run("drift, against the base it was made from",
         ["senbonzakura", "drift", "--model", str(model_dir), "--base", MODEL,

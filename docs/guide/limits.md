@@ -71,8 +71,8 @@ about a different batch size, which changes the order of additions, and floating
 
 The head-to-head against Heretic was first run on 2026-08-12, with only our arm given the best-of-N selection pass. It was
 re-run on **2026-09-10** with both tools selected the same way, and those arms are committed under
-`head-to-head/results/2026-09-10/`. It ships inside the wheel as `senbonzakura head-to-head`, and it has its own tests. See
-[Benchmarking against another tool](/guide/benchmark).
+`head-to-head/results/2026-09-10/`. The command that ran it was removed from the package on 2026-10-18; the results
+stay, and `senbonzakura check` reads them.
 
 What the re-run discharged: the coherence figures had been measured on a 64-prompt slice that Heretic tunes against. On 200
 held-out prompts there is **no detectable difference** (exact permutation test, p = 0.238).

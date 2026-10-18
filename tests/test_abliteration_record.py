@@ -234,7 +234,7 @@ def test_a_figure_that_was_never_measured_is_null_rather_than_a_default(field):
 EXPECTED_KEYS = {
     "per_component", "o_profile", "d_profile", "num_directions", "dir_mode", "direction_index",
     "max_directions", "ablate_conv", "partially_ablated_layers", "baseline_refusals",
-    "post_bake_refusals", "post_bake_heretic", "post_bake_broken", "post_bake_kl", "capability",
+    "post_bake_refusals", "post_bake_broken", "post_bake_kl", "capability",
     "refusal_eval", "generation_settings", "direction_capture", "sparsity", "ablation_rounds",
     "norm_restore", "model", "model_id", "model_revision", "track_digest", "seed", "search",
     "trials", "trials_ran", "warm_start", "good_orth", "chat_template", "directions_per_layer",

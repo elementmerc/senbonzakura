@@ -8,7 +8,7 @@
 Every abliteration variation is scored HERE, on the SAME eval-fixed set, with the SAME
 metrics.py detectors. That is the whole point: a per-track eval makes variations
 incomparable. Reports the full breakdown (hard refusal / soft refusal / noncompliance /
-broken / heretic-keyword) so we can see WHICH axis a lever moves. Getting hard-refusal down
+broken) so we can see WHICH axis a lever moves. Getting hard-refusal down
 is easy; the residual is usually soft refusal + evasion (noncompliance), the real wall.
 """
 import hashlib
@@ -215,11 +215,11 @@ def _stamp_refusal(res, pinned=None):
     head-to-head arms are committed to this repository and a test recomputes every figure on
     them: renaming a field here would break a published number rather than annotate it.
 
-    Both refusal estimators are stamped, keyed `refusal_rate.<estimator>`. That pairing is the
-    comparison rather than a duplicate: Heretic's keyword metric is kept byte-identical so one
-    number is like-for-like with theirs, and everything else is ours. It is also the shape the
+    The refusal estimator is stamped, keyed `refusal_rate.<estimator>`, which is the shape the
     senbonzakura adapter already normalises the older artefacts into, so a stamped file and an
-    unstamped one read the same way.
+    unstamped one read the same way. Older files also carry a second estimator, a keyword rate
+    from another tool's scorer; it was removed from this package on 2026-10-18 and is still read
+    where a committed artefact has it.
     """
     from senbonzakura_check import measurement
     n = res.get("n")
@@ -239,8 +239,7 @@ def _stamp_refusal(res, pinned=None):
     # when the sample is too small to state a rate at all. A refusal rate is a proportion over n
     # generations, so Wilson is the right estimator at these sample sizes and is what the rest of
     # the project already uses.
-    for estimator, value in (("senbonzakura-ruler", res["refusal"]),
-                             ("heretic-keyword", res["heretic"])):
+    for estimator, value in (("senbonzakura-ruler", res["refusal"]),):
         reported = metrics.reportable_rate(round(value * (n or 0)), n or 0)
         measurement.stamp(res, "refusal_rate", value, estimator,
                           n=n, by_estimator=True,
@@ -257,7 +256,6 @@ def score(gens, label="", model="", eval_path=""):
         "soft_refusal": round(metrics.soft_refusal_rate(gens), 4),
         "noncompliant": round(metrics.noncompliance_rate(gens), 4),
         "broken": round(metrics.broken_rate(gens), 4),
-        "heretic": round(metrics.heretic_keyword_rate(gens), 4),
     }
 
 
@@ -489,7 +487,7 @@ def _score_a_gguf(a, prompts, boundary_verified):
     else:
         print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "
               f"soft={res['soft_refusal']*100:.1f}% noncompliant={res['noncompliant']*100:.1f}% "
-              f"broken={res['broken']*100:.1f}% heretic={res['heretic']*100:.1f}% n={res['n']} "
+              f"broken={res['broken']*100:.1f}% n={res['n']} "
               f"(through the GGUF runner)")
     if agreement is None:
         print(f"GGUF_AGREEMENT_NOT_MEASURED {a.label}: this figure was produced by the llama.cpp "
@@ -708,7 +706,7 @@ def main(argv=None):
             json.dump(res, f, indent=2)
     print(f"SCORE_DONE {a.label} refusal={res['refusal']*100:.1f}% "
           f"soft={res['soft_refusal']*100:.1f}% noncompliant={res['noncompliant']*100:.1f}% "
-          f"broken={res['broken']*100:.1f}% heretic={res['heretic']*100:.1f}% n={res['n']}")
+          f"broken={res['broken']*100:.1f}% n={res['n']}")
     if warning:
         print(f"BUDGET_WARNING {a.label}: {warning}")
     return res

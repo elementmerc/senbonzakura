@@ -43,7 +43,6 @@ from ._version import __version__
 #: command name -> (module, attribute). The command is what a person types, so it may carry a
 #: hyphen; the module is a Python name and may not.
 DELEGATED: dict[str, tuple[str, str]] = {
-    "head-to-head": ("headtohead", "main"),
     "compass": ("margin", "main"),
     "score": ("score", "main"),
     # Single-turn jailbreak success on a bundled attack set, PAIRED with the over-refusal rate on
@@ -158,8 +157,6 @@ ALIASES = {
 #: `senbonzakura bench` would have gone to the Hub for a model called `bench` and started editing
 #: weights. Found twice, independently, by the 2026-09-25 panel.
 RETIRED = {
-    "bench": "head-to-head",
-    "benchmark": "head-to-head",
     "harm_recognition": "compass",
 }
 
@@ -179,6 +176,12 @@ RETIRED = {
 NO_LONGER_TYPED = {
     "diff": "what changed between a checkpoint and the base it came from",
     "drift": "how far apart two models' answers are",
+    # Gone from the package, not only from the command line: the comparison ran another project's
+    # tool with its scoring, and that scoring is no longer part of this one. `bench` and
+    # `benchmark` were its old names (see RETIRED above for why old names are still refused).
+    "head-to-head": "how two editing tools compared on the same model",
+    "bench": "how two editing tools compared on the same model",
+    "benchmark": "how two editing tools compared on the same model",
 }
 
 

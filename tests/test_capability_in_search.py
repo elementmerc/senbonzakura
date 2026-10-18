@@ -39,8 +39,8 @@ from senbonzakura.resources import ResourceGovernor
 
 def test_a_config_that_costs_more_capability_than_it_removes_refusal_loses():
     """THE POINT OF THE TERM. Before it, the left-hand config won on refusal alone."""
-    strips_but_damages = knee_scalar(0.0, 0, 0, 0.05, broken=0.0, capability_drop=0.20)
-    leaves_some_intact = knee_scalar(0.1, 0, 0, 0.05, broken=0.0, capability_drop=0.0)
+    strips_but_damages = knee_scalar(0.0, 0, 0.05, broken=0.0, capability_drop=0.20)
+    leaves_some_intact = knee_scalar(0.1, 0, 0.05, broken=0.0, capability_drop=0.0)
     assert leaves_some_intact < strips_but_damages
 
 
@@ -48,16 +48,16 @@ def test_a_run_that_measured_no_capability_scores_exactly_as_before():
     """Turning the probe off must not move a selection, or every historical run becomes
     incomparable for a reason nobody chose.
     """
-    assert (knee_scalar(0.1, 0.0, 0.2, 0.3, broken=0.05)
-            == knee_scalar(0.1, 0.0, 0.2, 0.3, broken=0.05, capability_drop=0.0))
+    assert (knee_scalar(0.1, 0.0, 0.3, broken=0.05)
+            == knee_scalar(0.1, 0.0, 0.3, broken=0.05, capability_drop=0.0))
 
 
 def test_a_capability_gain_is_not_rewarded():
     """At these sample sizes a config scoring above the unedited model is noise, and rewarding
     noise selects for it.
     """
-    assert (knee_scalar(0.1, 0, 0, 0.05, broken=0.0, capability_drop=-0.5)
-            == knee_scalar(0.1, 0, 0, 0.05, broken=0.0, capability_drop=0.0))
+    assert (knee_scalar(0.1, 0, 0.05, broken=0.0, capability_drop=-0.5)
+            == knee_scalar(0.1, 0, 0.05, broken=0.0, capability_drop=0.0))
 
 
 def test_the_exchange_rate_is_one_for_one_and_stated():
@@ -65,8 +65,8 @@ def test_the_exchange_rate_is_one_for_one_and_stated():
     honest default is that they trade evenly, and it is a named constant rather than a literal.
     """
     assert KNEE_W_CAPABILITY == 1.0
-    delta = (knee_scalar(0, 0, 0, 0, broken=0.0, capability_drop=0.3)
-             - knee_scalar(0, 0, 0, 0, broken=0.0, capability_drop=0.0))
+    delta = (knee_scalar(0, 0, 0, broken=0.0, capability_drop=0.3)
+             - knee_scalar(0, 0, 0, broken=0.0, capability_drop=0.0))
     assert delta == pytest.approx(0.3)
 
 

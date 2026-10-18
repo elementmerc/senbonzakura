@@ -293,6 +293,10 @@ class HFSubject:
                                           add_special_tokens=False).to(self.model.device)
         return self._encoded[key]
 
+    def padded_tokens(self, prompts):
+        """How many token positions these prompts take once rendered and padded together."""
+        return int(self._encode(prompts)["attention_mask"].shape[1])
+
     def edit_standing(self, direction, blocks):
         """Keep `direction` removed from `blocks` for every later call, as an edited model would be.
 

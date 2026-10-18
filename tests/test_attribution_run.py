@@ -164,6 +164,40 @@ def test_a_projection_over_the_budget_refuses_before_the_long_work(monkeypatch, 
         R.run(_stub_run(monkeypatch, tmp_path, budget_minutes=0.0), log=lambda *_: None)
 
 
+def test_without_the_prefix_cache_the_projection_counts_a_full_pass_for_every_condition():
+    nb, conv = 24, A.DEFAULT
+    replicates = conv.shuffled_label_replicates + conv.random_direction_replicates
+    assert R.projected_passes(nb, conv, 0.0) == (2 + 3 * nb) + replicates * (nb + 2)
+
+
+def test_with_the_prefix_cache_the_projection_counts_only_the_blocks_each_condition_runs():
+    nb, conv = 24, A.DEFAULT
+    replicates = conv.shuffled_label_replicates + conv.random_direction_replicates
+    halves = (nb + 1) / 2
+    assert R.projected_passes(nb, conv, 1.0) == 1 + (1 + halves + nb + halves) + replicates * (1 + halves)
+    half = R.projected_passes(nb, conv, 0.5)
+    assert R.projected_passes(nb, conv, 1.0) < half < R.projected_passes(nb, conv, 0.0)
+
+
+def test_the_cache_memory_default_matches_the_subject_s_own():
+    assert R.PREFIX_CACHE_GIB * 2 ** 30 == H.PREFIX_CACHE_BYTES
+    args = R.build_parser().parse_args(["m", "--track", "t", "--out", "o"])
+    assert args.prefix_cache_gib == R.PREFIX_CACHE_GIB
+
+
+def test_the_projection_says_how_much_of_the_run_the_cache_holds(monkeypatch, tmp_path):
+    lines = []
+    R.run(_stub_run(monkeypatch, tmp_path), log=lines.append)
+    assert any("of the batches inside the prefix cache's 2 GiB" in line for line in lines), lines
+
+
+def test_a_cache_turned_off_projects_and_runs_in_full(monkeypatch, tmp_path):
+    lines = []
+    R.run(_stub_run(monkeypatch, tmp_path, prefix_cache_gib=0.0), log=lines.append)
+    assert any("0% of the batches inside" in line for line in lines)
+    assert any("off: switched off by the caller" in line for line in lines)
+
+
 def test_the_behaviour_removed_stand_in_cannot_run_without_a_readout(monkeypatch, tmp_path):
     def no_sets(self, parts):
         self.refusal_ids = None

@@ -27,6 +27,10 @@ from . import argresolve
 from . import attribution as A
 from ._version import __version__
 
+#: The prefix cache's default memory, as `attribution_hf.PREFIX_CACHE_BYTES` sets it. Repeated here because
+#: this module doesn't import torch until a run starts, so `--help` stays quick; a test keeps the two equal.
+PREFIX_CACHE_GIB = 2.0
+
 SCHEMA = "senbonzakura-attribution/1"
 ARMS_DISAGREE = "arms_disagree"
 SELFTEST_FAILED = "instrument_failed_selftest"
@@ -271,6 +275,11 @@ def build_parser():
     p.add_argument("--budget-minutes", type=argresolve.real_number("--budget-minutes", minimum=0),
                    default=110.0,
                    help="refuse to start if the readout work alone is projected to exceed this")
+    p.add_argument("--prefix-cache-gib", type=argresolve.real_number("--prefix-cache-gib", minimum=0),
+                   default=PREFIX_CACHE_GIB,
+                   help="memory the block sweep may use to replay the blocks below each edited one, in "
+                        "GiB (default %(default).0f; 0 turns it off). More of the run fits with more "
+                        "memory; the numbers are the same either way")
     p.add_argument("--force", action="store_true",
                    help="redo arms that already have a result for these exact inputs")
     return p
@@ -318,7 +327,9 @@ def run(args, *, log=print):
                 arms[arm_name] = saved["result"]
                 continue
         todo.append(arm_name)
-    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log) for n in todo}
+    cache_bytes = int(args.prefix_cache_gib * 2 ** 30)
+    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log, prefix_cache_bytes=cache_bytes)
+                for n in todo}
     with _stage(log, "readout tokens"):
         for subject in subjects.values():
             subject.prepare(parts)
@@ -382,6 +393,23 @@ def write_json(path, doc):
         handle.write(json.dumps(doc, indent=1, sort_keys=True, default=_jsonable))
 
 
+def projected_passes(nb, conv, cached_share=1.0):
+    """Full forward passes' worth of readout work for both directions' conditions, shared by both arms.
+
+    Without the prefix cache every condition costs a full pass. With it (attribution_hf), a condition
+    whose lowest edited block is k runs only blocks k and up: `single:k` and `back:k` average
+    (nb + 1) / 2 blocks over k, `front:k` and `all` start at block 0 and save nothing, and `none` comes
+    from the one pass that fills the cache. `cached_share` is the part of the batches the cache can
+    hold under its cap; the rest run in full. The per-block check against a full pass adds at most
+    one batch per block, which is small beside this and is left out.
+    """
+    replicates = conv.shuffled_label_replicates + conv.random_direction_replicates
+    full = (2 + 3 * nb) + replicates * (nb + 2)
+    halves = (nb + 1) / 2
+    cached = 1 + (1 + halves + nb + halves) + replicates * (1 + halves)
+    return cached_share * cached + (1 - cached_share) * full
+
+
 def _project(model, tok, parts, nb, conv, args, log):
     """Time a real pass and refuse before the long work if it will not fit the budget."""
     from . import attribution_hf as H
@@ -400,12 +428,21 @@ def _project(model, tok, parts, nb, conv, args, log):
     probe.readout(sample, direction, range(nb))
     per_prompt = (time.monotonic() - t) / len(sample)
     prompts = len(parts["measure"]["harmful"].prompts) + len(parts["measure"]["harmless"].prompts)
-    passes = (2 + 3 * nb) + (conv.shuffled_label_replicates + conv.random_direction_replicates) \
-        * (nb + 2)
+    # What the prefix cache can hold: every block's output for every prompt, at the model's own width
+    # and precision, against its cap. Read from the sample's real token counts, not assumed.
+    tokens = float(probe.padded_tokens(sample))
+    width = int(getattr(model.config, "hidden_size", 0) or 0)
+    element = torch.empty((), dtype=next(model.parameters()).dtype).element_size()
+    need = nb * tokens * width * element * prompts
+    cap = int(args.prefix_cache_gib * 2 ** 30)
+    share = 1.0 if need <= 0 else min(1.0, cap / need)
+    passes = projected_passes(nb, conv, share)
     minutes = passes * prompts * per_prompt / 60.0
     log(f"projection: {per_prompt * 1000:.1f} ms per prompt with every block hooked; "
-        f"{passes} passes x {prompts} prompts, shared by both arms, is about {minutes:.0f} minutes "
-        f"of readout work (a projection from {len(sample)} prompts, generation not included)")
+        f"{passes:.0f} passes' worth x {prompts} prompts, shared by both arms, is about {minutes:.0f} "
+        f"minutes of readout work, with {share:.0%} of the batches inside the prefix cache's "
+        f"{args.prefix_cache_gib:g} GiB (a projection from {len(sample)} prompts, generation "
+        f"not included)")
     if minutes > args.budget_minutes:
         raise SystemExit(
             f"projected {minutes:.0f} minutes of readout work is over the {args.budget_minutes:.0f} "

@@ -128,6 +128,8 @@ def _stub_tokenizer(monkeypatch):
     end = "</s>"
     tok = types.SimpleNamespace(pad_token=None, eos_token=end, padding_side="right")
     monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: tok)
+    # This file is about the weights; the prompt format is checked in test_attribute_takes_a_chat_template.py.
+    monkeypatch.setattr(cli, "ensure_chat_template", lambda *_a, **_k: {"source": "stub", "sha256": None})
 
 
 def test_the_attribution_loader_loads_an_intact_checkpoint(models, monkeypatch):

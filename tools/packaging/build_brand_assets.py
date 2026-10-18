@@ -200,7 +200,7 @@ def glow(size, radius_frac=0.62, strength=0.30):
 
 
 #: The brand's own face, vendored beside the mark with its licence. Hanken Grotesk is what the SITE
-#: loads (`next/font/google` in `web/app/layout.tsx`); the documentation site uses Inter. Hanken is
+#: loads (`next/font/google` in the landing page's layout, now in its own repository); the documentation site uses Inter. Hanken is
 #: the right one for a card because a reader who clicks a card lands on the site, so the preview
 #: should look like the place it leads.
 #:

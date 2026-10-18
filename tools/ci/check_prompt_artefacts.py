@@ -352,14 +352,14 @@ def notebook_findings(path: Path, raw: bytes) -> list[str]:
 #: job: the tree measured in 2026-09-25 had no Rust in it, so the dispatcher had never been shown
 #: this kind and correctly declined to guess.
 #: `.ts`, `.tsx` and `.template` ADDED 2026-10-10, when the landing page entered the project under
-#: `web/`. `.ts` and `.tsx` are the same judgement as `.js` and `.mjs` directly above them, which
+#: the landing page's tree, which moved to its own repository on 2026-10-15. `.ts` and `.tsx` are the same judgement as `.js` and `.mjs` directly above them, which
 #: have been cleared since the original measurement: TypeScript is the same source format as the
 #: JavaScript it compiles to, and the dispatcher had never been shown the suffix because the tree
 #: measured in 2026-09-25 had no TypeScript in it. `.template` joins `.in` and `.jinja` as a
 #: configuration template. Same caveat as every other source kind, stated once above and true
 #: here: a corpus pasted into a string literal is not something this gate can see, and the human
 #: review is what covers that. It is a real risk for a MARKETING page specifically, where quoting
-#: a model's output is a tempting thing to do, so the reviewer of any copy change to `web/` should
+#: a model's output is a tempting thing to do, so the reviewer of any copy change to the landing page should
 #: read it with that in mind rather than relying on this list.
 #: `.ttf` joined on 2026-10-13, when the brand cards began to be set in a vendored face rather than
 #: cropped from an image. A font is a glyph outline table: the only text it carries is its own
@@ -415,7 +415,7 @@ MARKDOWN_SUFFIXES = frozenset({".md"})
 #: the method behind it had to be written down somewhere a later session would look. It holds a
 #: per-build brief and a registry of page shapes already used, so a future build can prove it is a
 #: different page rather than a re-skin. It is prose about layout, device choice and pacing. The
-#: risk this gate exists for is not absent there and is the same one already recorded for `web/`:
+#: risk this gate exists for is not absent there and is the same one already recorded for the landing page:
 #: a brief quoting a model's output would be a corpus this gate cannot see, so a reviewer of
 #: anything under it reads with that in mind. What makes the location recordable is that it is a
 #: small, reviewable tree with one purpose and no path by which run artefacts land in it.
@@ -434,7 +434,7 @@ DOCUMENTATION_DIRS = (
 #: `unshipped/` was added on 2026-10-13, when `rented.py` was moved out of the package for reading
 #: a provider credential while being reachable from nothing. The directory holds modules that are
 #: deliberately not in the wheel and one README stating that rule, so the markdown there is prose
-#: about packaging. It meets the same test already recorded for `web/` and `scrollcraft/`: a small,
+#: about packaging. It meets the same test already recorded for the landing page and `scrollcraft/`: a small,
 #: single-purpose, reviewable tree with no path by which a run artefact lands in it. The risk this
 #: gate exists for is not absent, because a note quoting a model's output would be a corpus this
 #: cannot see, so a reviewer of anything under it reads with that in mind.

@@ -334,6 +334,12 @@ def run(args, *, log=print):
         write_json(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
     if shared is not None:
         log(f"shared forward passes: {shared.misses} computed, {shared.hits} reused by the other arm")
+    for arm_name, subject in subjects.items():
+        detail = subject.prefix_detail
+        log(f"[{arm_name}] prefix cache: {detail['replayed_batches']} batch(es) replayed from the lower "
+            f"blocks, {detail['full_batches']} run in full"
+            + (f"; off: {subject.prefix_off}" if subject.prefix_off else
+               f"; checked against a full pass, largest difference {detail['check_max_abs_diff']}"))
 
     with _stage(log, "selftest"):
         selftest = A.selftest()

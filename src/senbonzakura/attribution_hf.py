@@ -42,6 +42,29 @@ MIN_PER_CLASS = 5
 #: choose it.
 MIN_TOKEN_COUNT = 2
 
+#: THE PREFIX CACHE. A condition whose lowest edited block is k changes nothing below k, so the
+#: blocks below it would compute exactly what they computed for the unedited pass. Their outputs
+#: are saved once per batch (on the processor, not the graphics card) and replayed, and only blocks
+#: k and up run again. About a third fewer block passes over a full sweep, with the same numbers.
+#: Past this many saved bytes a batch is simply computed in full, which is slower and identical.
+PREFIX_CACHE_BYTES = 2 * 1024 ** 3
+#: The replay is checked against a full pass the first time it is used from each block, because an
+#: architecture that reads a block's output anywhere but the next block would make it wrong, and
+#: only for some starting blocks. One extra batch per block, against tens of conditions a sweep.
+#: Logits further apart than this switch the cache off for that subject, and the run says so.
+PREFIX_CHECK_ATOL = 1e-3
+
+
+class _Replay(torch.nn.Module):
+    """Stands in for a block below the first edited one, handing on what the blocks below wrote."""
+
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    def forward(self, *_args, **_kwargs):
+        return self.value
+
 
 #: THE TWO READOUT ARMS. The disjoint arm was declared before any real model was run through this
 #: code. The purity arm was added AFTER the fit partition had been inspected, once the disjoint
@@ -232,7 +255,8 @@ class HFSubject:
     `readout_invalid` exactly as refusal would.
     """
 
-    def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None):
+    def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None,
+                 prefix_cache_bytes=None):
         if arm not in ARM_DECLARATIONS:
             raise A.AttributionError(f"{arm!r} is not a readout arm; the arms are "
                                      f"{sorted(ARM_DECLARATIONS)}.")
@@ -251,6 +275,14 @@ class HFSubject:
         self.readout_why_not = None
         self.agreement_detail = {}
         self._replies = {}
+        self._prefix_cap = PREFIX_CACHE_BYTES if prefix_cache_bytes is None else prefix_cache_bytes
+        self._prefix = {}
+        self._prefix_bytes = 0
+        self._prefix_full = False
+        self._prefix_checked = set()
+        #: None while the cache may be used, else why it was switched off for this subject.
+        self.prefix_off = None if self._prefix_cap > 0 else "switched off by the caller"
+        self.prefix_detail = {"replayed_batches": 0, "full_batches": 0, "check_max_abs_diff": None}
 
     # ------------------------------------------------------------------ encoding and capture
     def _encode(self, prompts):
@@ -269,6 +301,10 @@ class HFSubject:
         """
         self._standing = [(direction, tuple(blocks))]
         self._replies.clear()
+        # The saved outputs were made under the old edit, so none of them holds any longer.
+        self._prefix.clear()
+        self._prefix_bytes = 0
+        self._prefix_full = False
 
     def _under_standing_edit(self):
         stack = contextlib.ExitStack()
@@ -436,10 +472,115 @@ class HFSubject:
     def _logits_at(self, prompts, direction, blocks, ids):
         out = []
         for chunk in self._batches(prompts):
-            with self._under_standing_edit(), A.ablating(self.layers, direction, blocks):
-                logits = last_token_logits(self.model, self._encode(chunk), log=self.log)
+            logits = self._chunk_logits(chunk, direction, tuple(blocks))
             out.append(logits[:, ids.to(logits.device)].cpu())
         return torch.cat(out)
+
+    def _full(self, enc, direction, blocks):
+        with self._under_standing_edit(), A.ablating(self.layers, direction, blocks):
+            return last_token_logits(self.model, enc, log=self.log)
+
+    def _chunk_logits(self, chunk, direction, blocks):
+        """One batch's last position logits under the condition, from the prefix cache where it can."""
+        enc = self._encode(chunk)
+        if self.prefix_off is not None or (blocks and min(blocks) == 0):
+            self.prefix_detail["full_batches"] += 1
+            return self._full(enc, direction, blocks)
+        key = tuple(chunk)
+        entry = self._prefix.get(key)
+        if entry is None:
+            if self._prefix_full:
+                self.prefix_detail["full_batches"] += 1
+                return self._full(enc, direction, blocks)
+            logits, outputs = self._fill(enc)
+            entry = self._keep(key, logits, outputs)
+            if entry is None:
+                self.prefix_detail["full_batches"] += 1
+                return logits if not blocks else self._full(enc, direction, blocks)
+        if not blocks:
+            return entry["logits"]
+        got = self._replayed(entry, enc, direction, blocks)
+        if min(blocks) not in self._prefix_checked:
+            full = self._full(enc, direction, blocks)
+            diff = float((got.float().cpu() - full.float().cpu()).abs().max())
+            seen = self.prefix_detail["check_max_abs_diff"]
+            self.prefix_detail["check_max_abs_diff"] = diff if seen is None else max(seen, diff)
+            if not diff <= PREFIX_CHECK_ATOL:
+                self._switch_prefix_off(
+                    f"the replayed blocks gave logits {diff:.3g} away from a full pass, so this "
+                    f"architecture uses a block's output somewhere besides the next block")
+                self.prefix_detail["full_batches"] += 1
+                return full
+            self._prefix_checked.add(min(blocks))
+        self.prefix_detail["replayed_batches"] += 1
+        return got
+
+    def _fill(self, enc):
+        """The unedited-condition logits, and what every block wrote, from one pass."""
+        written = {}
+        # Hooks run in the order they were attached, so these go on after the standing edit's: what
+        # they save is each block's output with the edit already applied, as a full pass would see it.
+        with self._under_standing_edit():
+            handles = [layer.register_forward_hook(
+                lambda _m, _a, out, k=k: written.__setitem__(k, out)) for k, layer in enumerate(self.layers)]
+            try:
+                logits = last_token_logits(self.model, enc, log=self.log)
+            finally:
+                for handle in handles:
+                    handle.remove()
+        return logits, [written.get(k) for k in range(self.n_blocks)]
+
+    def _keep(self, key, logits, outputs):
+        """Save one batch's block outputs if they fit under the cap; None when they don't."""
+        saved = []
+        size = 0
+        for out in outputs:
+            if out is None:
+                self._switch_prefix_off("a block did not run in the saved pass")
+                return None
+            tail = out[1:] if isinstance(out, tuple) else None
+            if tail is not None and any(isinstance(t, torch.Tensor) for t in tail):
+                self._switch_prefix_off("this architecture's blocks hand on more than the stream")
+                return None
+            stream = A.unwrap(out).detach().to("cpu", copy=True)
+            size += stream.numel() * stream.element_size()
+            saved.append((stream, tail))
+        if self._prefix_bytes + size > self._prefix_cap:
+            self.log(f"  prefix cache full at {len(self._prefix)} batch(es) "
+                     f"({self._prefix_bytes / 2 ** 20:.0f} MiB); later batches run in full")
+            self._prefix_full = True
+            return None
+        self._prefix_bytes += size
+        self._prefix[key] = {"logits": logits.detach().cpu(), "outputs": saved}
+        return self._prefix[key]
+
+    def _replayed(self, entry, enc, direction, blocks):
+        """The condition's logits with the blocks below its lowest edited block replayed, not run.
+
+        The standing edit's hooks are attached first, to the real blocks, and only then are the
+        lower blocks swapped out: its effect on them is already in what was saved, and a hook on a
+        stand-in would read a write from an input the stand-in never used.
+        """
+        k = min(blocks)
+        stream, tail = entry["outputs"][k - 1]
+        stream = stream.to(self.model.device)
+        value = (stream, *tail) if tail is not None else stream
+        originals = [self.layers[j] for j in range(k)]
+        with self._under_standing_edit():
+            try:
+                for j in range(k):
+                    self.layers[j] = _Replay(value)
+                with A.ablating(self.layers, direction, blocks):
+                    return last_token_logits(self.model, enc, log=self.log)
+            finally:
+                for j, layer in enumerate(originals):
+                    self.layers[j] = layer
+
+    def _switch_prefix_off(self, why):
+        self.prefix_off = why
+        self._prefix.clear()
+        self._prefix_bytes = 0
+        self.log(f"  prefix cache off for this model: {why}; every condition runs in full")
 
     def _opener_counts(self, ids, top=12):
         """Decoded opener tokens with their counts, most common first. Single tokens only."""

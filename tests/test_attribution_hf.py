@@ -481,3 +481,150 @@ def test_a_subject_with_no_readout_is_left_out_of_the_shared_cache():
     assert shared.ids.tolist() == sorted(set(arms[H.ARM_DISJOINT].refusal_ids.tolist()
                                              + arms[H.ARM_DISJOINT].comply_ids.tolist()))
     assert H.share_readouts([arms[H.ARM_PURITY]]) is None
+
+
+# ------------------------------------------------------------------------- the prefix cache
+
+PROMPTS = [f"bad request {i}" for i in range(10)] + [f"fine request {i}" for i in range(10)]
+CONDITIONS = [(), (1,), (2,), (1, 2), (0,), (0, 2)]
+
+
+def _logits(subject, direction, blocks):
+    return subject._logits_at(PROMPTS, direction, blocks, torch.arange(V))
+
+
+def _pair(model_factory=StubModel, **kwargs):
+    model = model_factory()
+    quiet = {"batch": 8, "log": lambda *_: None}
+    return (H.HFSubject(model, StubTok(), **quiet, **kwargs),
+            H.HFSubject(model, StubTok(), **quiet, prefix_cache_bytes=0))
+
+
+@pytest.mark.parametrize("standing", [None, (0,), (2,), (0, 1, 2)])
+def test_the_prefix_cache_gives_the_numbers_a_full_pass_gives(standing):
+    cached, full = _pair()
+    direction = _axis0()
+    if standing is not None:
+        # A standing edit on a low block is the case a replay could get wrong: its effect has to be in
+        # what was saved, and never applied a second time to a stand-in.
+        cached.edit_standing(direction, standing)
+        full.edit_standing(direction, standing)
+    for blocks in CONDITIONS:
+        assert torch.equal(_logits(cached, direction, blocks), _logits(full, direction, blocks)), blocks
+    assert cached.prefix_off is None
+    assert cached.prefix_detail["replayed_batches"] > 0
+    assert cached.prefix_detail["check_max_abs_diff"] == 0.0
+    assert full.prefix_off == "switched off by the caller"
+
+
+def test_the_real_blocks_are_put_back_after_a_replay():
+    cached, _ = _pair()
+    before = list(cached.layers)
+    _logits(cached, _axis0(), (2,))
+    assert list(cached.layers) == before
+
+
+def test_the_unedited_condition_comes_from_the_saving_pass_with_no_second_pass(monkeypatch):
+    cached, _ = _pair()
+    _logits(cached, None, ())
+    calls = []
+    real = H.last_token_logits
+    monkeypatch.setattr(H, "last_token_logits", lambda *a, **k: calls.append(1) or real(*a, **k))
+    _logits(cached, None, ())
+    assert calls == []
+
+
+def test_a_cache_too_small_for_one_batch_runs_everything_in_full_with_the_same_numbers():
+    cached, full = _pair(prefix_cache_bytes=1)
+    direction = _axis0()
+    for blocks in CONDITIONS:
+        assert torch.equal(_logits(cached, direction, blocks), _logits(full, direction, blocks)), blocks
+    assert cached.prefix_detail["replayed_batches"] == 0
+    assert cached._prefix == {}
+
+
+def test_a_changed_standing_edit_empties_the_cache():
+    cached, full = _pair()
+    direction = _axis0()
+    _logits(cached, direction, (2,))
+    assert cached._prefix
+    cached.edit_standing(direction, (0,))
+    full.edit_standing(direction, (0,))
+    assert cached._prefix == {} and cached._prefix_bytes == 0
+    assert torch.equal(_logits(cached, direction, (2,)), _logits(full, direction, (2,)))
+
+
+class SkipModel(StubModel):
+    """Reads the first block's output again at the end, so replaying the blocks below is not exact."""
+
+    def forward(self, input_ids, attention_mask=None, use_cache=False, logits_to_keep=None):
+        h = self.embed(input_ids)
+        first = None
+        for layer in self.model.layers:
+            h = layer(h)
+            first = h if first is None else first
+        logits = (h + first) @ self.head
+        if logits_to_keep:
+            logits = logits[:, -logits_to_keep:]
+        return type("Out", (), {"logits": logits})()
+
+
+def test_an_architecture_the_replay_gets_wrong_is_caught_and_run_in_full():
+    logged = []
+    model = SkipModel()
+    cached = H.HFSubject(model, StubTok(), batch=8, log=logged.append)
+    full = H.HFSubject(model, StubTok(), batch=8, log=lambda *_: None, prefix_cache_bytes=0)
+    direction = _axis0()
+    for blocks in CONDITIONS:
+        assert torch.equal(_logits(cached, direction, blocks), _logits(full, direction, blocks)), blocks
+    assert cached.prefix_off and "somewhere besides the next block" in cached.prefix_off
+    assert any("prefix cache off" in line for line in logged)
+
+
+class TailBlock(Block):
+    def forward(self, hidden_states):
+        out = super().forward(hidden_states)
+        return out, out.mean()
+
+
+def test_blocks_that_hand_on_more_than_the_stream_switch_the_cache_off():
+    model = StubModel()
+    model.model.layers = nn.ModuleList([TailBlock(i) for i in range(3)])
+
+    def forward(input_ids, attention_mask=None, use_cache=False, logits_to_keep=None):
+        h = model.embed(input_ids)
+        for layer in model.model.layers:
+            h = layer(h)[0]
+        return type("Out", (), {"logits": (h @ model.head)[:, -1:]})()
+    model.forward = forward
+    cached = H.HFSubject(model, StubTok(), batch=8, log=lambda *_: None)
+    _logits(cached, _axis0(), (2,))
+    assert cached.prefix_off == "this architecture's blocks hand on more than the stream"
+
+
+def test_a_block_that_never_ran_in_the_saving_pass_switches_the_cache_off():
+    model = StubModel()
+
+    def forward(input_ids, attention_mask=None, use_cache=False, logits_to_keep=None):
+        h = model.embed(input_ids)
+        for layer in list(model.model.layers)[:-1]:
+            h = layer(h)
+        return type("Out", (), {"logits": (h @ model.head)[:, -1:]})()
+    model.forward = forward
+    cached = H.HFSubject(model, StubTok(), batch=8, log=lambda *_: None)
+    _logits(cached, _axis0(), (1,))
+    assert cached.prefix_off == "a block did not run in the saved pass"
+
+
+def test_a_full_cache_says_so_once_and_keeps_what_it_has():
+    logged = []
+    cached = H.HFSubject(StubModel(), StubTok(), batch=8, log=logged.append)
+    _logits(cached, _axis0(), (2,))
+    first = next(iter(cached._prefix.values()))["outputs"]
+    one_batch = sum(stream.numel() * stream.element_size() for stream, _ in first)
+    capped = H.HFSubject(StubModel(), StubTok(), batch=8, log=logged.append, prefix_cache_bytes=one_batch)
+    full = H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None, prefix_cache_bytes=0)
+    for blocks in CONDITIONS:
+        assert torch.equal(_logits(capped, _axis0(), blocks), _logits(full, _axis0(), blocks)), blocks
+    assert len(capped._prefix) == 1
+    assert sum("prefix cache full" in line for line in logged) == 1

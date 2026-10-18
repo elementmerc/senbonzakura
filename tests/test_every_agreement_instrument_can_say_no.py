@@ -78,6 +78,13 @@ NEEDS_A_CONTROL = {
          "tests/test_deflation_order_harness.py breaks the batched side on purpose and requires "
          "the active cells to go quiet"),
         "worst_everywhere_else"),
+    "behaviour_architecture_sweep.py": (
+        ("its verdict per cell is whether a direction's separation of two arms clears a "
+         "shuffled-label null computed on the same residuals, which is an agreement against a null "
+         "by construction. Without that null, a direction that reads the wording of the prompts "
+         "clears the bar on every architecture alike, and the map reports a behaviour as extractable "
+         "when the arms were only ever different in their prompts"),
+        "def shuffled_null("),
 }
 
 #: Everything else under `tools/research/`, each with why a breaking control would mean nothing
@@ -151,6 +158,16 @@ NO_AGREEMENT_TO_BREAK = {
                                  "there is no comparison for a control to break",
 }
 
+#: Modules kept in the tree after the behaviour they tested was dropped. They are classified so the
+#: gate still knows they exist, and they claim nothing about the present: nothing is run against
+#: them, and the controls they carry are no longer relied on for any result.
+RETIRED = {
+    "toxicity_causal.py": "the causal test for the toxicity channel. Toxicity was dropped as a "
+                          "behaviour on 2026-10-15, so no result depends on this file any more. "
+                          "It is kept as the record of how the channel was tested, and is not a "
+                          "check anyone runs",
+}
+
 
 def _modules():
     return sorted(p.name for p in RESEARCH.glob("*.py") if not p.name.startswith("_"))
@@ -164,7 +181,7 @@ def test_every_research_module_is_classified():
     confidence is this project's most repeated defect. A complete partition can only be satisfied
     by somebody reading the file.
     """
-    classified = set(NEEDS_A_CONTROL) | set(NO_AGREEMENT_TO_BREAK)
+    classified = set(NEEDS_A_CONTROL) | set(NO_AGREEMENT_TO_BREAK) | set(RETIRED)
     found = set(_modules())
     unclassified = sorted(found - classified)
     assert not unclassified, (

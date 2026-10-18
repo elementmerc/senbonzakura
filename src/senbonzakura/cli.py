@@ -61,6 +61,7 @@ from . import (
     checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
     dataset,  # every accepted way of saying "the prompts are here"
     hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
+    loadreport,  # refuses a model whose weights didn't all load, which would measure random numbers
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
     modelmap,  # the one description of every architecture: stack paths, base module, final norm
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
@@ -2607,12 +2608,18 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # being confidently wrong about the cause is the shape of message this project keeps removing.
     _log(f"  loading {model_id} on {device}"
          f"{'' if Path(model_id).is_dir() else ' (a first run downloads it, which is the slow part)'}")
+    # The load report is asked for so a checkpoint that left weights missing is refused here; see
+    # `loadreport` for the run that measured random numbers because nothing read it.
+    kw["output_loading_info"] = True
     try:
-        model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
+        model, info = AutoModelForCausalLM.from_pretrained(model_id, **kw)
     # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
     # present and malformed fails in a parser rather than in the filesystem.
     except (OSError, ValueError) as e:
         raise SystemExit(_could_not_load(model_id, e)) from e
+    refusal = loadreport.missing_weights(model_id, info)
+    if refusal:
+        raise SystemExit(refusal)
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
     model.eval()

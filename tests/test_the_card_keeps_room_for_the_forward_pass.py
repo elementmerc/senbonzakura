@@ -267,7 +267,7 @@ def _patched_loader(monkeypatch, cfg, tiny_model, tiny_tok):
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM", types.SimpleNamespace(
-        from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model)))
+        from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model, {"missing_keys": []})))
     if cfg is None:
         def boom(*a, **k):
             raise OSError("no config.json")
@@ -314,7 +314,7 @@ def test_the_cpu_path_never_reads_a_config_at_all(monkeypatch, tiny_model, tiny_
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
-                        types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_model))
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (tiny_model, {"missing_keys": []})))
     monkeypatch.setattr(cli, "AutoConfig", types.SimpleNamespace(
         from_pretrained=lambda *a, **k: asked.append(a) or config()))
     cli.load_model_and_tokenizer("x", device="cpu", needs_chat_template=False)

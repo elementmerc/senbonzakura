@@ -28,7 +28,7 @@ import time
 import torch
 
 from . import attribution as A
-from . import metrics, modelmap
+from . import hubmessage, loadreport, metrics, modelmap
 from .firsttoken import last_token_logits, render_chat
 
 #: Greedy reply length used to label a prompt as refused or not. Long enough that a refusal after
@@ -158,8 +158,18 @@ def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None):
     """The model, its tokenizer and the identity a result must carry."""
     import transformers
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(model_id, revision=revision)
-    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, revision=revision)
+    # A missing or malformed file fails as OSError or ValueError deep inside transformers, which used
+    # to reach the person as a traceback; it stops the run in a sentence instead.
+    try:
+        tok = AutoTokenizer.from_pretrained(model_id, revision=revision)
+        model, info = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, revision=revision,
+                                                           output_loading_info=True)
+    except (OSError, ValueError) as e:
+        detail = " ".join(hubmessage.useful_lines(e)) or type(e).__name__
+        raise A.AttributionError(f"the model '{model_id}' could not be loaded: {detail}") from e
+    refusal = loadreport.missing_weights(model_id, info)
+    if refusal:
+        raise A.AttributionError(refusal)
     model = model.to(device).eval()
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token

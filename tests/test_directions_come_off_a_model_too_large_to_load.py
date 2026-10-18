@@ -459,7 +459,7 @@ def test_the_loader_passes_the_offload_folder_through_to_transformers(monkeypatc
 
     def fake_from_pretrained(model_id, **kw):
         seen.update(kw)
-        return type("M", (), {"eval": lambda self: None, "config": None})()
+        return type("M", (), {"eval": lambda self: None, "config": None})(), {"missing_keys": []}
 
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
                         type("A", (), {"from_pretrained": staticmethod(fake_from_pretrained)}))
@@ -496,7 +496,7 @@ def test_no_offload_dir_leaves_the_loader_exactly_as_it_was(monkeypatch):
 
     def fake_from_pretrained(model_id, **kw):
         seen.update(kw)
-        return type("M", (), {"eval": lambda self: None, "config": None})()
+        return type("M", (), {"eval": lambda self: None, "config": None})(), {"missing_keys": []}
 
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
                         type("A", (), {"from_pretrained": staticmethod(fake_from_pretrained)}))

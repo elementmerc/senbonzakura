@@ -446,7 +446,7 @@ def test_perplexity_does_not_require_a_chat_template(tiny_model, monkeypatch):
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
-                        types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_model))
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (tiny_model, {"missing_keys": []})))
 
     with pytest.raises(SystemExit, match="chat template"):
         cli.load_model_and_tokenizer("m", device="cpu")          # the paths that need one
@@ -459,7 +459,7 @@ def _patch_hf(monkeypatch, tiny_model, tiny_tok):
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
-                        types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_model))
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (tiny_model, {"missing_keys": []})))
 
 
 def test_loader_cpu_flips_padding_and_sets_pad(monkeypatch, tiny_model, tiny_tok):
@@ -487,7 +487,7 @@ def test_loader_cuda_auto_branch(monkeypatch, tiny_model, tiny_tok):
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
-                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model)))
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model, {"missing_keys": []})))
     cli.load_model_and_tokenizer("x", device="cuda")
     assert seen.get("device_map") == "auto"   # plain cuda -> accelerate auto-placement
 
@@ -509,7 +509,7 @@ def test_loader_passes_trust_remote_and_attn_impl(monkeypatch, tiny_model, tiny_
     monkeypatch.setattr(cli, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
     monkeypatch.setattr(cli, "AutoModelForCausalLM",
-                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model)))
+                        types.SimpleNamespace(from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model, {"missing_keys": []})))
     cli.load_model_and_tokenizer("x", device="cpu", trust_remote_code=True, attn_impl="eager")
     assert seen.get("trust_remote_code") is True
     assert seen.get("attn_implementation") == "eager"

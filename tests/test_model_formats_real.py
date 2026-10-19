@@ -131,7 +131,10 @@ def test_a_gguf_folder_without_tokenizer_files_is_a_sentence_or_loads(tmp_path):
     spec = FORMATS["gguf"]
     _skip_unless_possible(spec)
     from huggingface_hub import hf_hub_download
-    hf_hub_download(spec["model"], GGUF_FILE, local_dir=tmp_path)
+
+    # A link to the cached file rather than a copy: half a gigabyte written into a temporary folder
+    # filled a RAM backed /tmp on the build machine and failed the test for the wrong reason.
+    (tmp_path / GGUF_FILE).symlink_to(hf_hub_download(spec["model"], GGUF_FILE))
     try:
         model, tok = cli.load_model_and_tokenizer(str(tmp_path), device=_device(), log=lambda m: None)
     except SystemExit as e:

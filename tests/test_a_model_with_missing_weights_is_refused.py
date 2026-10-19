@@ -129,7 +129,7 @@ def _stub_tokenizer(monkeypatch):
     tok = types.SimpleNamespace(pad_token=None, eos_token=end, padding_side="right")
     monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: tok)
     # This file is about the weights; the prompt format is checked in test_attribute_takes_a_chat_template.py.
-    monkeypatch.setattr(H, "ensure_chat_template", lambda *_a, **_k: {"source": "stub", "sha256": None})
+    monkeypatch.setattr(cli, "ensure_chat_template", lambda *_a, **_k: {"source": "stub", "sha256": None})
 
 
 def test_the_attribution_loader_loads_an_intact_checkpoint(models, monkeypatch):
@@ -143,7 +143,7 @@ def test_the_attribution_loader_loads_an_intact_checkpoint(models, monkeypatch):
 def test_the_attribution_loader_stops_in_a_sentence_when_the_files_are_not_there(tmp_path):
     """A folder with a config and nothing else, the shape a structure-only read leaves behind."""
     (tmp_path / "config.json").write_text('{"model_type": "llama"}', encoding="utf-8")
-    with pytest.raises(A.AttributionError, match="could not be loaded"):
+    with pytest.raises(A.AttributionError, match="could not load the model"):
         H.load(str(tmp_path), device="cpu", dtype=torch.float32)
 
 

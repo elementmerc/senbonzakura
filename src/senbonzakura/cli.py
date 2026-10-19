@@ -2402,7 +2402,7 @@ def _could_not_load(model_id, error):
 
 
 def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
-                   needs_chat_template=True):
+                   needs_chat_template=True, revision=None):
     """The tokenizer half of the loader, on its own.
 
     Split out so a caller that needs only the chat template does not have to put a model on the
@@ -2418,7 +2418,8 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     # wrapping only the weight load left the traceback exactly as it was. Same treatment, same
     # reason: transformers' sentence is good, the frames around it are not.
     try:
-        tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+        tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code,
+                                            **({"revision": revision} if revision else {}))
     # `ValueError` BESIDE `OSError`, 2026-10-13. A missing file raises `OSError` and that was the
     # only shape handled; a file that is PRESENT and is not what it claims raises out of whatever
     # parser `transformers` hands it to, and `json.JSONDecodeError` is a `ValueError`. So a
@@ -2497,7 +2498,7 @@ def _refuse_without_the_checker():
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
                              chat_template=None, needs_chat_template=True,
-                             offload_dir=None):
+                             offload_dir=None, revision=None):
     # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
     # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
     # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
@@ -2513,7 +2514,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     if Path(model_id).is_dir():
         checkpoint.refuse_unsafe_index(model_id)
     else:
-        checkpoint.refuse_unsafe_hub_index(model_id)
+        checkpoint.refuse_unsafe_hub_index(model_id, revision=revision)
     # AND THE DEVICE, AFTER THE INDEX CHECK AND BEFORE ANY WEIGHTS. `--device` defaults to `cuda`,
     # and `_preflight_device` refused an unusable one on the abliterate path and the guided mode
     # only. Every other command reached `.to(device)` with the weights already fetched and loaded,
@@ -2532,8 +2533,11 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # the cost it exists to save is still saved.
     argresolve.refuse_unusable_device(device, offload_dir=offload_dir)
     tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
-                         chat_template=chat_template, needs_chat_template=needs_chat_template)
+                         chat_template=chat_template, needs_chat_template=needs_chat_template,
+                         revision=revision)
     kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
+    if revision:
+        kw["revision"] = revision
     if attn_impl:
         kw["attn_implementation"] = attn_impl
     if load_in_4bit:
@@ -2586,7 +2590,8 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         # this could say, so the correction degrades to the host-only one.
         cfg = None
         try:
-            cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+            cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code,
+                                             **({"revision": revision} if revision else {}))
         except Exception as e:
             _log(f"  the model config could not be read before the weights "
                  f"({type(e).__name__}: {e}), so no activation headroom is reserved.")

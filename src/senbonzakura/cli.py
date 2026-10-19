@@ -2291,13 +2291,17 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     # checkpoint cloned without its large files reached the user as eleven frames ending inside
     # `tokenization_utils_base.py`. Both are the same question to the reader, "this model will not
     # load, why", and `_could_not_load` now answers the git-lfs case by name.
-    except (OSError, ValueError, ImportError, RuntimeError, TypeError) as e:
+    except (OSError, ValueError) as e:
         if gguf_file:
             raise SystemExit(modelload.gguf_tokenizer_refusal(model_id, gguf_file, e)) from e
-        if not isinstance(e, (OSError, ValueError)):
-            raise
         raise SystemExit(modelload.remote_code_refusal(model_id, e)
                          or _could_not_load(model_id, e)) from e
+    # A GGUF's tokenizer is rebuilt from its metadata, and that conversion fails with these when
+    # sentencepiece or tiktoken is missing or the vocabulary is of a kind it can't convert.
+    except (ImportError, RuntimeError, TypeError) as e:
+        if not gguf_file:
+            raise
+        raise SystemExit(modelload.gguf_tokenizer_refusal(model_id, gguf_file, e)) from e
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token

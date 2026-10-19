@@ -55,6 +55,9 @@ def build_parser():
     ap.add_argument("--hf-token", dest="hf_token", default=None,
                     help="token for a gated or private Hub dataset; defaults to $HF_TOKEN")
     ap.add_argument("--out", required=True, help="results json path")
+    ap.add_argument("--revision", default=None,
+                    help="the model revision to load and to record in the results (a Hub branch, tag or commit); "
+                         "a local folder is read as it is, and the value is recorded as given")
     # WHY THIS IS A FLAG AND NOT THE DEFAULT. Without it this command replaces --out, which is what
     # every published artefact in this repository was written by and what a test recomputes every
     # figure on; changing the shape of that file by default would break a published number rather
@@ -459,6 +462,7 @@ def _score_a_gguf(a, prompts, boundary_verified):
     scorer = score_harm_recognition if a.harm_recognition else score
     res = scorer(gens, label=a.label, model=a.model, eval_path=a.eval)
     res["chat_template"] = template
+    res["revision"] = a.revision
     res["runner"] = prov
     # ABSENT IS NOT PASSED, and the field says which. A GGUF figure quoted beside a transformers
     # figure is a claim that the two are one measurement, and that claim is earned by this control
@@ -582,7 +586,11 @@ def main(argv=None):
             f"Drop the flag, or point --model at a .gguf file.")
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
-        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
+        trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print,
+        revision=a.revision)
+    # The revision the figures are about, recorded the way `attribute` records it: the commit transformers resolved,
+    # else the value given. A local folder has no commit to resolve, so it is whatever was given, or None.
+    revision = getattr(getattr(model, "config", None), "_commit_hash", None) or a.revision
     if a.harm_recognition:
         # Compass pass: wrap each harmful request in the judge frame, then measure how
         # many the model still flags as harmful.
@@ -596,6 +604,7 @@ def main(argv=None):
         save_generations(a.save_generations, judged, gens, "harm_recognition", a.model, a.label)
         res = score_harm_recognition(gens, label=a.label, model=a.model, eval_path=a.eval)
         res["chat_template"] = getattr(tok, "senbon_chat_template", None)
+        res["revision"] = revision
         res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device),
                                    corpus=track.revision_entry(a.eval))
         # BEFORE THE FILE IS WRITTEN, which is the point of it. `entry.exit_status` turns
@@ -635,7 +644,7 @@ def main(argv=None):
         cuts = sorted({c for c in lengthsweep.CUTS if c <= a.length_max} | {a.length_max})
         rows = generate_prefixes(model, tok, prompts, a.device, batch=a.batch, cuts=cuts)
         res = lengthsweep.summarise(rows)
-        res.update({"label": a.label, "model": a.model, "eval": a.eval,
+        res.update({"label": a.label, "model": a.model, "eval": a.eval, "revision": revision,
                     "chat_template": getattr(tok, "senbon_chat_template", None),
                     "provenance": provenance(device=a.device,
                                              accelerator=accelerator_name(a.device),
@@ -662,6 +671,7 @@ def main(argv=None):
     # Which prompt format produced these numbers. Two runs under different formats are
     # not comparable, and this is what lets a reader tell.
     res["chat_template"] = getattr(tok, "senbon_chat_template", None)
+    res["revision"] = revision
     res["provenance"] = provenance(device=a.device, accelerator=accelerator_name(a.device),
                                    corpus=track.revision_entry(a.eval))
     # Recorded in the artefact and not only printed, so a number read back months later carries

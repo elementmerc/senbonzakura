@@ -20,6 +20,8 @@ surface it changed, and will carry a version heading when it ships.
 ### Command line
 - `attribute` takes `--chat-template`, checked the same way as in `score`, and its artefact records which template
   produced the figures; a model with no template is now refused up front, before its weights are read
+- `score` takes `--revision`, loads that revision of a Hub model, and records the model's revision in its results the way
+  `attribute` does, so a score and an attribution of the same model can be tied together by more than a name
 - `--help` on `drift`, `score`, `coherence`, `validate` and `stream-extract` answers in about a
   sixteenth of a second instead of over three, because reading a help page no longer loads the
   machine-learning libraries the command would only need once it had work to do

@@ -192,6 +192,26 @@ of them. Size the card, or the disk when streaming, for the 30B total.
 **`--load-in-4bit` doesn't help the editor, and the tool refuses it on the editing path.** A 4-bit tensor can't be rewritten in
 place. It's accepted on the measuring commands, where nothing is rewritten.
 
+### Which model formats the measuring commands load
+
+Every command that measures a model (`score`, `drift`, `coherence`, `attribute` and the rest) loads the same formats and takes the
+same flags. Plain safetensors needs nothing extra. For the others, the command tells you in one sentence which package is
+missing and how to install it.
+
+| The model is | What you pass | Extra to install |
+|---|---|---|
+| Ordinary safetensors | nothing | none |
+| Any model, squeezed to 4 or 8 bits as it loads | `--load-in-4bit` or `--load-in-8bit` | `quant` |
+| Saved already in 4 or 8 bit bitsandbytes form | nothing, it's read from the folder | `quant` |
+| GPTQ | nothing | `gptq` |
+| AWQ | nothing | `awq` |
+| A GGUF file, or a folder or hub id holding one | the file path, or `--gguf-file NAME` | `gguf` |
+| A model that ships its own code | `--trust-remote-code`, only if you trust the repository | none |
+
+A GGUF is expanded back to full precision to be measured, so the figure is for those expanded weights and not for the file as
+llama.cpp runs it. The result records the quantisation it came from. The editor refuses all of these, because it rewrites weights
+and needs the full precision originals.
+
 ### Models trained at very low precision cannot be edited
 
 Some models are **trained** at around 1.6 bits per weight, not squeezed afterwards. The training compensates for the squeezing.

@@ -1,0 +1,28 @@
+# The optional model loading backends, pinned with the hashes that say the bytes were not swapped.
+#
+# These are the packages behind the `gguf`, `gptq`, `awq` and `quant` extras. None is a core
+# dependency: a plain safetensors model needs none of them, and `senbonzakura` says in one sentence
+# which one is missing, with the install command, when a model asks for it.
+#
+# Every version here was published at least 21 days before it was chosen (2026-10-19), which is the
+# cooldown section 5 of the baseline asks for; the upload date of each file is beside it.
+#
+#     pip install --no-deps -r constraints/loaders.lock
+#
+# `gptqmodel` is published as a source archive only, so installing it compiles; on a machine
+# without a CUDA toolchain the build can fail, and the loader then refuses GPTQ and AWQ with its
+# own sentence instead of a traceback. `optimum` is the GPTQ side's second requirement.
+bitsandbytes==0.50.2 \
+    --hash=sha256:55348a9a4a21bfd99cf8c7b32fe67b4030ae5c2a05738e03c1747f65fa6ec283 \
+    --hash=sha256:d5772560dd94c4d9c57f50c9b017450a1707f7687bfd4b3dc86f7342aafe721e \
+    --hash=sha256:c697963c8fda3dcd0d7ebd9b5211ae4067feef7cd06e0350d4e816a434fe683d \
+    --hash=sha256:4311f52a880b341bada639e4edd1a3c8d786830c9c93cdde29eaa1f062c8f8e5 \
+    --hash=sha256:8437ab68a04ea56daf1d6ecb54230fb1d88be4b89fe2d79bc399bc0203b487cf
+gguf==0.19.0 \
+    --hash=sha256:70bcd10edfe697fb2dad6e40af2234b9d8ece9a41a99761405121ebda1c3c1cd \
+    --hash=sha256:dbadcd6cc7ccd44256f2229fe7c2dff5e8aa5cf0612ab987fd2b1a57e428923f
+gptqmodel==7.5.0 \
+    --hash=sha256:25bce833a9381bb750219facfe5342cbeac1b9bd8bee9827d981ebf198c9b503
+optimum==2.3.0 \
+    --hash=sha256:3e9b217b4ab21fd4cf894a987002ee7d3626114e009592babf084c2f1a0f3b5f \
+    --hash=sha256:aa96ad535a5cec68d12c6372574125452284632fe13699633a61e8bbfb09c4df

@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve
+from . import argresolve, modelload
 from . import attribution as A
 from ._version import __version__
 
@@ -212,6 +212,11 @@ def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
     doc["render"] = render_block(doc["status"], doc["tint_allowed"], doc["arms"], doc.get("model"))
     notes.append({"added": "render", "when": when, "by": f"render_block v{RENDER_VERSION}",
                   "derived_from": doc["render"]["derived_from"]})
+    if doc.get("model") is not None and "format" not in doc["model"]:
+        doc["model"] = modelload.with_defaults(doc["model"])
+        notes.append({"added": "model.format and the loading fields", "when": when,
+                      "derived_from": "this artefact predates them; every earlier run was a plain "
+                                      "full precision load, so that is what their absence means"})
     comparable = doc.get("comparable_with")
     if comparable is not None and "model_id" not in comparable and doc.get("model"):
         comparable["model_id"] = doc["model"]["id"]
@@ -257,6 +262,8 @@ def build_parser():
                     "controls. It measures the unedited model; where an edit wrote is not "
                     "evidence of where the behaviour lived, and nothing here reads it.")
     p.add_argument("model", help="Hugging Face model id or local path (unedited)")
+    from .parser import add_format_flags
+    add_format_flags(p)
     p.add_argument("--track", required=True,
                    help="a track directory; its recorded fit, search and measure boundaries are used")
     p.add_argument("--out", required=True, help="directory to write attribution.json into")
@@ -294,6 +301,22 @@ def build_parser():
     return p
 
 
+def _same_fingerprint(saved, current):
+    """Equal fingerprints, reading a cache written before the loading fields as a plain load."""
+    now = json.loads(json.dumps(current, default=_jsonable))
+    if isinstance(saved, dict) and isinstance(saved.get("model"), dict):
+        saved = {**saved, "model": modelload.with_defaults(saved["model"])}
+    return saved == now
+
+
+def loading_options(args):
+    """The loader flags from a parsed command line, as keywords for `attribution_hf.load`."""
+    return {"load_in_4bit": getattr(args, "load_in_4bit", False),
+            "load_in_8bit": getattr(args, "load_in_8bit", False),
+            "gguf_file": getattr(args, "gguf_file", None) or None,
+            "trust_remote_code": getattr(args, "trust_remote_code", False)}
+
+
 def _stage(log, name):
     class _S:
         def __enter__(self):
@@ -319,7 +342,8 @@ def run(args, *, log=print):
 
     with _stage(log, "load"):
         model, tok, identity = H.load(args.model, device=args.device, revision=args.revision,
-                                      chat_template=args.chat_template or None, log=log)
+                                      chat_template=args.chat_template or None, log=log,
+                                      **loading_options(args))
     with _stage(log, "partitions"):
         parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                             n_confirm=args.n_confirm, seed=args.seed)
@@ -335,7 +359,7 @@ def run(args, *, log=print):
         cache = out / f"arm-{arm_name}.json"
         if cache.exists() and not args.force:
             saved = json.loads(cache.read_text(encoding="utf-8"))
-            if saved.get("fingerprint") == json.loads(json.dumps(fingerprint, default=_jsonable)):
+            if _same_fingerprint(saved.get("fingerprint"), fingerprint):
                 log(f"[{arm_name}] reusing {cache} (same inputs)")
                 arms[arm_name] = saved["result"]
                 continue

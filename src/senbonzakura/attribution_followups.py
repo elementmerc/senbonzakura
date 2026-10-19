@@ -221,6 +221,8 @@ def build_parser():
     p.add_argument("--batch", type=argresolve.whole_number("--batch", minimum=1), default=16,
                    help="prompts per forward pass; use the original run's value (default: 16)")
     p.add_argument("--device", default="cuda", help="cuda or cpu (default: cuda)")
+    from .parser import add_format_flags
+    add_format_flags(p)
     p.add_argument("--n-fresh", type=argresolve.whole_number("--n-fresh", minimum=1), default=150,
                    help="requests no earlier step used, for the where-it-starts test "
                         "(default: 150)")
@@ -239,7 +241,9 @@ def run(args, *, log=print):
     original = json.loads(Path(args.artefact).read_text(encoding="utf-8"))
     t0 = time.monotonic()
     model, tok, identity = H.load(args.model, device=args.device,
-                                  revision=original["model"]["revision"])
+                                  revision=original["model"]["revision"],
+                                  **R.loading_options(args))
+    H.refuse_other_loading_form(identity, original["model"])
     parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                         n_confirm=args.n_confirm, seed=args.seed)
     wanted = original["behaviour"]["partitions"]
@@ -324,7 +328,9 @@ def run_start(args, *, log=print):
     original = json.loads(Path(args.artefact).read_text(encoding="utf-8"))
     t0 = time.monotonic()
     model, tok, identity = H.load(args.model, device=args.device,
-                                  revision=original["model"]["revision"])
+                                  revision=original["model"]["revision"],
+                                  **R.loading_options(args))
+    H.refuse_other_loading_form(identity, original["model"])
     parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                         n_confirm=args.n_confirm, seed=args.seed)
     if (json.loads(json.dumps(digests)) != original["behaviour"]["partitions"]

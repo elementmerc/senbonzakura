@@ -28,8 +28,7 @@ import time
 import torch
 
 from . import attribution as A
-from . import hubmessage, loadreport, metrics, modelmap
-from .chattemplate import ensure_chat_template
+from . import metrics, modelmap
 from .firsttoken import last_token_logits, render_chat
 
 #: Greedy reply length used to label a prompt as refused or not. Long enough that a refusal after
@@ -155,50 +154,71 @@ def share_readouts(subjects):
     return shared
 
 
-def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None, chat_template=None, log=None):
+def load(model_id, *, device="cuda", dtype=None, revision=None, chat_template=None, log=None,
+         load_in_4bit=False, load_in_8bit=False, gguf_file=None, trust_remote_code=False):
     """The model, its tokenizer and the identity a result must carry.
 
-    THE PROMPT FORMAT IS CHECKED AND RECORDED HERE, BY THE SAME CODE `score` USES. A model's own template, or the one
-    `chat_template` names (a path, or a bundled name), must render a chat prompt, and the provenance (its source and a
-    digest of it) rides in the identity, so the attribution artefact says which format produced its numbers exactly
-    as `score.json` does. A model with no template and none supplied is refused here.
+    LOADED BY THE LOADER EVERY OTHER MEASUREMENT COMMAND USES (`cli.load_model_and_tokenizer`),
+    which is what gives `attribute` the same formats and the same flags as `score`: plain
+    safetensors, bitsandbytes 4-bit and 8-bit, GPTQ, AWQ, a GGUF, and `--trust-remote-code`. This
+    function used to carry its own copy, with none of them.
+
+    THE PROMPT FORMAT IS CHECKED AND RECORDED BY THE SAME CODE `score` USES. A model's own template,
+    or the one `chat_template` names (a path, or a bundled name), must render a chat prompt, and the
+    provenance (its source and a digest of it) rides in the identity. A model with no template and
+    none supplied is refused.
+
+    The identity also says how the weights came in (format, quantisation method and bits, whether
+    they were dequantised and from what, the backend package's version), because a block ranking
+    measured on a dequantised 4-bit file is not the ranking of the original. A form the block-output
+    hook can't be guaranteed on is refused here, in a sentence.
     """
     import transformers
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    # A missing or malformed file fails as OSError or ValueError deep inside transformers, which used
-    # to reach the person as a traceback; it stops the run in a sentence instead.
+
+    from . import cli, modelload
+    # The loader speaks in SystemExit sentences, which is right for a command line and wrong for a
+    # caller that wants to catch a failed load, so every one is carried across as the same words.
     try:
-        tok = AutoTokenizer.from_pretrained(model_id, revision=revision)
-    except (OSError, ValueError) as e:
-        detail = " ".join(hubmessage.useful_lines(e)) or type(e).__name__
-        raise A.AttributionError(f"the model '{model_id}' could not be loaded: {detail}") from e
-    # Before the weights are read: a model that cannot be measured at all should say so in seconds, not after a load.
-    try:
-        tok.senbon_chat_template = ensure_chat_template(tok, chat_template, log)
+        model, tok = cli.load_model_and_tokenizer(
+            model_id, device=device, load_in_4bit=load_in_4bit, load_in_8bit=load_in_8bit,
+            gguf_file=gguf_file, trust_remote_code=trust_remote_code, chat_template=chat_template,
+            revision=revision, log=log, dtype=dtype)
     except SystemExit as e:
         raise A.AttributionError(str(e.code)) from e
+    loaded = dict(getattr(model, "senbon_load", None) or modelload.LEGACY)
     try:
-        model, info = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, revision=revision,
-                                                           output_loading_info=True)
-    except (OSError, ValueError) as e:
-        detail = " ".join(hubmessage.useful_lines(e)) or type(e).__name__
-        raise A.AttributionError(f"the model '{model_id}' could not be loaded: {detail}") from e
-    refusal = loadreport.missing_weights(model_id, info)
-    if refusal:
-        raise A.AttributionError(refusal)
-    model = model.to(device).eval()
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-    tok.padding_side = "left"
+        modelload.check_hookable(loaded)
+        layers = modelmap.stack_or_raise(model)
+        modelload.probe_block_output(layers, lambda: _one_forward(model))
+    except modelload.LoadRefusedError as e:
+        raise A.AttributionError(str(e)) from e
     identity = {
         "id": model_id,
         "revision": getattr(model.config, "_commit_hash", None) or revision,
-        "precision": str(dtype).removeprefix("torch."),
         "transformers": transformers.__version__, "torch": torch.__version__,
         "device": str(device),
         "chat_template": tok.senbon_chat_template,
+        **loaded,
     }
     return model, tok, identity
+
+
+def _one_forward(model):
+    """Two token zeros through the model, to see what the first decoder block hands back."""
+    dev = next(model.parameters()).device
+    with torch.no_grad():
+        model(input_ids=torch.zeros((1, 2), dtype=torch.long, device=dev))
+
+
+def refuse_other_loading_form(identity, original):
+    """A follow-up must load the model the way the original run did, or it answers another question."""
+    from . import modelload
+    was, now = modelload.with_defaults(original), modelload.with_defaults(identity)
+    if (now.get("precision"), now["format"]) != (was.get("precision"), was["format"]):
+        raise A.AttributionError(
+            f"the original run loaded this model as {was.get('precision')} ({was['format']}) and "
+            f"this one as {now.get('precision')} ({now['format']}), so a follow-up on it "
+            f"would answer a different question. Give the same loading flags as the original.")
 
 
 def digest(prompts):

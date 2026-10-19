@@ -504,3 +504,24 @@ def test_switching_the_early_stop_off_measures_every_replicate_in_full(stopped_a
             assert not controls["family_wise_threshold_is_lower_bound"]
             assert controls["null_replicates_measured_in_full"] == (
                 FULL.shuffled_label_replicates + FULL.random_direction_replicates)
+
+
+# ------------------------------------------------------------------------------- the raw drops
+
+def test_keeping_the_raw_drops_changes_nothing_the_result_says():
+    raw = {}
+    kept = A.attribute(fx.ToySubject("spread"), fx.partitions("spread"), seed=0, conv=FULL, raw=raw)
+    plain = A.attribute(fx.ToySubject("spread"), fx.partitions("spread"), seed=0, conv=FULL)
+    assert kept == plain
+
+
+def test_the_raw_drops_hold_every_condition_and_every_replicate_with_the_full_null():
+    raw = {}
+    A.attribute(fx.ToySubject("spread"), fx.partitions("spread"), seed=0, conv=FULL, raw=raw)
+    n_h = len(fx.partitions("spread")["measure"]["harmful"].prompts)
+    assert raw["drop_h"].shape == (len(raw["conditions"]), n_h)
+    assert len(raw["groups_h"]) == n_h
+    assert len(raw["replicates"]) == FULL.shuffled_label_replicates + FULL.random_direction_replicates
+    nb = fx.ToySubject("spread").n_blocks
+    dh, dl = raw["replicates"][0]
+    assert dh.shape == (nb + 1, n_h) and dl.shape[0] == nb + 1

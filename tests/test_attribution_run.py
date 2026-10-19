@@ -4,6 +4,7 @@
 # Comment: Christ is King  # noqa: ERA001
 """The artefact, the way two readout arms are combined, and the command that writes them."""
 import argparse
+import hashlib
 import json
 
 import pytest
@@ -423,3 +424,24 @@ def test_a_falsified_lower_edge_adds_its_caveat_once_and_keeps_the_render_block_
     start.write_text(json.dumps({"declaration_sha256": "z", "judgement": {"verdict": "supported"}}))
     path.write_text(json.dumps(base))
     assert "caveats" not in R.amend(path, start_path=start)["render"]
+
+
+def test_keep_raw_saves_every_arms_drops_beside_the_artefact_and_measures_the_full_null(monkeypatch,
+                                                                                    tmp_path):
+    R.run(_stub_run(monkeypatch, tmp_path, keep_raw=True), log=lambda *_: None)
+    written = json.loads((tmp_path / "attribution.json").read_text())
+    for arm in ("disjoint", "purity"):
+        record = written["arms"][arm]["raw"]
+        path = tmp_path / record["file"]
+        assert path.is_file() and record["file"] == f"raw-{arm}.pt"
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == record["sha256"]
+        assert written["arms"][arm]["conventions"]["null_early_stop"] is False
+        assert b"bad request" not in path.read_bytes() and b"fine request" not in path.read_bytes()
+    assert not list(tmp_path.glob("*.part"))
+
+
+def test_without_keep_raw_no_raw_file_is_written(monkeypatch, tmp_path):
+    R.run(_stub_run(monkeypatch, tmp_path), log=lambda *_: None)
+    written = json.loads((tmp_path / "attribution.json").read_text())
+    assert not list(tmp_path.glob("raw-*.pt"))
+    assert all("raw" not in a for a in written["arms"].values())

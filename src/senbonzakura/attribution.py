@@ -385,8 +385,13 @@ def _validate(parts, conv):
                 raise AttributionError(f"the {name} partition has no {side} prompts.")
 
 
-def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None):
-    """The whole measurement. `parts` maps fit, search and measure to `{harmful, harmless}` arms."""
+def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None, raw=None):
+    """The whole measurement. `parts` maps fit, search and measure to `{harmful, harmless}` arms.
+
+    `raw`, when a dict, is filled with the per prompt readout drops behind every figure: the real
+    direction's conditions and each null replicate's. It changes nothing the result says, and exists
+    so a study can ask what fewer prompts or fewer replicates would have concluded.
+    """
     import torch  # local: this module is import-light so `--help` does not pay for torch
     log = log or (lambda *_: None)
     _validate(parts, conv)
@@ -428,6 +433,9 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
 
     drop_h, drop_l, base_h, base_l = _effects_for(subject, measure, direction, conds)
     gh, gl = measure["harmful"].groups, measure["harmless"].groups
+    if raw is not None:
+        raw.update({"conditions": names, "drop_h": drop_h, "drop_l": drop_l,
+                    "groups_h": list(gh), "groups_l": list(gl), "replicates": []})
     point, boot = bootstrap_effects(drop_h, drop_l, gh, gl, conv.resamples, gen)
     lo, hi = interval(boot, conv.alpha)
 
@@ -440,7 +448,8 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
     total, total_lo, total_hi = point[idx["all"]], lo[idx["all"]], hi[idx["all"]]
 
     nulls = _null_replicates(subject, parts, res, measure, direction, seed, conv,
-                             strongest=float(e_single.max()))
+                             strongest=float(e_single.max()),
+                             keep=None if raw is None else raw["replicates"])
     tau = float(torch.quantile(nulls["max_block"], conv.null_quantile))
     t_null = float(torch.quantile(nulls["abs_total"], conv.null_quantile))
 
@@ -652,10 +661,15 @@ def _finish(status, reason, conv, n_blocks, seed):
 
 # ----------------------------------------------------------------------------------- the nulls
 
-def total_and_singles(subject, measure, direction, nb):
-    """The total effect and every single block effect of removing `direction`, on the measure arms."""
+def total_and_singles(subject, measure, direction, nb, keep=None):
+    """The total effect and every single block effect of removing `direction`, on the measure arms.
+
+    `keep`, when a list, gets the per prompt drops appended as `(drop_h, drop_l)`, rows all then each block.
+    """
     sub = {"none": (), "all": tuple(range(nb)), **{f"single:{k}": (k,) for k in range(nb)}}
     dh, dl, _, _ = _effects_for(subject, measure, direction, sub)
+    if keep is not None:
+        keep.append((dh[1:], dl[1:]))
     eff = dh.mean(1) - dl.mean(1)
     return float(eff[1]), eff[2:]
 
@@ -685,7 +699,7 @@ def threshold_floor(maxima, replicates, quantile):
     return float(torch.quantile(torch.tensor(filled, dtype=torch.float64), quantile))
 
 
-def _null_replicates(subject, parts, res, measure, direction, seed, conv, *, strongest=None):
+def _null_replicates(subject, parts, res, measure, direction, seed, conv, *, strongest=None, keep=None):
     """Shuffled label and random direction replicates of the whole measurement.
 
     A shuffled label replicate permutes which REQUESTS count as harmful in the fit and search
@@ -720,7 +734,7 @@ def _null_replicates(subject, parts, res, measure, direction, seed, conv, *, str
     def stats(d):
         if state["stopped"]:
             return total_only(subject, measure, d, nb), None
-        total, singles = total_and_singles(subject, measure, d, nb)
+        total, singles = total_and_singles(subject, measure, d, nb, keep=keep)
         maxima.append(float(singles.max()))
         if (conv.null_early_stop and strongest is not None
                 and threshold_floor(maxima, replicates, conv.null_quantile) >= strongest):

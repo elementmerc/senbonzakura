@@ -17,6 +17,7 @@ reply and no prompt set ever reaches it, which `tools/ci/check_prompt_artefacts.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import json
 import sys
@@ -280,6 +281,10 @@ def build_parser():
                    help="memory the block sweep may use to replay the blocks below each edited one, in "
                         "GiB (default %(default).0f; 0 turns it off). More of the run fits with more "
                         "memory; the numbers are the same either way")
+    p.add_argument("--keep-raw", action="store_true",
+                   help="also save the per prompt readout drops behind every figure, real direction and "
+                        "every null replicate, to raw-<arm>.pt beside the artefact, for studying what fewer "
+                        "prompts or replicates would conclude; measures every replicate in full, so it is slower")
     p.add_argument("--force", action="store_true",
                    help="redo arms that already have a result for these exact inputs")
     return p
@@ -304,6 +309,9 @@ def run(args, *, log=print):
     out.mkdir(parents=True, exist_ok=True)
     stamp = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
     conv = A.DEFAULT
+    if args.keep_raw:
+        # The study needs every replicate measured, so the early stop is off and the conventions say so.
+        conv = dataclasses.replace(conv, null_early_stop=False)
 
     with _stage(log, "load"):
         model, tok, identity = H.load(args.model, device=args.device, revision=args.revision)
@@ -335,12 +343,15 @@ def run(args, *, log=print):
             subject.prepare(parts)
     shared = H.share_readouts(subjects.values())
     for arm_name, subject in subjects.items():
+        raw = {} if args.keep_raw else None
         with _stage(log, f"arm {arm_name}"):
             result = A.attribute(
-                subject, parts, seed=args.seed, conv=conv, log=log,
+                subject, parts, seed=args.seed, conv=conv, log=log, raw=raw,
                 predictive=lambda s, p, e, d, r: H.predictive_check(s, p, e, d, r, seed=args.seed,
                                                                     conv=conv))
         result["readout_arm"] = {"name": arm_name, **H.ARM_DECLARATIONS[arm_name]}
+        if raw:
+            result["raw"] = write_raw(out / f"raw-{arm_name}.pt", raw)
         arms[arm_name] = result
         write_json(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
     if shared is not None:
@@ -391,6 +402,18 @@ def write_json(path, doc):
     from .crashsafe import atomic_write
     with atomic_write(str(path)) as handle:
         handle.write(json.dumps(doc, indent=1, sort_keys=True, default=_jsonable))
+
+
+def write_raw(path, raw):
+    """Save the raw drops atomically and return where they went and their SHA-256."""
+    import hashlib
+
+    import torch
+    part = path.with_name(path.name + ".part")
+    torch.save(raw, part)
+    part.replace(path)
+    return {"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "replicates_kept": len(raw.get("replicates", []))}
 
 
 def projected_passes(nb, conv, cached_share=1.0):

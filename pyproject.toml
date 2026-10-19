@@ -297,9 +297,6 @@ dependencies = [
 abliterate = ["senbonzakura"]
 # 4-bit loading for the head-to-head bench and low-VRAM runs.
 quant = ["bitsandbytes>=0.43"]
-# Loading a model stored as a GGUF file, which transformers expands to full precision to be
-# measured. Exact version, hashes in constraints/loaders.lock.
-gguf = ["gguf==0.19.0"]
 # Loading GPTQ and AWQ checkpoints through transformers' own integrations. Both need gptqmodel,
 # which is published as source only and so compiles on install; GPTQ also needs optimum. Exact
 # versions, hashes in constraints/loaders.lock.

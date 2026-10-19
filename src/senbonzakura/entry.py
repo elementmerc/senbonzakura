@@ -214,6 +214,8 @@ _INSTALL_HINT = {
     # to stop.
     "multidict": "pip install 'senbonzakura[hub]'",
     "bitsandbytes": "pip install 'senbonzakura[quant]'",
+    "gptqmodel": "pip install 'senbonzakura[gptq]'   (or [awq] for AWQ checkpoints)",
+    "optimum": "pip install 'senbonzakura[gptq]'",
     "shtab": "pip install 'senbonzakura[completion]'",
     # Only `tamper --method lora` needs it; `--method full` trains without it.
     "peft": "pip install 'senbonzakura[finetune]'",

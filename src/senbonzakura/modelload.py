@@ -46,7 +46,8 @@ BACKENDS = {
     "bnb": ((("bitsandbytes", "bitsandbytes"),), "quant"),
     "gptq": ((("optimum", "optimum"), ("gptqmodel", "gptqmodel")), "gptq"),
     "awq": ((("gptqmodel", "gptqmodel"),), "awq"),
-    "gguf": ((("gguf", "gguf"),), "gguf"),
+    # gguf is a core dependency, so its fix is a reinstall rather than an extra.
+    "gguf": ((("gguf", "gguf"),), None),
 }
 
 _ANY_GGUF = "*.gguf"
@@ -92,15 +93,20 @@ def _version(dist):
         return None
 
 
+def install_command(kind):
+    extra = BACKENDS.get(kind, ((), None))[1]
+    return f'pip install "senbonzakura[{extra}]"' if extra else "pip install --force-reinstall senbonzakura"
+
+
 def require_backend(kind):
     """Refuse, in one sentence, when the package a format needs is not installed."""
-    needed, extra = BACKENDS.get(kind, ((), None))
+    needed = BACKENDS.get(kind, ((), None))[0]
     missing = [dist for imp, dist in needed if not _installed(imp)]
     if missing:
         names = " and ".join(missing)
         raise LoadRefusedError(
             f"senbonzakura: this model is stored as {kind_label(kind)}, which needs {names} "
-            f"and it isn't installed. Install it with: pip install \"senbonzakura[{extra}]\"")
+            f"and it isn't installed. Install it with: {install_command(kind)}")
 
 
 def kind_label(kind):
@@ -189,12 +195,23 @@ def resolve_gguf(model_id, gguf_file):
     return None
 
 
-def _gguf_quant(source, name):
+def _gguf_quant(source, name, revision=None):
+    """The quantisation a GGUF file declares, read from its header; None when it can't be read.
+
+    A hub id is fetched first (the load that follows would fetch the same file, so nothing extra is
+    downloaded), because the header is the only honest source: the file name is a claim.
+    """
     from . import gguf_io
+    path = Path(source) / name
+    if not Path(source).is_dir():
+        try:
+            from huggingface_hub import hf_hub_download
+            path = Path(hf_hub_download(source, name, **({"revision": revision} if revision else {})))
+        except Exception:  # noqa: BLE001 - any hub failure leaves the load to say what went wrong
+            return None
     try:
-        return gguf_io.read_header(Path(source) / name)["file_type"]
+        return gguf_io.read_header(path)["file_type"]
     except (gguf_io.GGUFError, OSError, ValueError, KeyError):
-        # A hub id has nothing on disk to read yet; the record says so rather than guessing.
         return None
 
 
@@ -218,7 +235,7 @@ def plan(model_id, *, load_in_4bit=False, load_in_8bit=False, gguf_file=None, re
         require_backend("gguf")
         source, name = gguf
         return Plan(source=source, kind="gguf", method="gguf", gguf_file=name,
-                    dequantised_from=_gguf_quant(source, name))
+                    dequantised_from=_gguf_quant(source, name, revision))
     qc = _config_quantisation(model_id, revision)
     if qc is not None:
         kind, method, bits, qtype = _classify(qc)
@@ -382,8 +399,7 @@ def gguf_tokenizer_refusal(source, name, error):
 def import_refusal(p, error):
     """A backend that was present at the check but failed on use (a version mismatch)."""
     first = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
-    extra = BACKENDS.get(p.kind, ((), None))[1]
-    hint = f' Install a matching version with: pip install "senbonzakura[{extra}]"' if extra else ""
+    hint = f" Install a matching version with: {install_command(p.kind)}" if p.kind in BACKENDS else ""
     return (f"senbonzakura: loading {kind_label(p.kind)} failed because a package it needs "
             f"couldn't be used: {first}.{hint}")
 

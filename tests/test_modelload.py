@@ -207,6 +207,18 @@ def test_the_quantisation_of_a_gguf_that_cannot_be_read_is_recorded_as_unknown(t
     assert "unknown quantisation" in modelload.provenance(p, "bfloat16")["precision"]
 
 
+def test_a_hub_gguf_is_fetched_once_to_read_its_header_and_a_hub_failure_is_left_to_the_load(
+        tmp_path, monkeypatch):
+    import huggingface_hub
+    f = _gguf(tmp_path / "m.gguf")
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **k: str(f))
+    monkeypatch.setattr("senbonzakura.gguf_io.read_header", lambda p: {"file_type": "Q8_0"})
+    assert modelload._gguf_quant("org/repo-GGUF", "m.gguf", "rev") == "Q8_0"
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+    assert modelload._gguf_quant("org/repo-GGUF", "m.gguf") is None
+
+
 def test_a_gguf_with_a_load_flag_the_editor_or_no_package_is_refused(tmp_path, backends):
     f = _gguf(tmp_path / "a.gguf")
     with pytest.raises(modelload.LoadRefusedError, match="already quantised"):
@@ -216,7 +228,7 @@ def test_a_gguf_with_a_load_flag_the_editor_or_no_package_is_refused(tmp_path, b
     backends.discard("gguf")
     with pytest.raises(modelload.LoadRefusedError) as e:
         modelload.plan(str(f))
-    assert "gguf" in str(e.value) and 'senbonzakura[gguf]' in str(e.value)
+    assert "gguf" in str(e.value) and 'pip install --force-reinstall senbonzakura' in str(e.value)
 
 
 # --------------------------------------------------------------------------- what is handed on and recorded

@@ -205,7 +205,7 @@ missing and how to install it.
 | Saved already in 4 or 8 bit bitsandbytes form | nothing, it's read from the folder | `quant` |
 | GPTQ | nothing | `gptq` |
 | AWQ | nothing | `awq` |
-| A GGUF file, or a folder or hub id holding one | the file path, or `--gguf-file NAME` | `gguf` |
+| A GGUF file, or a folder or hub id holding one | the file path, or `--gguf-file NAME` | none (already included) |
 | A model that ships its own code | `--trust-remote-code`, only if you trust the repository | none |
 
 A GGUF is expanded back to full precision to be measured, so the figure is for those expanded weights and not for the file as

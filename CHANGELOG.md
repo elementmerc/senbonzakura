@@ -26,7 +26,7 @@ surface it changed, and will carry a version heading when it ships.
   from; a folder holding only a GGUF with no tokenizer files now loads the tokenizer from the file or says in one sentence
   which package to install or which file to add
 - A format whose backend package isn't installed is refused in one sentence naming the package and the install command,
-  before any weights are fetched; the new `gguf`, `gptq` and `awq` extras install them
+  before any weights are fetched; the new `gptq` and `awq` extras install the GPTQ and AWQ backends
 - Results record the loading format, quantisation method and bits, whether the weights were dequantised, and the backend
   package's version; artefacts written before these fields read as plain full precision loads
 - `attribute` takes `--chat-template`, checked the same way as in `score`, and its artefact records which template

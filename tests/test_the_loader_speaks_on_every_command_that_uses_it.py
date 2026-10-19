@@ -84,7 +84,7 @@ def test_the_loader_says_what_it_is_about_to_load():
     assert '_log(f"  loading {model_id} on {device}"' in text, (
         "the loader no longer announces the load, so a slow fetch is a silent wait again")
     announce = text.index('_log(f"  loading {model_id} on {device}"')
-    weights = text.index("AutoModelForCausalLM.from_pretrained(model_id, **kw)")
+    weights = text.index("AutoModelForCausalLM.from_pretrained(source, **kw)")
     assert announce < weights, (
         "the announcement is after the load it announces, which is the one place it cannot help")
 

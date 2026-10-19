@@ -614,3 +614,12 @@ def test_amending_an_old_artefact_gives_its_model_block_the_loading_fields(tmp_p
     assert any(n["added"] == "model.format and the loading fields" for n in doc["amendments"])
     again = R.amend(path)           # already carries them: nothing is rewritten the second time
     assert [n["added"] for n in again["amendments"]].count("model.format and the loading fields") == 1
+
+
+def test_attribute_reaches_the_shared_loader_without_importing_the_edit_machinery():
+    assert modelload.shared_loader() is cli.load_model_and_tokenizer
+    import ast
+    import inspect
+    imported = {a.name for n in ast.walk(ast.parse(inspect.getsource(H)))
+                if isinstance(n, ast.ImportFrom) for a in n.names}
+    assert "cli" not in imported

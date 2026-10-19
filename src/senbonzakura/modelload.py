@@ -266,6 +266,19 @@ def _editor_refusal(what):
         f"instead, or start from the unquantised model.")
 
 
+def shared_loader():
+    """The loader every measurement command uses, fetched at call time.
+
+    `attribute` must not import `cli`: the attribution modules are forbidden from reaching the edit
+    machinery that lives there (tests/test_attribution_firewall.py), so that a block ranking can
+    never be built from where an edit wrote. The loader is not part of that machinery, but it sits in
+    the same module, so it is reached from here instead of being copied into a second loader that
+    would drift from the first. Nothing but this function is taken.
+    """
+    from . import cli
+    return cli.load_model_and_tokenizer
+
+
 # ----------------------------------------------------------------------------- what to hand transformers
 
 def bnb_config(p, torch_module):

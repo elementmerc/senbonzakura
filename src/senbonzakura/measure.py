@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from . import argresolve, bundled, say, stamps
+from .parser import add_format_flags
 from .crashsafe import atomic_write
 
 #: Stage name -> (module, output filename). The module is looked up through `entry.DELEGATED`
@@ -118,6 +119,16 @@ def stage_argv(name, args, out_dir):
         common += ["--hf-token", args.hf_token]
     if args.trust_remote_code:
         common += ["--trust-remote-code"]
+    # The loading flags go to every stage that loads the model for measuring. `validate` is left out
+    # because it bakes the model, which needs full precision, so `wanted_stages` refuses the
+    # combination before it gets here rather than handing it a flag it would refuse mid-run.
+    if name != "validate":
+        if getattr(args, "load_in_4bit", False):
+            common += ["--load-in-4bit"]
+        if getattr(args, "load_in_8bit", False):
+            common += ["--load-in-8bit"]
+        if getattr(args, "gguf_file", None):
+            common += ["--gguf-file", args.gguf_file]
     out = str(out_dir / OUTPUTS[name])
 
     if name == "score":
@@ -634,8 +645,7 @@ def build_parser():
     ap.add_argument("--hf-token", default=None, dest="hf_token",
                     help="a Hugging Face token for a gated model. Never printed, and never "
                          "written into the summary")
-    ap.add_argument("--trust-remote-code", action="store_true", dest="trust_remote_code",
-                    help="allow models that ship custom modelling code; off by default")
+    add_format_flags(ap)
     ap.add_argument("--only", action="append", choices=STAGE_ORDER, default=None,
                     help="run only this instrument. Repeatable")
     ap.add_argument("--force", action="store_true",
@@ -680,6 +690,13 @@ def wanted_stages(args):
             f"senbonzakura measure: --baseline {args.baseline} is only read by the drift stage, "
             f"and --only {' '.join(args.only)} does not include it, so the baseline would be "
             f"accepted and ignored. Add drift to --only, or drop --baseline.")
+    if "validate" in chosen and (getattr(args, "load_in_4bit", False)
+                                 or getattr(args, "load_in_8bit", False)
+                                 or getattr(args, "gguf_file", None)):
+        raise SystemExit(
+            "senbonzakura measure: the validate stage rewrites the model's weights, which needs full "
+            "precision, so --load-in-4bit, --load-in-8bit and --gguf-file can't apply to it. Run it "
+            "on its own without them, or leave validate out.")
     return [n for n in STAGE_ORDER if n in chosen]
 
 

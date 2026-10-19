@@ -16,10 +16,10 @@ import pytest
 import torch
 
 from senbonzakura import attribution as A
+from senbonzakura import attribution_followups as F
 from senbonzakura import attribution_hf as H
 from senbonzakura import attribution_run as R
 from senbonzakura import cli, modelload, parser, stamps
-from senbonzakura import attribution_followups as F
 
 
 @pytest.fixture
@@ -228,7 +228,7 @@ def test_a_gguf_with_a_load_flag_the_editor_or_no_package_is_refused(tmp_path, b
     backends.discard("gguf")
     with pytest.raises(modelload.LoadRefusedError) as e:
         modelload.plan(str(f))
-    assert "gguf" in str(e.value) and 'pip install --force-reinstall senbonzakura' in str(e.value)
+    assert "gguf" in str(e.value) and "pip install --force-reinstall senbonzakura" in str(e.value)
 
 
 # --------------------------------------------------------------------------- what is handed on and recorded
@@ -367,13 +367,13 @@ class _Auto:
 
 @pytest.fixture
 def plain_stubs(monkeypatch, tiny_model, tiny_tok):
-    monkeypatch.setattr(cli, "_refuse_without_the_checker", lambda: None)
+    monkeypatch.setattr(modelload, "_refuse_without_the_checker", lambda: None)
     monkeypatch.setattr(modelload, "_config_quantisation", lambda *a, **k: None)
     tok = _Auto(tiny_tok)
     mod = _Auto((tiny_model, {"missing_keys": []}))
-    monkeypatch.setattr(cli, "AutoTokenizer", tok)
-    monkeypatch.setattr(cli, "AutoModelForCausalLM", mod)
-    monkeypatch.setattr(cli, "AutoConfig", _Auto(types.SimpleNamespace()))
+    monkeypatch.setattr(modelload, "AutoTokenizer", tok)
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM", mod)
+    monkeypatch.setattr(modelload, "AutoConfig", _Auto(types.SimpleNamespace()))
     return tok, mod
 
 
@@ -437,7 +437,7 @@ def test_a_gguf_passes_its_file_name_to_both_loads_and_says_it_was_dequantised(
 def test_a_gguf_whose_tokenizer_cannot_be_built_is_one_sentence_with_the_fix(
         plain_stubs, tmp_path, monkeypatch, backends, error):
     f = _gguf(tmp_path / "lfm.gguf")
-    monkeypatch.setattr(cli, "AutoTokenizer", _Auto(error=error))
+    monkeypatch.setattr(modelload, "AutoTokenizer", _Auto(error=error))
     with pytest.raises(SystemExit) as stop:
         cli.load_model_and_tokenizer(str(f), device="cpu")
     said = str(stop.value.code)
@@ -446,20 +446,20 @@ def test_a_gguf_whose_tokenizer_cannot_be_built_is_one_sentence_with_the_fix(
 
 
 def test_a_plain_tokenizer_import_failure_is_not_disguised(plain_stubs, monkeypatch):
-    monkeypatch.setattr(cli, "AutoTokenizer", _Auto(error=ImportError("sentencepiece")))
+    monkeypatch.setattr(modelload, "AutoTokenizer", _Auto(error=ImportError("sentencepiece")))
     with pytest.raises(ImportError):
         cli.load_model_and_tokenizer("m", device="cpu")
 
 
 def test_a_model_that_needs_remote_code_says_which_flag(plain_stubs, monkeypatch):
     err = ValueError("requires you to set trust_remote_code=True")
-    monkeypatch.setattr(cli, "AutoTokenizer", _Auto(error=err))
+    monkeypatch.setattr(modelload, "AutoTokenizer", _Auto(error=err))
     with pytest.raises(SystemExit, match="--trust-remote-code"):
         cli.load_model_and_tokenizer("org/m", device="cpu")
 
 
 def test_remote_code_on_the_weights_is_named_too(plain_stubs, monkeypatch):
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         _Auto(error=ValueError("set trust_remote_code=True")))
     with pytest.raises(SystemExit, match="ships custom modelling code"):
         cli.load_model_and_tokenizer("org/m", device="cpu")
@@ -469,7 +469,7 @@ def test_a_backend_that_fails_when_used_is_a_sentence_and_a_plain_one_is_not_hid
         plain_stubs, monkeypatch, backends):
     monkeypatch.setattr(modelload, "_config_quantisation",
                         lambda *a, **k: {"quant_method": "awq", "bits": 4})
-    monkeypatch.setattr(cli, "AutoModelForCausalLM", _Auto(error=ImportError("gptqmodel too old")))
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM", _Auto(error=ImportError("gptqmodel too old")))
     with pytest.raises(SystemExit, match="gptqmodel too old"):
         cli.load_model_and_tokenizer("m", device="cpu")
     monkeypatch.setattr(modelload, "_config_quantisation", lambda *a, **k: None)
@@ -491,8 +491,7 @@ def _flags(parser_):
 
 
 def test_every_measurement_command_takes_the_same_flags():
-    from senbonzakura import (capability, coherence, drift, jailbreak, leak, margin, multiturn,
-                              score, tamper)
+    from senbonzakura import capability, coherence, drift, jailbreak, leak, margin, multiturn, score, tamper
     wanted = {"trust_remote_code", "load_in_4bit", "load_in_8bit", "gguf_file"}
     for build in (score.build_parser, drift.build_parser, coherence.build_parser, margin.build_parser,
                   multiturn.build_parser, tamper.build_parser, capability.build_parser,
@@ -506,7 +505,7 @@ def test_the_flags_mean_the_same_thing_everywhere():
         acts = {a.dest: a for a in build()._actions}
         helps.add((acts["trust_remote_code"].help, acts["load_in_8bit"].help, acts["gguf_file"].help))
     assert len(helps) == 1
-    assert next(iter(helps))[0] == modelload.TRUST_REMOTE_CODE_HELP
+    assert next(iter(helps))[0] == parser.TRUST_REMOTE_CODE_HELP
 
 
 def test_trust_remote_code_is_never_on_by_default():
@@ -533,7 +532,7 @@ def _fake_loader(monkeypatch, model, tok, load=None):
     tok.senbon_chat_template = {"source": "stub", "sha256": None}
     if load is not None:
         model.senbon_load = load
-    monkeypatch.setattr(cli, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
+    monkeypatch.setattr(modelload, "load_model_and_tokenizer", lambda *a, **k: (model, tok))
 
 
 def _llama():
@@ -547,7 +546,7 @@ def test_attribute_loads_through_the_shared_loader_and_records_how(monkeypatch, 
     seen = {}
     tiny_tok.senbon_chat_template = None
     tiny_model = _llama()
-    monkeypatch.setattr(cli, "load_model_and_tokenizer",
+    monkeypatch.setattr(modelload, "load_model_and_tokenizer",
                         lambda *a, **k: (seen.update(k) or tiny_model, tiny_tok))
     tiny_model.senbon_load = dict(modelload.LEGACY, precision="bfloat16")
     model, tok, identity = H.load("m", device="cpu", load_in_8bit=True, gguf_file="x.gguf",
@@ -560,7 +559,7 @@ def test_attribute_loads_through_the_shared_loader_and_records_how(monkeypatch, 
 def test_attribute_turns_a_refused_load_into_its_own_error(monkeypatch):
     def refuse(*a, **k):
         raise SystemExit("senbonzakura: the sentence")
-    monkeypatch.setattr(cli, "load_model_and_tokenizer", refuse)
+    monkeypatch.setattr(modelload, "load_model_and_tokenizer", refuse)
     with pytest.raises(A.AttributionError, match="the sentence"):
         H.load("m", device="cpu")
 
@@ -616,10 +615,10 @@ def test_amending_an_old_artefact_gives_its_model_block_the_loading_fields(tmp_p
     assert [n["added"] for n in again["amendments"]].count("model.format and the loading fields") == 1
 
 
-def test_attribute_reaches_the_shared_loader_without_importing_the_edit_machinery():
-    assert modelload.shared_loader() is cli.load_model_and_tokenizer
+def test_attribute_uses_the_loader_without_importing_the_edit_machinery():
     import ast
     import inspect
+    assert cli.load_model_and_tokenizer is modelload.load_model_and_tokenizer
     imported = {a.name for n in ast.walk(ast.parse(inspect.getsource(H)))
                 if isinstance(n, ast.ImportFrom) for a in n.names}
-    assert "cli" not in imported
+    assert "cli" not in imported and "modelload" in imported

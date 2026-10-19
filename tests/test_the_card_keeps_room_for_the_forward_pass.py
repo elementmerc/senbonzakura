@@ -24,7 +24,7 @@ import types
 
 import pytest
 
-from senbonzakura import cli, resources
+from senbonzakura import cli, modelload, resources
 
 
 def config(layers=80, hidden=8192, vocab=152064, inter=29568, **extra):
@@ -264,16 +264,16 @@ def _patched_loader(monkeypatch, cfg, tiny_model, tiny_tok):
     """
     monkeypatch.setattr("torch.cuda.is_available", lambda: True)
     seen = {}
-    monkeypatch.setattr(cli, "AutoTokenizer",
+    monkeypatch.setattr(modelload, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
-    monkeypatch.setattr(cli, "AutoModelForCausalLM", types.SimpleNamespace(
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM", types.SimpleNamespace(
         from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model, {"missing_keys": []})))
     if cfg is None:
         def boom(*a, **k):
             raise OSError("no config.json")
-        monkeypatch.setattr(cli, "AutoConfig", types.SimpleNamespace(from_pretrained=boom))
+        monkeypatch.setattr(modelload, "AutoConfig", types.SimpleNamespace(from_pretrained=boom))
     else:
-        monkeypatch.setattr(cli, "AutoConfig",
+        monkeypatch.setattr(modelload, "AutoConfig",
                             types.SimpleNamespace(from_pretrained=lambda *a, **k: cfg))
     return seen
 
@@ -311,11 +311,11 @@ def test_the_cpu_path_never_reads_a_config_at_all(monkeypatch, tiny_model, tiny_
     network round trip bought for nothing on the path that needs it least.
     """
     asked = []
-    monkeypatch.setattr(cli, "AutoTokenizer",
+    monkeypatch.setattr(modelload, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: (tiny_model, {"missing_keys": []})))
-    monkeypatch.setattr(cli, "AutoConfig", types.SimpleNamespace(
+    monkeypatch.setattr(modelload, "AutoConfig", types.SimpleNamespace(
         from_pretrained=lambda *a, **k: asked.append(a) or config()))
     cli.load_model_and_tokenizer("x", device="cpu", needs_chat_template=False)
     assert asked == []

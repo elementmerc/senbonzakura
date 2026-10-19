@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve, modelload
+from . import argresolve
 from . import attribution as A
 from ._version import __version__
 
@@ -213,6 +213,7 @@ def amend(artefact_path, followups_path=None, start_path=None, *, now=None):
     notes.append({"added": "render", "when": when, "by": f"render_block v{RENDER_VERSION}",
                   "derived_from": doc["render"]["derived_from"]})
     if doc.get("model") is not None and "format" not in doc["model"]:
+        from . import modelload
         doc["model"] = modelload.with_defaults(doc["model"])
         notes.append({"added": "model.format and the loading fields", "when": when,
                       "derived_from": "this artefact predates them; every earlier run was a plain "
@@ -303,6 +304,8 @@ def build_parser():
 
 def _same_fingerprint(saved, current):
     """Equal fingerprints, reading an identity written before the loading fields as a plain load."""
+    from . import modelload
+
     def normal(doc):
         doc = json.loads(json.dumps(doc, default=_jsonable))
         if isinstance(doc, dict) and isinstance(doc.get("model"), dict):

@@ -17,7 +17,7 @@ decoration. The control changes one knob and asserts the comparison notices.
 import numpy as np
 import pytest
 
-from senbonzakura import cli, streambake, streamextract
+from senbonzakura import cli, modelload, streambake, streamextract
 
 
 def _log_sink():
@@ -461,9 +461,9 @@ def test_the_loader_passes_the_offload_folder_through_to_transformers(monkeypatc
         seen.update(kw)
         return type("M", (), {"eval": lambda self: None, "config": None})(), {"missing_keys": []}
 
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         type("A", (), {"from_pretrained": staticmethod(fake_from_pretrained)}))
-    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: object())
+    monkeypatch.setattr(modelload, "load_tokenizer", lambda *a, **k: object())
     cli.load_model_and_tokenizer("Some/Model", device="cuda", log=lambda m: None,
                                  offload_dir=str(tmp_path / "off"))
     assert seen["offload_folder"] == str(tmp_path / "off")
@@ -476,7 +476,7 @@ def test_an_offload_dir_on_the_cpu_path_is_refused_rather_than_silently_unused(m
     would be created and ignored. A flag that is accepted and does nothing is worse than one
     that is refused: somebody starts a 200 GB run believing it will spill.
     """
-    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: object())
+    monkeypatch.setattr(modelload, "load_tokenizer", lambda *a, **k: object())
     with pytest.raises(ValueError) as e:
         cli.load_model_and_tokenizer("Some/Model", device="cpu", log=lambda m: None,
                                      offload_dir=str(tmp_path / "off"))
@@ -498,9 +498,9 @@ def test_no_offload_dir_leaves_the_loader_exactly_as_it_was(monkeypatch):
         seen.update(kw)
         return type("M", (), {"eval": lambda self: None, "config": None})(), {"missing_keys": []}
 
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         type("A", (), {"from_pretrained": staticmethod(fake_from_pretrained)}))
-    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: object())
+    monkeypatch.setattr(modelload, "load_tokenizer", lambda *a, **k: object())
     cli.load_model_and_tokenizer("Some/Model", device="cuda", log=lambda m: None)
     assert "offload_folder" not in seen
     assert "offload_state_dict" not in seen

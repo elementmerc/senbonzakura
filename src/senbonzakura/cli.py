@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
 # Author:  Daniel Iwugo
-# Comment: Christ is King  # noqa: ERA001
+# Comment: Christ is King
 """Multi-direction refusal abliteration for transformer language models, with an Optuna search.
 
 Handles dense transformers and mixture-of-experts models, including the *fused* expert layout
@@ -52,18 +52,14 @@ from pathlib import Path
 import optuna
 import torch
 import torch.nn.functional as F
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 # Torch-free on purpose: the measurement commands take the model as a positional too and must not
 # import THIS module in order to parse a command line.
 from . import (
     argresolve,
-    checkpoint,  # what a stranger's checkpoint must look like before a loader opens its shards
     dataset,  # every accepted way of saying "the prompts are here"
     hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
-    loadreport,  # refuses a model whose weights didn't all load, which would measure random numbers
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
-    modelload,  # which kind of checkpoint this is, and whether this install can load it
     modelmap,  # the one description of every architecture: stack paths, base module, final norm
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
     say,  # wrapping for every long message, leaving markers and pasteable commands alone
@@ -106,6 +102,29 @@ from .metrics import (
     is_soft_refusal,  # hedged-compliance detector (the moralising lecture)
     knee_scalar,  # the weighted selection rule over those rulers
     validate_ruler,  # refuses to measure with a ruler that misreads its own cases
+)
+
+# The loader lives in `modelload`, which holds no edit code, so `attribute` can use it without importing this
+# module. Every name is re-exported so this module's own callers, and the tests that reach for them here, are
+# unchanged.
+from .modelload import (
+    _LFS_POINTER_PREFIX,  # noqa: F401
+    _LFS_SUSPECTS,  # noqa: F401
+    _THEIR_ADVICE_IS_FOR_THE_PYTHON_API,  # noqa: F401
+    CHECKER,  # noqa: F401
+    HEADROOM_FLOOR_BYTES,  # noqa: F401
+    HEADROOM_MAX_FRACTION,  # noqa: F401
+    HEADROOM_SEQ_TOKENS,  # noqa: F401
+    _activation_headroom_bytes,  # noqa: F401
+    _corrected_max_memory,  # noqa: F401
+    _could_not_load,  # noqa: F401
+    _inner_text_config,  # noqa: F401
+    _looks_like_a_local_path,  # noqa: F401
+    _refuse_without_the_checker,  # noqa: F401
+    _reserve_activation_headroom,  # noqa: F401
+    _unfetched_lfs_files,  # noqa: F401
+    load_model_and_tokenizer,  # noqa: F401
+    load_tokenizer,  # noqa: F401
 )
 from .resources import ResourceGovernor, SearchProgress, cuda_free_total  # VRAM throttle + ETA
 from .track import (  # the recorded partition boundaries, and the flags that would cross them
@@ -280,25 +299,6 @@ WORST_SCORE = float("inf")
 # it did before.
 CAPTURE_BATCH = 16
 
-#: The prompt length the activation headroom is budgeted for, in tokens. The corpora this tool
-#: ships are short (the longest bundled refusal prompt is well under 200 tokens), so this is
-#: generous rather than tight, and it is a documented assumption rather than a measurement because
-#: the headroom is a floor and overshooting it costs a little card space while undershooting it
-#: costs the run. A prompt longer than this does not fail: it makes the reserve smaller than the
-#: pass needs, and the capture governor then shrinks the chunk exactly as it does for any other
-#: shortfall.
-HEADROOM_SEQ_TOKENS = 512
-
-#: The floor under any computed headroom. CUDA's own context, cuBLAS and cuDNN workspaces and
-#: allocator fragmentation all live outside the arithmetic below and together run to hundreds of
-#: megabytes before a single activation exists.
-HEADROOM_FLOOR_BYTES = 1 << 30
-
-#: The most of any one device's budget the headroom may claim. Reserving most of a small card to
-#: guarantee a forward pass leaves too little for weights to be worth placing, and a loud failure
-#: at load beats a run that technically starts and then thrashes. Past this the reserve is capped
-#: and the cap is reported.
-HEADROOM_MAX_FRACTION = 0.25
 
 
 # ── weight math (pure) ───────────────────────────────────────────────────────────
@@ -680,172 +680,6 @@ def layer_weight(idx, P, wmax, wmin, D):
     if D == 0:
         return wmax
     return wmax + (dist / D) * (wmin - wmax)
-
-
-def _inner_text_config(config):
-    """The sub-config that carries the decoder's shape, which on a multimodal config is nested."""
-    inner = getattr(config, "text_config", None)
-    return inner if inner is not None and hasattr(inner, "num_hidden_layers") else config
-
-
-def _activation_headroom_bytes(config, *, seq=HEADROOM_SEQ_TOKENS):
-    """VRAM one single-prompt forward pass needs beyond the weights, or None if unknowable.
-
-    THE DEFECT THIS EXISTS FOR, and it is the same one as `_corrected_max_memory` one device over.
-    accelerate's `get_max_memory` reports each card's FREE memory and `infer_auto_device_map` then
-    fills it with weights, because placement is the only question it is being asked. A forward pass
-    needs room on top of the weights, and `output_hidden_states=True` needs a lot of it: every
-    layer's activations for the whole batch exist at once. With the card packed to the last hundred
-    megabytes there is nowhere for them to go.
-
-    WHY A ONE-PROMPT BUDGET AND NOT THE WHOLE CHUNK. `collect_resid` runs behind a
-    `ResourceGovernor` that halves the chunk on out-of-memory and waits when the card is too full,
-    so a chunk that does not fit is already handled. What the governor CANNOT do is go below one
-    prompt, and that floor is what has to be guaranteed in advance. Budgeting the full
-    `CAPTURE_BATCH` instead would reserve about 108 GB on a 72B model, which is not a reserve, it
-    is a refusal to use the card.
-
-    Found on 2026-10-09 on a rented A40: the host budget correction worked, 44.19 GiB of weights
-    landed on a 44.42 GiB card, and the first capture died asking for 462 MiB with 227 MiB free.
-
-    THE ARITHMETIC, per prompt at `seq` tokens, every term named so a reader can check it:
-
-      hidden states   (L + 1) x seq x H x 2      every layer's output, kept, in bf16
-      logits          seq x V x 4                computed in float32 on most families
-      transients      seq x I x 2 x 3            MLP intermediates, a few live at once
-
-    Doubled, because fragmentation and the attention implementation's own scratch are real and are
-    not in the list above, and floored at `HEADROOM_FLOOR_BYTES`, because on a small model the
-    three terms together come to a couple of hundred megabytes while CUDA's context and the BLAS
-    workspaces, which are in none of them, do not shrink with the model. Returns None when the
-    config does not name the shape, which is a statement that the headroom is unmeasured rather
-    than a guess at it.
-    """
-    inner = _inner_text_config(config)
-    layers = getattr(inner, "num_hidden_layers", None)
-    hidden = getattr(inner, "hidden_size", None)
-    vocab = getattr(inner, "vocab_size", None)
-    if not isinstance(layers, int) or not isinstance(hidden, int) or not isinstance(vocab, int):
-        return None
-    # `intermediate_size` is absent on some hybrid and MoE configs. Four times the hidden size is
-    # the conventional ratio and is used only for a transient term, so a family that does not name
-    # it gets a reasonable figure rather than no reserve at all.
-    inter = getattr(inner, "intermediate_size", None)
-    if not isinstance(inter, int):
-        inter = 4 * hidden
-    states = (layers + 1) * seq * hidden * 2
-    logits = seq * vocab * 4
-    transients = seq * inter * 2 * 3
-    return max(2 * (states + logits + transients), HEADROOM_FLOOR_BYTES)
-
-
-def _reserve_activation_headroom(budgets, headroom, log):
-    """Subtract `headroom` from every compute device in `budgets`. Returns True if any changed.
-
-    Mutates `budgets`. Only the keys accelerate uses for real devices are touched: `"cpu"` has
-    already been corrected against the cgroup by the caller and `"disk"` is not a device a forward
-    pass allocates on. A non-integer budget (accelerate accepts `"10GiB"` strings) is left alone
-    and reported, because parsing a unit string to subtract from it would be guessing at a format
-    we do not own.
-    """
-    changed = False
-    for key, value in list(budgets.items()):
-        if key in ("cpu", "disk"):
-            continue
-        if not isinstance(value, int):
-            log(f"  device {key}: its placement budget is {value!r} rather than a byte count, so "
-                f"no activation headroom was reserved on it. A capture that runs out of room will "
-                f"be shrunk by the governor rather than refused here.")
-            continue
-        take = min(headroom, int(value * HEADROOM_MAX_FRACTION))
-        if take < headroom:
-            log(f"  device {key}: a forward pass wants {headroom / 1e9:.1f} GB of headroom but that "
-                f"is more than {HEADROOM_MAX_FRACTION:.0%} of its {value / 1e9:.1f} GB, so "
-                f"{take / 1e9:.1f} GB is reserved and the rest is left to the capture governor.")
-        if take <= 0:
-            continue
-        budgets[key] = value - take
-        changed = True
-        log(f"  device {key}: {take / 1e9:.1f} GB of its {value / 1e9:.1f} GB held back for "
-            f"activations, so weights are placed against {budgets[key] / 1e9:.1f} GB.")
-    return changed
-
-
-def _corrected_max_memory(log, config=None):
-    """The placement budget accelerate computed, corrected, or None to leave it alone.
-
-    Two corrections, both of the same shape: accelerate is answering "where do the weights go" and
-    neither the host's real limit nor the room a forward pass needs is part of that question. The
-    host entry is corrected against the cgroup, and each compute device keeps back enough for one
-    prompt's activations. `config` is the model's own config and may be omitted, in which case only
-    the host correction is made.
-
-    THE DEFECT. accelerate decides how much of a model goes in host RAM from
-    `psutil.virtual_memory().available`, which reads `/proc/meminfo`. Inside a container that is
-    the HOST's memory and not the limit the process is held to, so on a cgroup-capped box the
-    placement believes in memory that is not there. Without an offload directory the ending is an
-    OOM kill partway through loading, with no Python traceback; with one, it is worse in a quieter
-    way, because the weights go to RAM that seems to exist and the disk path the run was relying on
-    never executes at all.
-
-    Found on 2026-10-09 by trying to demonstrate disk offload on rented hardware. The box reported
-    540.6 GB of RAM against a provider spec sheet saying 50 GB, so a 145 GB checkpoint read as
-    something that comfortably fits and nothing would have spilled.
-
-    WHY THIS STARTS FROM accelerate's OWN DICT rather than building one. `max_memory` is used
-    verbatim when it is given, so a dict naming only `cpu` would place the entire model on the host
-    and never touch the card. Taking `get_max_memory()` and overriding one key keeps every
-    per-device figure accelerate would have chosen, which is the part we have no business
-    second-guessing.
-
-    IT ONLY EVER CORRECTS DOWNWARD. When no cgroup caps us, `host_memory_budget` returns the same
-    `/proc/meminfo` reading accelerate started from, and this returns None so the call site passes
-    nothing at all. Raising a budget on the strength of our own arithmetic would turn a
-    conservative default into an OOM, so the one direction this moves is the safe one.
-    """
-    from . import resources
-    budget, source = resources.host_memory_budget()
-    headroom = _activation_headroom_bytes(config) if config is not None else None
-    if budget is None and headroom is None:
-        log("  host memory: unmeasured on this platform, so accelerate's own placement budget "
-            "stands. A model that does not fit will fail at load rather than being refused here.")
-        return None
-    if budget is None:
-        log("  host memory: unmeasured on this platform, so accelerate's own host budget stands.")
-    elif source != "cgroup":
-        budget = None                                   # nothing caps us; accelerate was right
-    if headroom is None and config is not None:
-        log("  activations: this config does not name the layer count, width and vocabulary "
-            "together, so the headroom a forward pass needs is unmeasured and none is reserved. "
-            "A capture that runs out of room is shrunk by the governor instead.")
-    if budget is None and headroom is None:
-        return None
-    try:
-        from accelerate.utils import get_max_memory
-        budgets = dict(get_max_memory())
-    except Exception as e:
-        # Graceful degradation with a visible warning, per the robustness mandate: a placement we
-        # could not correct is accelerate's default, which is what every previous run used.
-        log(f"  placement: accelerate's own budget could not be read to correct it "
-            f"({type(e).__name__}: {e}), so its default stands. A load that overshoots a cgroup cap "
-            f"will be OOM-killed rather than spilling to disk, and a packed card will run out of "
-            f"room on the first forward pass.")
-        return None
-    changed = False
-    if budget is not None:
-        theirs = budgets.get("cpu")
-        if not (isinstance(theirs, int) and theirs <= budget):
-            limit, current = resources.cgroup_memory_limit(), resources.cgroup_memory_current()
-            log(f"  host memory: a cgroup limits this process to {limit / 1e9:.1f} GB with "
-                f"{(current or 0) / 1e9:.1f} GB already counted against it, so the placement budget "
-                f"is {budget / 1e9:.1f} GB and not the "
-                f"{('%.1f GB' % (theirs / 1e9)) if isinstance(theirs, int) else theirs} that "
-                f"/proc/meminfo reports. Inside a container that file describes the host.")
-            budgets["cpu"] = budget
-            changed = True
-    if headroom is not None:
-        changed = _reserve_activation_headroom(budgets, headroom, log) or changed
-    return budgets if changed else None
 
 
 def edited_positions_from_taper(bpr, n_layers):
@@ -1287,7 +1121,7 @@ def _decoder_layers(model):
 def _config_dict_of(model):
     # The model's config as a plain dict, however it exposes itself. One line, but it keeps the
     # `getattr` dance out of the resolver above.
-    return modelmap._config_dict(getattr(model, "config", None))  # noqa: SLF001
+    return modelmap._config_dict(getattr(model, "config", None))
 
 
 def _real_tensor(owner, name, *, for_writing=True):
@@ -1375,7 +1209,7 @@ def _owned_weight(parent, name, *, for_writing=True):
 #: no torch, while this module imports torch, optuna and transformers at module scope. Copying
 #: them would have recreated the two-hand-kept-copies defect the list exists to prevent; see that
 #: module's docstring for the full argument.
-from .writers import ATTN_BLOCKS  # noqa: E402
+from .writers import ATTN_BLOCKS
 
 
 def _attn_block(layer):
@@ -1409,7 +1243,7 @@ def _attn_outproj(layer, *, for_writing=True):
 
 #: Both re-exported from `writers.py`, as ATTN_BLOCKS above is. Their comments, including the
 #: per-architecture shapes each entry was verified against, live there.
-from .writers import MIXER_BLOCKS, MLP_BLOCKS  # noqa: E402
+from .writers import MIXER_BLOCKS, MLP_BLOCKS
 
 
 def _conv_outproj(layer, *, for_writing=True):
@@ -2071,7 +1905,7 @@ def accelerator_name(device):
 
 # The prompt-format check lives in `chattemplate` so a module that must not reach this one (the attribution engine)
 # can still use it. Re-exported here because this is where it has always been imported from.
-from .chattemplate import (  # noqa: E402, F401
+from .chattemplate import (
     BUNDLED_TEMPLATES,
     _audit_chat_template,
     _bundled_template,
@@ -2128,407 +1962,6 @@ def _track_digests(track):
         except Exception:                     # provenance must never fail a run
             out[split] = "UNREADABLE"
     return out or None
-
-
-#: Phrases in `transformers`' load failure that give advice for the PYTHON API, to somebody who is
-#: holding a command line. Its message is otherwise the best part of the refusal: it names the id
-#: and says whether it was a local folder or a listed model, which is exactly what the reader needs.
-#: But it closes by telling them to pass `token=<your_token>`, a keyword argument to a function they
-#: are not calling, and to use `huggingface-cli login`, which `hf auth login` replaced.
-#:
-#: So the useful half is kept verbatim and the advice is dropped, because the line under it already
-#: says the same thing in the two spellings that work here. Leaving both in gave a reader two
-#: instructions where one was impossible to follow, and the impossible one came first.
-#:
-#: THE LIST ITSELF NOW LIVES IN `hubmessage`, because this was the only one of three surfaces that
-#: consulted it: `fetch` and the snapshot pre-flight printed the same advice unfiltered. The name is
-#: kept here because it is what this file's readers and its tests already look for.
-_THEIR_ADVICE_IS_FOR_THE_PYTHON_API = hubmessage.ADVICE_FOR_THE_PYTHON_API
-
-
-#: How a git-lfs pointer file begins. The spec line is the first thing in the file and it is
-#: fixed text, so this is a reliable test rather than a guess.
-_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
-
-#: The files worth examining for the pointer. Not a glob over the whole directory: a model
-#: directory can hold hundreds of shards, and the point is a cheap answer, not a complete audit.
-_LFS_SUSPECTS = ("config.json", "tokenizer.json", "tokenizer_config.json",
-                 "model.safetensors", "pytorch_model.bin", "model.safetensors.index.json")
-
-
-def _unfetched_lfs_files(model_dir):
-    """The files in a local model directory that are git-lfs pointers rather than their contents.
-
-    A `git clone` of a model repository without `git lfs pull`, or with lfs absent, leaves every
-    large file as a 130-byte text stub naming where the real one lives. The directory then looks
-    complete: the file names are right, `config.json` may even be real, and the failure arrives
-    from inside `transformers` as whatever that stub fails to parse as. The streaming journey of
-    2026-10-13 met it as `json.decoder.JSONDecodeError: Expecting value: line 1 column 1` out of
-    `tokenization_utils_base.py`, which is eleven frames describing our dependency's parser and
-    not one word about the actual problem.
-
-    Cheap on purpose: a bounded list of names, 64 bytes read from each.
-    """
-    found = []
-    for name in _LFS_SUSPECTS:
-        candidate = Path(model_dir) / name
-        try:
-            if not candidate.is_file():
-                continue
-            with open(candidate, "rb") as fh:
-                if fh.read(len(_LFS_POINTER_PREFIX)) == _LFS_POINTER_PREFIX:
-                    found.append(name)
-        except OSError:
-            # This function runs while another failure is being explained. It must not be able to
-            # replace that explanation with one of its own.
-            continue
-    return found
-
-
-def _looks_like_a_local_path(model_id):
-    """Whether this string names the filesystem in a way a hub model id cannot.
-
-    A hub id is `org/model`: one slash, no leading dot or tilde, no trailing separator, no backslash
-    and no colon. So an absolute path, an explicitly relative one, a `~` path, a trailing separator,
-    a Windows path and three or more segments are all shapes an id cannot take, and anything else is
-    left ambiguous on purpose.
-    """
-    text = str(model_id or "").strip()
-    if not text:
-        return False
-    # A backslash is the Windows separator and no hub id has one, so a backslash anywhere names the
-    # filesystem. A drive letter (`C:` or `C:/models`) does too. Without these, a Windows reader who
-    # mistyped a folder was told to run `hf auth login`, and the path check only ever saw `/`.
-    if "\\" in text or (text[:1].isalpha() and text[1:3] in (":/", ":\\")):
-        return True
-    if text.startswith(("/", "./", "../", "~")) or text.endswith("/"):
-        return True
-    return text.count("/") >= 2
-
-
-def _could_not_load(model_id, error):
-    """One refusal for a model that will not load, shared by both loaders.
-
-    Two identical copies of this message had already drifted apart once elsewhere in this file, and
-    a refusal is a user-facing string like any other.
-    """
-    # JOINED ONLY IF THERE IS SOMETHING TO JOIN. An OSError with an empty message, or one whose
-    # every line was advice, left a blank line where the detail should be, which reads as output
-    # that got cut off.
-    detail = "".join(f"  {ln}\n" for ln in hubmessage.useful_lines(error))
-    # THE TOKEN ADVICE IS FOR THE HUB, and it used to be printed for a local path too. A reader who
-    # passed a file that is already on their disk was told to authenticate to a service that is not
-    # involved, which sends them to fix something that is not broken. Found by a user journey on
-    # 2026-10-13, where the path given was a .jsonl.
-    #
-    # The test is "does this name something on disk", not "does it look like an id": an id with a
-    # slash and a path with a slash are the same shape, and a relative path that exists is the case
-    # this has to catch.
-    try:
-        local = Path(model_id).exists()
-    except (OSError, ValueError):
-        # An over-long path or one with a null byte is not a thing on disk, and raising here would
-        # replace a refusal the reader can act on with a traceback.
-        local = False
-    # AND THE THIRD CASE, WHICH THE PAIR ABOVE SENT TO THE WRONG FIX, 2026-10-13. A string that
-    # plainly names the filesystem and is not there got the hub's token advice, so a reader who
-    # mistyped a directory was told to go and authenticate. The two cases above were "it is on
-    # disk" and "everything else", and a mistyped path falls in the second.
-    #
-    # Deliberately conservative about what counts as plainly a path. A hub id carries exactly one
-    # slash, so `org/model` stays a hub id and only the shapes an id cannot have are claimed here.
-    # The ambiguous middle, a bare `name` or a single-slash `a/b` that is not on disk, keeps the
-    # hub advice, because that genuinely is the likelier reading of it.
-    if local:
-        # AND IF THE FILES ARE STUBS, SAY SO, because "about the files themselves" is true and
-        # unhelpful next to the one cause that accounts for most of it.
-        stubs = _unfetched_lfs_files(model_id) if Path(model_id).is_dir() else []
-        if stubs:
-            one = len(stubs) == 1
-            advice = (f"  {', '.join(stubs)} "
-                      f"{'is a git-lfs pointer' if one else 'are git-lfs pointers'} rather than "
-                      f"{'the real file' if one else 'the real files'}, so this checkpoint was "
-                      f"cloned without its large files. Fetch them with `git lfs pull` in that "
-                      f"directory, or download the model with `senbonzakura fetch` instead of "
-                      f"git.\n")
-        else:
-            advice = ("  That path exists, so this is about the files themselves rather than "
-                      "about access.\n")
-    elif _looks_like_a_local_path(model_id):
-        advice = ("  Nothing exists at that path, and it is a path rather than a model id, so "
-                  "the hub is not involved. Check the spelling, and that the directory holds a "
-                  "config.json beside its weights.\n")
-    else:
-        advice = "  If it is gated or private, pass --hf-token or log in with `hf auth login`.\n"
-    return (f"senbonzakura: could not load the model '{model_id}'.\n"
-            f"{detail}"
-            f"{advice}".rstrip("\n"))
-
-
-def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
-                   needs_chat_template=True, revision=None, gguf_file=None):
-    """The tokenizer half of the loader, on its own.
-
-    Split out so a caller that needs only the chat template does not have to put a model on the
-    device to get it. `drift` did: it loaded the candidate, then loaded the base while the
-    candidate was still resident, so the peak was two full copies. Two bf16 copies of a 1.7B model
-    do not fit the 6 GB card this project is sized for.
-
-    Left-padding is set here because `firsttoken.last_token_logits` reads position -1, which is
-    the last REAL token only under left padding.
-    """
-    _log = log or (lambda m: None)
-    # The tokenizer loads FIRST, so this is where a bad model reference actually surfaces, and
-    # wrapping only the weight load left the traceback exactly as it was. Same treatment, same
-    # reason: transformers' sentence is good, the frames around it are not.
-    try:
-        tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code,
-                                            **({"revision": revision} if revision else {}),
-                                            **({"gguf_file": gguf_file} if gguf_file else {}))
-    # `ValueError` BESIDE `OSError`, 2026-10-13. A missing file raises `OSError` and that was the
-    # only shape handled; a file that is PRESENT and is not what it claims raises out of whatever
-    # parser `transformers` hands it to, and `json.JSONDecodeError` is a `ValueError`. So a
-    # checkpoint cloned without its large files reached the user as eleven frames ending inside
-    # `tokenization_utils_base.py`. Both are the same question to the reader, "this model will not
-    # load, why", and `_could_not_load` now answers the git-lfs case by name.
-    except (OSError, ValueError) as e:
-        if gguf_file:
-            raise SystemExit(modelload.gguf_tokenizer_refusal(model_id, gguf_file, e)) from e
-        raise SystemExit(modelload.remote_code_refusal(model_id, e)
-                         or _could_not_load(model_id, e)) from e
-    # A GGUF's tokenizer is rebuilt from its metadata, and that conversion fails with these when
-    # sentencepiece or tiktoken is missing or the vocabulary is of a kind it can't convert.
-    except (ImportError, RuntimeError, TypeError) as e:
-        if not gguf_file:
-            raise
-        raise SystemExit(modelload.gguf_tokenizer_refusal(model_id, gguf_file, e)) from e
-    tok.padding_side = "left"
-    if tok.pad_token is None:
-        tok.pad_token = tok.eos_token
-    # Validated here, at the single boundary every entry point passes through, rather than
-    # in each of the three. The provenance rides on the tokenizer so callers can put it in
-    # their result files without the loader having to change what it returns.
-    # Scoped to the callers whose measurement depends on prompt format. The perplexity of a
-    # fixed neutral passage does not: it never renders a chat prompt, so requiring a template
-    # there refused to measure base models for a reason that did not apply to them.
-    tok.senbon_chat_template = (ensure_chat_template(tok, chat_template, _log)
-                                if needs_chat_template else None)
-    return tok
-
-
-#: The one declared dependency that is imported from inside a function rather than at module top.
-#:
-#: `senbonzakura_check` owns the measurement stamp, so every command that writes a figure reaches
-#: for it at the END of its run. The imports are deferred on purpose, to keep `--help` fast, and
-#: that is exactly why nothing caught its absence early: `entry.dispatch` only sees imports that
-#: happen while a module is LOADING, and the handler around the run catches the late failure and
-#: says the right thing far too late.
-CHECKER = "senbonzakura_check"
-
-
-def _refuse_without_the_checker():
-    """Refuse before the weights, if the package that will write the result is missing.
-
-    MEASURED 2026-10-11 on sixteen cores. `senbonzakura compass` spent 3 minutes 45 seconds and 28
-    CPU-minutes loading Qwen3-1.7B and scoring sixty prompts, then refused with "it needs
-    senbonzakura_check, which is not installed". True, actionable, and after all the work. Section
-    2.1 asks for dependency presence to be checked "before a long job starts, not halfway
-    through", and this project already does that for the CUDA device, the skip boundaries and the
-    capability-probe budget.
-
-    HERE, AND NOT IN A TABLE IN `entry`. The first attempt listed which commands defer the import
-    and pre-flighted them before dispatch. A test derived the same list from the source and showed
-    the hand-written one was wrong in both directions, then showed that neither a direct-import
-    walk nor a transitive one can produce the right answer: direct misses `leak`, which reaches
-    the checker through `residualleak`, and transitive reachability sweeps in `doctor`, which must
-    run with nothing installed. Predicting the set was the wrong idea.
-
-    The loader is the honest place. Everything expensive is downstream of it, every command that
-    writes a stamped figure passes through it, and the commands that never load a model, `doctor`
-    and `diff` and `track` among them, never reach it and keep working with the checker absent.
-    No table, nothing to drift, and the cost avoided is the whole load plus the scoring.
-
-    `find_spec` rather than an import, so this costs microseconds and executes nothing.
-    """
-    import importlib.util
-
-    try:
-        present = importlib.util.find_spec(CHECKER) is not None
-    except (ImportError, ValueError):
-        present = False
-    if present:
-        return
-    raise SystemExit(
-        f"senbonzakura: {CHECKER} is not installed, and every measurement this writes is stamped "
-        f"through it.\n"
-        f"  Refusing now rather than after the model loads: on a processor that wait is minutes, "
-        f"and the answer at the end of it would be this same sentence.\n"
-        f"  Install it with:\n"
-        f"    pip install senbonzakura\n"
-        f"  `senbonzakura doctor` lists everything this install is missing in one go, and it runs "
-        f"without any of it.")
-
-
-def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
-                             trust_remote_code=False, attn_impl=None, log=None,
-                             chat_template=None, needs_chat_template=True,
-                             offload_dir=None, revision=None, load_in_8bit=False,
-                             gguf_file=None, forward_only=True, dtype=None):
-    # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
-    # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
-    # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
-    # specific cuda:N both work. 4-bit is for the pure-forward paths only (scoring / measurement):
-    # the weight bake rewrites tensors in place and needs full precision.
-    _log = log or (lambda m: None)
-    _refuse_without_the_checker()
-    # BEFORE accelerate SEES IT. `device_map` below routes placement through accelerate's
-    # sharded-checkpoint loader, which takes shard names out of the index and opens them relative
-    # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the
-    # only point we control. It applies to a local directory; a bare model id is fetched and
-    # loaded inside transformers, with no point between the two to stand.
-    # WHAT KIND OF CHECKPOINT THIS IS, DECIDED BEFORE ANYTHING IS FETCHED. A missing backend
-    # package, a flag that can't apply to this format, or a GGUF folder with two files in it is a
-    # sentence now and not a download followed by a traceback. See `modelload`.
-    try:
-        plan = modelload.plan(model_id, load_in_4bit=load_in_4bit, load_in_8bit=load_in_8bit,
-                              gguf_file=gguf_file, revision=revision, forward_only=forward_only)
-    except modelload.LoadRefusedError as e:
-        raise SystemExit(str(e)) from e
-    source = plan.source
-    if Path(source).is_dir():
-        checkpoint.refuse_unsafe_index(source)
-    elif plan.kind != "gguf":
-        checkpoint.refuse_unsafe_hub_index(model_id, revision=revision)
-    # AND THE DEVICE, AFTER THE INDEX CHECK AND BEFORE ANY WEIGHTS. `--device` defaults to `cuda`,
-    # and `_preflight_device` refused an unusable one on the abliterate path and the guided mode
-    # only. Every other command reached `.to(device)` with the weights already fetched and loaded,
-    # and died there under fourteen frames of torch. On a metered connection that download is the
-    # whole cost of finding out. Found by the constrained-user journey, 2026-10-11.
-    #
-    # HERE RATHER THAN AT EACH `main`, which is where it went first and was wrong. A surface check
-    # preempts every refusal the command does for itself, so eighteen tests that assert a specific
-    # early refusal got this one instead. Worse, they only got it on a machine with no card, which
-    # is CI: the suite's behaviour would have depended on the test host's hardware.
-    #
-    # AND AFTER THE INDEX CHECK RATHER THAN BEFORE IT, which is the second ordering mistake in the
-    # same fix. Put first, it preempted the PYSEC-2026-3804 refusal above, so a hostile checkpoint
-    # went unexamined whenever the device string was also wrong. A convenience check must not be
-    # able to stand in front of a security one. The weights are still downstream of this line, so
-    # the cost it exists to save is still saved.
-    argresolve.refuse_unusable_device(device, offload_dir=offload_dir)
-    tok = load_tokenizer(source, trust_remote_code=trust_remote_code, log=log,
-                         chat_template=chat_template, needs_chat_template=needs_chat_template,
-                         revision=revision, gguf_file=plan.gguf_file)
-    dtype = dtype or modelload.dtype_for(plan, torch)
-    kw = dict(dtype=dtype, trust_remote_code=trust_remote_code)
-    if plan.gguf_file:
-        kw["gguf_file"] = plan.gguf_file
-    if revision:
-        kw["revision"] = revision
-    if attn_impl:
-        kw["attn_implementation"] = attn_impl
-    if load_in_4bit or load_in_8bit:
-        kw["quantization_config"] = modelload.bnb_config(plan, torch)
-        # "auto" on a machine asked for the processor makes accelerate dispatch layers to a
-        # card that isn't there and bitsandbytes then refuses; the placement follows the request.
-        kw["device_map"] = ("auto" if device == "cuda" else {"": int(device.split(":", 1)[1])}
-                            if device.startswith("cuda:") else {"": "cpu"})
-        _log(f"loading in {'4-bit (nf4, double-quant)' if load_in_4bit else '8-bit (int8)'}; "
-             f"measurement path only, the bake needs full precision")
-    elif plan.quantised and plan.kind != "gguf" and device == "cpu":
-        # A stored-quantised model is placed by its quantiser, and a later `.to()` on it can fail.
-        kw["device_map"] = {"": "cpu"}
-    elif device == "cuda":
-        kw["device_map"] = "auto"                       # accelerate places / shards; supports big models
-    elif device.startswith("cuda:"):
-        kw["device_map"] = {"": int(device.split(":", 1)[1])}
-    # A MODEL THAT CANNOT BE FETCHED IS A SENTENCE, NOT A TRACEBACK. transformers' own message is
-    # good (it names the id and says it is neither a local folder nor a listed model), so it is
-    # kept verbatim rather than reworded; what is dropped is the twenty frames of our internals
-    # and theirs wrapped around it. Found by typing a model name with a character missing, which
-    # is the most likely user error there is.
-    # DISK OFFLOAD IS OPT-IN, AND ONLY FOR A FORWARD PASS. Without `offload_folder`, a
-    # `device_map="auto"` fills the card and then host RAM and then fails; with it, accelerate
-    # spills the rest to disk and reads each group back as the pass reaches it. That makes a model
-    # larger than card plus RAM loadable for READING, which is all extraction needs.
-    #
-    # It is not offered to the bake and must not be. A disk-offloaded weight reads back as a fresh
-    # copy on every access, so an in-place write lands on a temporary and is discarded; see
-    # `_real_tensor`, which raises rather than pretending, and `capability.disk_offloaded_entries`,
-    # which is the check that first found this distinction mattered. The caller decides, because
-    # only the caller knows whether it is about to write.
-    if offload_dir:
-        if "device_map" not in kw:
-            raise ValueError(
-                f"offload_dir={offload_dir!r} was passed with device={device!r}, which places the "
-                f"model with a plain `.to()` and never consults accelerate. Disk offload needs a "
-                f"device_map, so this combination would create the directory and silently not use "
-                f"it.")
-        kw["offload_folder"] = str(offload_dir)
-        # The state dict goes to disk as it is read rather than being held whole in host RAM,
-        # which is the other half of the problem: a 200 GB checkpoint cannot be staged in RAM on
-        # the way to being placed, even when the placement itself would have fitted.
-        kw["offload_state_dict"] = True
-    # THE HOST BUDGET, CORRECTED WHEN A CGROUP CAPS US. Applies to every accelerate placement and
-    # not only to the offload path, because the wrong number is just as wrong without it: there the
-    # overshoot is an OOM kill instead of a spill to disk, which is the same defect with a worse
-    # ending. See `_corrected_max_memory` for why the figure accelerate computes can be wrong.
-    if "device_map" in kw:
-        # The config is read separately and BEFORE the weights, because the headroom has to be
-        # subtracted from the budget the placement is computed against. Reading it is a metadata
-        # fetch against a cache transformers is about to consult anyway. A config that cannot be
-        # read is not fatal here: the load below will fail with a better message than anything
-        # this could say, so the correction degrades to the host-only one.
-        cfg = None
-        try:
-            cfg = AutoConfig.from_pretrained(source, trust_remote_code=trust_remote_code,
-                                             **({"revision": revision} if revision else {}),
-                                             **({"gguf_file": plan.gguf_file} if plan.gguf_file else {}))
-        except Exception as e:
-            _log(f"  the model config could not be read before the weights "
-                 f"({type(e).__name__}: {e}), so no activation headroom is reserved.")
-        corrected = _corrected_max_memory(_log, cfg)
-        if corrected is not None:
-            kw["max_memory"] = corrected
-    # SAID BEFORE THE WAIT, NOT AFTER IT. Measured 2026-10-11 while reproducing a journey
-    # finding: `senbonzakura compass` on a processor sat for six minutes having printed exactly
-    # one line, and that line was huggingface's own rate-limit warning. Nothing of ours said a
-    # model was being fetched, so the only thing on screen was somebody else's prose and the run
-    # looked wedged. Section 2 asks for a heartbeat on every long wait; a fetch over a slow or
-    # throttled link is one of the longest this tool has, and it had no entry line at all.
-    #
-    # The download note is added only for a Hub id. A local directory loads at disk speed, so
-    # telling that reader about a download would be wrong about what they are waiting for, and
-    # being confidently wrong about the cause is the shape of message this project keeps removing.
-    _log(f"  loading {model_id} on {device}"
-         f"{'' if Path(source).is_dir() else ' (a first run downloads it, which is the slow part)'}"
-         f"{'' if plan.kind == 'plain' else f' as {plan.kind}'}")
-    if plan.kind == "gguf":
-        _log(f"  a GGUF is expanded to {str(dtype).removeprefix('torch.')} to be measured here, so "
-             f"the figure is for the dequantised weights "
-             f"({plan.dequantised_from or 'quantisation unknown'}), not the file as llama.cpp runs it")
-    # The load report is asked for so a checkpoint that left weights missing is refused here; see
-    # `loadreport` for the run that measured random numbers because nothing read it.
-    kw["output_loading_info"] = True
-    try:
-        model, info = AutoModelForCausalLM.from_pretrained(source, **kw)
-    # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
-    # present and malformed fails in a parser rather than in the filesystem.
-    except ImportError as e:
-        if plan.kind == "plain":
-            raise
-        raise SystemExit(modelload.import_refusal(plan, e)) from e
-    except (OSError, ValueError) as e:
-        raise SystemExit(modelload.remote_code_refusal(model_id, e)
-                         or _could_not_load(model_id, e)) from e
-    refusal = loadreport.missing_weights(model_id, info)
-    if refusal:
-        raise SystemExit(refusal)
-    if "device_map" not in kw:                          # cpu path
-        model = model.to(device)
-    model.eval()
-    modelload.attach(model, plan, str(dtype).removeprefix("torch."))
-    return model, tok
 
 
 def _weights_live_on(model):
@@ -5561,8 +4994,8 @@ def _stamp_separation(record, run, args):
 
 # The commands that live in sibling modules. Dispatched by name, and imported only when one is
 # actually asked for: `margin` imports this module, so a module-level import here is circular.
-from .entry import DELEGATED  # noqa: E402
-from .entry import dispatch as _delegate  # noqa: E402
+from .entry import DELEGATED
+from .entry import dispatch as _delegate
 
 # The parser lives in a module that imports nothing heavy, so `--help`, `--version`
 # and every argument error cost a hundredth of a second instead of 2.8. Re-exported
@@ -5570,7 +5003,7 @@ from .entry import dispatch as _delegate  # noqa: E402
 # RE-EXPORTED, and the noqa is load-bearing. `loader_parser` is not called in this module, so
 # ruff's autofix removes it as unused, and `coherence`, `drift`, `score` and `margin` all do
 # `from .cli import loader_parser`. Removing it breaks four commands at import time.
-from .parser import build_parser, loader_parser, split_mode  # noqa: E402, F401
+from .parser import build_parser, loader_parser, split_mode
 
 
 def main(argv=None, *, emit_banner=True):
@@ -5848,7 +5281,7 @@ def _preflight_output(args):
 #: out of this file so `streaming.py` could read the same list without importing torch; the
 #: risk it guards against, two hand-kept copies drifting apart, is unchanged and is why there is
 #: still exactly one definition.
-from .writers import is_writer_tensor  # noqa: E402
+from .writers import is_writer_tensor
 
 #: The private spelling this file has always used. One name, one implementation.
 _is_writer_tensor = is_writer_tensor

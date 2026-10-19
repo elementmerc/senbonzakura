@@ -171,14 +171,14 @@ def test_the_loader_checks_a_local_directory_before_accelerate_sees_it(monkeypat
     Driven through `load_model_and_tokenizer` with the tokeniser and the model class stubbed, so
     what is asserted is the ORDER: the guard raises without either of them being reached.
     """
-    from senbonzakura import cli
+    from senbonzakura import cli, modelload
     d = tmp_path / "m"
     d.mkdir()
     (d / "model.safetensors.index.json").write_text(
         json.dumps({"weight_map": {"w": "/etc/passwd"}}), encoding="utf-8")
 
     reached = []
-    monkeypatch.setattr(cli, "load_tokenizer",
+    monkeypatch.setattr(modelload, "load_tokenizer",
                         lambda *a, **k: reached.append("tokenizer"))
     with pytest.raises(checkpoint.UnsafeCheckpointError):
         cli.load_model_and_tokenizer(str(d), device="cuda")
@@ -194,7 +194,7 @@ def test_a_model_id_that_is_not_a_directory_is_left_alone(monkeypatch):
     the test ever reaching the network: a test that downloads a model is not a unit test, and
     the first version of this one sat there fetching Qwen until it was killed.
     """
-    from senbonzakura import cli
+    from senbonzakura import cli, modelload
 
     class _Stop(Exception):
         pass
@@ -202,7 +202,7 @@ def test_a_model_id_that_is_not_a_directory_is_left_alone(monkeypatch):
     def _stop(*_a, **_k):
         raise _Stop
 
-    monkeypatch.setattr(cli, "load_tokenizer", _stop)
+    monkeypatch.setattr(modelload, "load_tokenizer", _stop)
     monkeypatch.setattr(checkpoint, "_fetch_index", lambda *a, **k: None)
     with pytest.raises(_Stop):
         cli.load_model_and_tokenizer("Qwen/Qwen3-1.7B", device="cpu")

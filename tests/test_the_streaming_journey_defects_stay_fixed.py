@@ -374,9 +374,9 @@ def test_both_loaders_catch_a_malformed_file_and_not_only_a_missing_one():
     was that only `OSError` was caught, so a file that is PRESENT and is not what it claims went
     to the top of the interpreter as a traceback.
     """
-    from senbonzakura import cli
+    from senbonzakura import modelload
 
-    text = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
+    text = pathlib.Path(modelload.__file__).read_text(encoding="utf-8")
     for call in ("AutoTokenizer.from_pretrained", "AutoModelForCausalLM.from_pretrained"):
         # To the next `except` block's end rather than a fixed window: the explanation above each
         # one runs past any window short enough to be meaningful, and a window that has to grow

@@ -34,7 +34,7 @@ SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "senbonzakura"
 #: Named rather than discovered, so a NEW command that forgets the argument fails the count check
 #: below instead of quietly joining a list built from the code it is meant to be checking.
 CALLERS = (
-    "capability.py", "cli.py", "coherence.py", "drift.py", "jailbreak.py", "leak.py",
+    "attribution_hf.py", "capability.py", "cli.py", "coherence.py", "drift.py", "jailbreak.py", "leak.py",
     "margin.py", "multiturn.py", "score.py", "streamextract.py", "tamper.py",
 )
 
@@ -80,7 +80,7 @@ def test_the_loader_says_what_it_is_about_to_load():
     `_log` rather than `print`: a bare `print` here would reach a caller that deliberately wants
     the loader quiet, and `stream-extract` is one.
     """
-    text = (SRC / "cli.py").read_text(encoding="utf-8")
+    text = (SRC / "modelload.py").read_text(encoding="utf-8")
     assert '_log(f"  loading {model_id} on {device}"' in text, (
         "the loader no longer announces the load, so a slow fetch is a silent wait again")
     announce = text.index('_log(f"  loading {model_id} on {device}"')

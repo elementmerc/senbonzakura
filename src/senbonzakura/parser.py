@@ -36,7 +36,6 @@ from ._version import __version__
 from .lengthsweep import DEFAULT_BUDGET as _DEFAULT_BUDGET  # constants only; pulls only .metrics
 from .lengthsweep import VISIBILITY_FLOOR as _VISIBILITY_FLOOR
 from .metrics import KL_CEIL, KL_TARGET
-from .modelload import TRUST_REMOTE_CODE_HELP  # stdlib only; the one wording for every command
 
 
 def _capability_tasks():
@@ -185,6 +184,11 @@ def split_mode(argv):
     if argv and argv[0] == "abliterate":
         return False, argv[1:]
     return True, list(argv)
+
+
+#: The help text for `--trust-remote-code`, held here so every command says the same thing.
+TRUST_REMOTE_CODE_HELP = ("allow models that ship custom modelling code (some Hub models need "
+                          "it); off by default.")
 
 
 def add_format_flags(ap, *, four_bit_help=None, edits_weights=False):

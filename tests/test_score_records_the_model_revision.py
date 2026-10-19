@@ -14,7 +14,7 @@ import json
 import pytest
 from datasets import Dataset
 
-from senbonzakura import cli, score
+from senbonzakura import cli, modelload, score
 
 
 def _eval(tmp_path):
@@ -101,9 +101,9 @@ def test_the_loader_passes_a_revision_to_every_from_pretrained_and_a_local_folde
         return Tok()
 
     monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", tokenizer)
-    monkeypatch.setattr(cli, "AutoTokenizer", transformers.AutoTokenizer)
-    monkeypatch.setattr(cli, "ensure_chat_template", lambda *_a, **_k: {"source": "stub"})
-    monkeypatch.setattr(cli, "_refuse_without_the_checker", lambda: None)
+    monkeypatch.setattr(modelload, "AutoTokenizer", transformers.AutoTokenizer)
+    monkeypatch.setattr(modelload, "ensure_chat_template", lambda *_a, **_k: {"source": "stub"})
+    monkeypatch.setattr(modelload, "_refuse_without_the_checker", lambda: None)
     monkeypatch.setattr(cli.argresolve, "refuse_unusable_device", lambda *a, **k: None)
     tok = cli.load_tokenizer(str(tmp_path), revision="rev1", needs_chat_template=False)
     assert calls["tokenizer"]["revision"] == "rev1" and tok.pad_token == "x"

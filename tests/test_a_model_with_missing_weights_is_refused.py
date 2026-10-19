@@ -20,7 +20,7 @@ import torch
 import transformers
 from safetensors.torch import load_file, save_file
 
-from senbonzakura import attribution as A
+from senbonzakura import attribution as A, modelload
 from senbonzakura import attribution_hf as H
 from senbonzakura import cli, loadreport
 
@@ -101,8 +101,8 @@ def test_a_long_list_is_cut_to_a_few_names_in_a_fixed_order():
 # --------------------------------------------------------------------------- the command line loader
 
 def _cli_load(path, monkeypatch):
-    monkeypatch.setattr(cli, "load_tokenizer", lambda *a, **k: object())
-    monkeypatch.setattr(cli, "_refuse_without_the_checker", lambda: None)
+    monkeypatch.setattr(modelload, "load_tokenizer", lambda *a, **k: object())
+    monkeypatch.setattr(modelload, "_refuse_without_the_checker", lambda: None)
     return cli.load_model_and_tokenizer(path, device="cpu", log=lambda m: None)
 
 
@@ -129,7 +129,7 @@ def _stub_tokenizer(monkeypatch):
     tok = types.SimpleNamespace(pad_token=None, eos_token=end, padding_side="right")
     monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: tok)
     # This file is about the weights; the prompt format is checked in test_attribute_takes_a_chat_template.py.
-    monkeypatch.setattr(cli, "ensure_chat_template", lambda *_a, **_k: {"source": "stub", "sha256": None})
+    monkeypatch.setattr(modelload, "ensure_chat_template", lambda *_a, **_k: {"source": "stub", "sha256": None})
 
 
 def test_the_attribution_loader_loads_an_intact_checkpoint(models, monkeypatch):

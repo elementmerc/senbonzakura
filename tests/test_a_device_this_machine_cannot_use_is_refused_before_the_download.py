@@ -72,8 +72,8 @@ def test_the_check_sits_after_the_security_check_and_before_the_weights():
     string happened to be wrong too. **A convenience check must never be able to preempt a security
     one.** The weights are downstream either way, so nothing is lost by going second.
     """
-    from senbonzakura import cli
-    src = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
+    from senbonzakura import modelload
+    src = pathlib.Path(modelload.__file__).read_text(encoding="utf-8")
     # The whole remainder, not a fixed window: this function carries several hundred lines of
     # comment and a 3000-character window fell short of its own `from_pretrained`.
     head = src.split("def load_model_and_tokenizer", 1)[1]

@@ -15,7 +15,7 @@ import optuna
 import pytest
 import torch
 
-from senbonzakura import cli, crashsafe, metrics
+from senbonzakura import cli, crashsafe, metrics, modelload
 from senbonzakura import parser as parser_mod
 
 
@@ -435,9 +435,9 @@ def test_perplexity_does_not_require_a_chat_template(tiny_model, monkeypatch):
             return types.SimpleNamespace(input_ids=torch.tensor([[1, 2, 3, 4]]))
 
     tok = _NoTemplate()
-    monkeypatch.setattr(cli, "AutoTokenizer",
+    monkeypatch.setattr(modelload, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tok))
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: (tiny_model, {"missing_keys": []})))
 
     with pytest.raises(SystemExit, match="chat template"):
@@ -448,9 +448,9 @@ def test_perplexity_does_not_require_a_chat_template(tiny_model, monkeypatch):
 
 # ── the shared loader ─────────────────────────────────────────────────────────────────
 def _patch_hf(monkeypatch, tiny_model, tiny_tok):
-    monkeypatch.setattr(cli, "AutoTokenizer",
+    monkeypatch.setattr(modelload, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: (tiny_model, {"missing_keys": []})))
 
 
@@ -476,9 +476,9 @@ def test_loader_cuda_n_branch(monkeypatch, tiny_model, tiny_tok):
 def test_loader_cuda_auto_branch(monkeypatch, tiny_model, tiny_tok):
     seen = {}
     monkeypatch.setattr("torch.cuda.is_available", lambda: True)   # see the note above
-    monkeypatch.setattr(cli, "AutoTokenizer",
+    monkeypatch.setattr(modelload, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model, {"missing_keys": []})))
     cli.load_model_and_tokenizer("x", device="cuda")
     assert seen.get("device_map") == "auto"   # plain cuda -> accelerate auto-placement
@@ -498,9 +498,9 @@ def test_loader_4bit_branch(monkeypatch, tiny_model, tiny_tok):
 
 def test_loader_passes_trust_remote_and_attn_impl(monkeypatch, tiny_model, tiny_tok):
     seen = {}
-    monkeypatch.setattr(cli, "AutoTokenizer",
+    monkeypatch.setattr(modelload, "AutoTokenizer",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: tiny_tok))
-    monkeypatch.setattr(cli, "AutoModelForCausalLM",
+    monkeypatch.setattr(modelload, "AutoModelForCausalLM",
                         types.SimpleNamespace(from_pretrained=lambda *a, **k: (seen.update(k) or tiny_model, {"missing_keys": []})))
     cli.load_model_and_tokenizer("x", device="cpu", trust_remote_code=True, attn_impl="eager")
     assert seen.get("trust_remote_code") is True

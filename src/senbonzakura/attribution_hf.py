@@ -29,6 +29,7 @@ import torch
 
 from . import attribution as A
 from . import hubmessage, loadreport, metrics, modelmap
+from .chattemplate import ensure_chat_template
 from .firsttoken import last_token_logits, render_chat
 
 #: Greedy reply length used to label a prompt as refused or not. Long enough that a refusal after
@@ -172,7 +173,6 @@ def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None, chat_t
         detail = " ".join(hubmessage.useful_lines(e)) or type(e).__name__
         raise A.AttributionError(f"the model '{model_id}' could not be loaded: {detail}") from e
     # Before the weights are read: a model that cannot be measured at all should say so in seconds, not after a load.
-    from .cli import ensure_chat_template
     try:
         tok.senbon_chat_template = ensure_chat_template(tok, chat_template, log)
     except SystemExit as e:

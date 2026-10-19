@@ -215,6 +215,7 @@ def main(argv=None):
         print(f"  taking the direction from {a.direction_from}")
         ref_model, ref_tok = load_model_and_tokenizer(
             a.direction_from, device=a.device, load_in_4bit=a.load_in_4bit,
+            load_in_8bit=getattr(a, "load_in_8bit", False),
             trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
         direction, position, norms, caveats = residualleak.contrast_direction(
             ref_model, ref_tok, harmful, harmless, at=a.at, log=print)
@@ -229,6 +230,8 @@ def main(argv=None):
 
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        load_in_8bit=getattr(a, "load_in_8bit", False),
+        gguf_file=getattr(a, "gguf_file", None),
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
 
     if reference is None:

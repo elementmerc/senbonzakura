@@ -1086,6 +1086,7 @@ def main(argv=None):
     def load(checkpoint):
         return _cli_mod.load_model_and_tokenizer(
             checkpoint, device=a.device, load_in_4bit=a.load_in_4bit,
+            load_in_8bit=getattr(a, "load_in_8bit", False),
             trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
 
     def measure(model, tok, which):

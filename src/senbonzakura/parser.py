@@ -36,6 +36,7 @@ from ._version import __version__
 from .lengthsweep import DEFAULT_BUDGET as _DEFAULT_BUDGET  # constants only; pulls only .metrics
 from .lengthsweep import VISIBILITY_FLOOR as _VISIBILITY_FLOOR
 from .metrics import KL_CEIL, KL_TARGET
+from .modelload import TRUST_REMOTE_CODE_HELP  # stdlib only; the one wording for every command
 
 
 def _capability_tasks():
@@ -186,8 +187,35 @@ def split_mode(argv):
     return True, list(argv)
 
 
+def add_format_flags(ap, *, four_bit_help=None, edits_weights=False):
+    """The flags that say what form the model is in, defined once for every command that loads one.
+
+    `attribute` takes its own positional model and its own `--device`, so it can't use the whole
+    loader parser as a parent; it calls this instead, and the two stay the same by construction.
+    `edits_weights` is the abliterator, which keeps only the 4-bit flag (so it can refuse it with
+    a pointer) because every other form is one it can't edit.
+    """
+    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
+                    help=TRUST_REMOTE_CODE_HELP)
+    ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
+                    help=four_bit_help or ("load in 4-bit (bitsandbytes nf4) to measure a large "
+                                           "model on low VRAM. Safe on the forward-only paths; "
+                                           "the abliterator refuses it, because the weight bake "
+                                           "rewrites tensors and needs full precision."))
+    if edits_weights:
+        return
+    ap.add_argument("--load-in-8bit", dest="load_in_8bit", action="store_true",
+                    help="load in 8-bit (bitsandbytes int8). Needs the quant extra. A model "
+                         "stored already quantised (bitsandbytes, GPTQ, AWQ) loads as it is "
+                         "without a flag.")
+    ap.add_argument("--gguf-file", dest="gguf_file", default=None, metavar="NAME",
+                    help="which .gguf file to load, for a hub id or a folder holding several. "
+                         "A GGUF is expanded to full precision to be measured, and the result "
+                         "records which quantisation it came from. Needs the gguf extra.")
+
+
 def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
-                  chat_template=True, model_required=True):
+                  chat_template=True, model_required=True, edits_weights=False):
     """The flags every entry point needs in order to LOAD a model, defined once.
 
     A parent parser rather than a copy in each of the four commands. The copies had already
@@ -209,9 +237,7 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
     ap.add_argument("--device", default="cuda",
                     help="cuda, cuda:N, or cpu (default: cuda). A machine with no card needs "
                          "--device cpu; `senbonzakura doctor` says what this one has.")
-    ap.add_argument("--trust-remote-code", dest="trust_remote_code", action="store_true",
-                    help="allow models that ship custom modelling code (some Hub models need "
-                         "it); off by default.")
+    add_format_flags(ap, four_bit_help=four_bit_help, edits_weights=edits_weights)
     # Omitted for a command whose measurement does not depend on prompt format, so it does not
     # offer a knob that would change nothing.
     if chat_template:
@@ -219,11 +245,6 @@ def loader_parser(*, model_help="HF model id or local path", four_bit_help=None,
                         help="a Jinja chat template for a model that ships none: a path to one, "
                              "or a bundled name ('plain'). Prompt format decides every "
                              "measurement here, so the run records which template it used.")
-    ap.add_argument("--load-in-4bit", dest="load_in_4bit", action="store_true",
-                    help=four_bit_help or ("load in 4-bit (bitsandbytes nf4) to measure a large "
-                                           "model on low VRAM. Safe on the forward-only paths; "
-                                           "the abliterator refuses it, because the weight bake "
-                                           "rewrites tensors and needs full precision."))
     return ap
 
 
@@ -480,7 +501,7 @@ def build_parser(full=False):
                           "precision. Use it with the scorer "
                           "(python -m senbonzakura.score --load-in-4bit) to measure a model "
                           "on low VRAM.",
-            model_required=False)])
+            model_required=False, edits_weights=True)])
     # THE ONE-COMMAND FORM: `senbonzakura Qwen/Qwen2.5-0.5B-Instruct`, with everything else defaulted.
     #
     # `--model` still works and is what every run spec, every README example and every batch job

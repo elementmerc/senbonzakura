@@ -417,6 +417,7 @@ def _agreement_against_transformers(a, prompts, gguf_replies, rendered, lossless
 
     model, tok = load_model_and_tokenizer(
         a.agree_with, device=a.device, load_in_4bit=a.load_in_4bit,
+        load_in_8bit=getattr(a, "load_in_8bit", False),
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
     hf_rendered = [render_chat(tok, p) for p in prompts]
     hf_replies = generate(model, tok, prompts, a.device, batch=a.batch, max_new=a.max_new)
@@ -586,6 +587,8 @@ def main(argv=None):
             f"Drop the flag, or point --model at a .gguf file.")
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        load_in_8bit=getattr(a, "load_in_8bit", False),
+        gguf_file=getattr(a, "gguf_file", None),
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print,
         revision=a.revision)
     # The revision the figures are about, recorded the way `attribute` records it: the commit transformers resolved,

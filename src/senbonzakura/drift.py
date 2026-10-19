@@ -331,6 +331,7 @@ def load_base_logprobs(a, prompts, fp, log=print):
     # make the divergence a measure of the rendering rather than of the edit.
     base_model, base_tok = load_model_and_tokenizer(
         a.base, device=a.device, load_in_4bit=a.load_in_4bit,
+        load_in_8bit=getattr(a, "load_in_8bit", False),
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template,
         log=print)
     lp = first_token_logprobs(base_model, base_tok, prompts, batch=a.batch)
@@ -397,6 +398,8 @@ def main(argv=None):
 
     cand, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        load_in_8bit=getattr(a, "load_in_8bit", False),
+        gguf_file=getattr(a, "gguf_file", None),
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template,
         log=print)
     cand_lp = first_token_logprobs(cand, tok, prompts, batch=a.batch)

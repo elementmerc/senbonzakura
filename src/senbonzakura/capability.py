@@ -1730,6 +1730,8 @@ def main(argv=None):
 
     model, tok = load_model_and_tokenizer(
         a.model, device=a.device, load_in_4bit=a.load_in_4bit,
+        load_in_8bit=getattr(a, "load_in_8bit", False),
+        gguf_file=getattr(a, "gguf_file", None),
         trust_remote_code=a.trust_remote_code, chat_template=a.chat_template, log=print)
     # AND AGAIN FROM WHERE THE WEIGHTS ACTUALLY LANDED. The check above reads `--device`, which is
     # a request; this reads the map accelerate built, which is the fact.

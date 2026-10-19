@@ -127,6 +127,11 @@ def model_precision(model, load_in_4bit) -> str:
     `getattr` rather than attribute access because a fake or a wrapped model may not carry a dtype,
     and an absent dtype should read as unknown rather than crash a measurement already paid for.
     """
+    # The loader records how the weights came in; a model it loaded says so, and that outranks
+    # the flag because a stored-quantised or GGUF model never saw `--load-in-4bit`.
+    loaded = getattr(model, "senbon_load", None)
+    if isinstance(loaded, dict) and loaded.get("precision"):
+        return loaded["precision"]
     if load_in_4bit:
         return "nf4"
     dtype = getattr(model, "dtype", None)

@@ -63,6 +63,7 @@ from . import (
     hubmessage,  # what to say when the Hub will not hand over a model, in one place for every caller
     loadreport,  # refuses a model whose weights didn't all load, which would measure random numbers
     marker,  # what a saved checkpoint says it is; NOT crashsafe.provenance
+    modelload,  # which kind of checkpoint this is, and whether this install can load it
     modelmap,  # the one description of every architecture: stack paths, base module, final norm
     runrecord,  # what a half-finished run says its inputs were, so --resume can check them
     say,  # wrapping for every long message, leaving markers and pasteable commands alone
@@ -2265,7 +2266,7 @@ def _could_not_load(model_id, error):
 
 
 def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template=None,
-                   needs_chat_template=True, revision=None):
+                   needs_chat_template=True, revision=None, gguf_file=None):
     """The tokenizer half of the loader, on its own.
 
     Split out so a caller that needs only the chat template does not have to put a model on the
@@ -2282,15 +2283,21 @@ def load_tokenizer(model_id, *, trust_remote_code=False, log=None, chat_template
     # reason: transformers' sentence is good, the frames around it are not.
     try:
         tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code,
-                                            **({"revision": revision} if revision else {}))
+                                            **({"revision": revision} if revision else {}),
+                                            **({"gguf_file": gguf_file} if gguf_file else {}))
     # `ValueError` BESIDE `OSError`, 2026-10-13. A missing file raises `OSError` and that was the
     # only shape handled; a file that is PRESENT and is not what it claims raises out of whatever
     # parser `transformers` hands it to, and `json.JSONDecodeError` is a `ValueError`. So a
     # checkpoint cloned without its large files reached the user as eleven frames ending inside
     # `tokenization_utils_base.py`. Both are the same question to the reader, "this model will not
     # load, why", and `_could_not_load` now answers the git-lfs case by name.
-    except (OSError, ValueError) as e:
-        raise SystemExit(_could_not_load(model_id, e)) from e
+    except (OSError, ValueError, ImportError, RuntimeError, TypeError) as e:
+        if gguf_file:
+            raise SystemExit(modelload.gguf_tokenizer_refusal(model_id, gguf_file, e)) from e
+        if not isinstance(e, (OSError, ValueError)):
+            raise
+        raise SystemExit(modelload.remote_code_refusal(model_id, e)
+                         or _could_not_load(model_id, e)) from e
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -2361,7 +2368,8 @@ def _refuse_without_the_checker():
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
                              chat_template=None, needs_chat_template=True,
-                             offload_dir=None, revision=None):
+                             offload_dir=None, revision=None, load_in_8bit=False,
+                             gguf_file=None, forward_only=True, dtype=None):
     # Shared model loader for the abliterator and the scorer. Left-pads the tokenizer and sets a pad
     # token, loads in bf16 (or 4-bit via bitsandbytes when asked), and honours trust_remote_code and
     # a chosen attention implementation. Placement uses accelerate's device_map so multi-GPU and a
@@ -2374,9 +2382,18 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # to this directory without sanitising them (PYSEC-2026-3804, no fixed release). This is the
     # only point we control. It applies to a local directory; a bare model id is fetched and
     # loaded inside transformers, with no point between the two to stand.
-    if Path(model_id).is_dir():
-        checkpoint.refuse_unsafe_index(model_id)
-    else:
+    # WHAT KIND OF CHECKPOINT THIS IS, DECIDED BEFORE ANYTHING IS FETCHED. A missing backend
+    # package, a flag that can't apply to this format, or a GGUF folder with two files in it is a
+    # sentence now and not a download followed by a traceback. See `modelload`.
+    try:
+        plan = modelload.plan(model_id, load_in_4bit=load_in_4bit, load_in_8bit=load_in_8bit,
+                              gguf_file=gguf_file, revision=revision, forward_only=forward_only)
+    except modelload.LoadRefusedError as e:
+        raise SystemExit(str(e)) from e
+    source = plan.source
+    if Path(source).is_dir():
+        checkpoint.refuse_unsafe_index(source)
+    elif plan.kind != "gguf":
         checkpoint.refuse_unsafe_hub_index(model_id, revision=revision)
     # AND THE DEVICE, AFTER THE INDEX CHECK AND BEFORE ANY WEIGHTS. `--device` defaults to `cuda`,
     # and `_preflight_device` refused an unusable one on the abliterate path and the guided mode
@@ -2395,21 +2412,28 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # able to stand in front of a security one. The weights are still downstream of this line, so
     # the cost it exists to save is still saved.
     argresolve.refuse_unusable_device(device, offload_dir=offload_dir)
-    tok = load_tokenizer(model_id, trust_remote_code=trust_remote_code, log=log,
+    tok = load_tokenizer(source, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template,
-                         revision=revision)
-    kw = dict(dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
+                         revision=revision, gguf_file=plan.gguf_file)
+    dtype = dtype or modelload.dtype_for(plan, torch)
+    kw = dict(dtype=dtype, trust_remote_code=trust_remote_code)
+    if plan.gguf_file:
+        kw["gguf_file"] = plan.gguf_file
     if revision:
         kw["revision"] = revision
     if attn_impl:
         kw["attn_implementation"] = attn_impl
-    if load_in_4bit:
-        from transformers import BitsAndBytesConfig
-        kw["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True)
-        kw["device_map"] = "auto"
-        _log("loading in 4-bit (nf4, double-quant); measurement path only, the bake needs full precision")
+    if load_in_4bit or load_in_8bit:
+        kw["quantization_config"] = modelload.bnb_config(plan, torch)
+        # "auto" on a machine asked for the processor makes accelerate dispatch layers to a
+        # card that isn't there and bitsandbytes then refuses; the placement follows the request.
+        kw["device_map"] = ("auto" if device == "cuda" else {"": int(device.split(":", 1)[1])}
+                            if device.startswith("cuda:") else {"": "cpu"})
+        _log(f"loading in {'4-bit (nf4, double-quant)' if load_in_4bit else '8-bit (int8)'}; "
+             f"measurement path only, the bake needs full precision")
+    elif plan.quantised and plan.kind != "gguf" and device == "cpu":
+        # A stored-quantised model is placed by its quantiser, and a later `.to()` on it can fail.
+        kw["device_map"] = {"": "cpu"}
     elif device == "cuda":
         kw["device_map"] = "auto"                       # accelerate places / shards; supports big models
     elif device.startswith("cuda:"):
@@ -2453,8 +2477,9 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         # this could say, so the correction degrades to the host-only one.
         cfg = None
         try:
-            cfg = AutoConfig.from_pretrained(model_id, trust_remote_code=trust_remote_code,
-                                             **({"revision": revision} if revision else {}))
+            cfg = AutoConfig.from_pretrained(source, trust_remote_code=trust_remote_code,
+                                             **({"revision": revision} if revision else {}),
+                                             **({"gguf_file": plan.gguf_file} if plan.gguf_file else {}))
         except Exception as e:
             _log(f"  the model config could not be read before the weights "
                  f"({type(e).__name__}: {e}), so no activation headroom is reserved.")
@@ -2472,22 +2497,33 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # telling that reader about a download would be wrong about what they are waiting for, and
     # being confidently wrong about the cause is the shape of message this project keeps removing.
     _log(f"  loading {model_id} on {device}"
-         f"{'' if Path(model_id).is_dir() else ' (a first run downloads it, which is the slow part)'}")
+         f"{'' if Path(source).is_dir() else ' (a first run downloads it, which is the slow part)'}"
+         f"{'' if plan.kind == 'plain' else f' as {plan.kind}'}")
+    if plan.kind == "gguf":
+        _log(f"  a GGUF is expanded to {str(dtype).removeprefix('torch.')} to be measured here, so "
+             f"the figure is for the dequantised weights "
+             f"({plan.dequantised_from or 'quantisation unknown'}), not the file as llama.cpp runs it")
     # The load report is asked for so a checkpoint that left weights missing is refused here; see
     # `loadreport` for the run that measured random numbers because nothing read it.
     kw["output_loading_info"] = True
     try:
-        model, info = AutoModelForCausalLM.from_pretrained(model_id, **kw)
+        model, info = AutoModelForCausalLM.from_pretrained(source, **kw)
     # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
     # present and malformed fails in a parser rather than in the filesystem.
+    except ImportError as e:
+        if plan.kind == "plain":
+            raise
+        raise SystemExit(modelload.import_refusal(plan, e)) from e
     except (OSError, ValueError) as e:
-        raise SystemExit(_could_not_load(model_id, e)) from e
+        raise SystemExit(modelload.remote_code_refusal(model_id, e)
+                         or _could_not_load(model_id, e)) from e
     refusal = loadreport.missing_weights(model_id, info)
     if refusal:
         raise SystemExit(refusal)
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
     model.eval()
+    modelload.attach(model, plan, str(dtype).removeprefix("torch."))
     return model, tok
 
 
@@ -2606,7 +2642,7 @@ class Abliterator:
                 # run refused and told the operator to supply one with a flag it then ignored:
                 # the instruction in the failure and the behaviour of the fix disagreed.
                 chat_template=getattr(args, "chat_template", None) or None,
-                attn_impl=args.attn_impl, log=log)
+                attn_impl=args.attn_impl, log=log, forward_only=forward_only)
         self.tok = tok
         self.model = model
         # WHERE THE WEIGHTS ACTUALLY WENT, said once, before the long part starts. `--device cuda`

@@ -229,6 +229,12 @@ def build_parser():
     return p
 
 
+def _loading_options(args):
+    """The loader flags, read here because this module is the one that declares them."""
+    return {"load_in_4bit": args.load_in_4bit, "load_in_8bit": args.load_in_8bit,
+            "gguf_file": args.gguf_file or None, "trust_remote_code": args.trust_remote_code}
+
+
 def run(args, *, log=print):
     import json
     import time
@@ -242,7 +248,7 @@ def run(args, *, log=print):
     t0 = time.monotonic()
     model, tok, identity = H.load(args.model, device=args.device,
                                   revision=original["model"]["revision"],
-                                  **R.loading_options(args))
+                                  **_loading_options(args))
     H.refuse_other_loading_form(identity, original["model"])
     parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                         n_confirm=args.n_confirm, seed=args.seed)
@@ -329,7 +335,7 @@ def run_start(args, *, log=print):
     t0 = time.monotonic()
     model, tok, identity = H.load(args.model, device=args.device,
                                   revision=original["model"]["revision"],
-                                  **R.loading_options(args))
+                                  **_loading_options(args))
     H.refuse_other_loading_form(identity, original["model"])
     parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                         n_confirm=args.n_confirm, seed=args.seed)

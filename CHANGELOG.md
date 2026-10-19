@@ -22,6 +22,8 @@ surface it changed, and will carry a version heading when it ships.
   8-bit bitsandbytes (on the fly with `--load-in-4bit` or `--load-in-8bit`, or stored that way in the checkpoint), GPTQ,
   AWQ and GGUF (a file, a folder, or a hub id with `--gguf-file`); `attribute` had none of these and now has all of them,
   plus `--trust-remote-code`, which stays off unless you pass it
+- `measure` hands the same loading flags to every stage it runs, so a 4-bit, 8-bit or GGUF model can be measured
+  end to end; the validate stage rewrites weights and refuses them in one sentence
 - A GGUF is expanded to full precision to be measured, and the result records that, along with which quantisation it came
   from; a folder holding only a GGUF with no tokenizer files now loads the tokenizer from the file or says in one sentence
   which package to install or which file to add

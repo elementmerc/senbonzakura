@@ -434,7 +434,7 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
     drop_h, drop_l, base_h, base_l = _effects_for(subject, measure, direction, conds)
     gh, gl = measure["harmful"].groups, measure["harmless"].groups
     if raw is not None:
-        raw.update({"conditions": names, "drop_h": drop_h, "drop_l": drop_l,
+        raw.update({"conditions": names, "drop_h": drop_h, "drop_l": drop_l, "base_h": base_h, "base_l": base_l,
                     "groups_h": list(gh), "groups_l": list(gl), "replicates": []})
     point, boot = bootstrap_effects(drop_h, drop_l, gh, gl, conv.resamples, gen)
     lo, hi = interval(boot, conv.alpha)

@@ -521,6 +521,7 @@ def test_the_raw_drops_hold_every_condition_and_every_replicate_with_the_full_nu
     n_h = len(fx.partitions("spread")["measure"]["harmful"].prompts)
     assert raw["drop_h"].shape == (len(raw["conditions"]), n_h)
     assert len(raw["groups_h"]) == n_h
+    assert raw["base_h"].shape == (n_h,)
     assert len(raw["replicates"]) == FULL.shuffled_label_replicates + FULL.random_direction_replicates
     nb = fx.ToySubject("spread").n_blocks
     dh, dl = raw["replicates"][0]

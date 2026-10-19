@@ -115,8 +115,11 @@ def test_the_attribution_hook_changes_the_forward_pass_on_this_format(loaded):
         with A.ablating(layers, direction, [len(layers) // 2]):
             during = model(**ids).logits[0, -1].float().cpu()
         after = model(**ids).logits[0, -1].float().cpu()
-    assert not torch.allclose(before, during), f"{name}: ablating a block changed nothing"
-    assert torch.allclose(before, after), f"{name}: the hook was not removed"
+    # A tolerance, because the triton AWQ kernel adds in an order that varies between calls, so two
+    # unhooked passes differ in the third decimal of an fp16 logit; the ablation moves them by far more.
+    close = dict(atol=0.05, rtol=0.01)
+    assert not torch.allclose(before, during, **close), f"{name}: ablating a block changed nothing"
+    assert torch.allclose(before, after, **close), f"{name}: the hook was not removed"
 
 
 def test_attribute_loads_it_and_records_the_provenance(loaded):

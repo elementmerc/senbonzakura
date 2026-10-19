@@ -302,11 +302,13 @@ def build_parser():
 
 
 def _same_fingerprint(saved, current):
-    """Equal fingerprints, reading a cache written before the loading fields as a plain load."""
-    now = json.loads(json.dumps(current, default=_jsonable))
-    if isinstance(saved, dict) and isinstance(saved.get("model"), dict):
-        saved = {**saved, "model": modelload.with_defaults(saved["model"])}
-    return saved == now
+    """Equal fingerprints, reading an identity written before the loading fields as a plain load."""
+    def normal(doc):
+        doc = json.loads(json.dumps(doc, default=_jsonable))
+        if isinstance(doc, dict) and isinstance(doc.get("model"), dict):
+            doc["model"] = modelload.with_defaults(doc["model"])
+        return doc
+    return normal(saved) == normal(current)
 
 
 def loading_options(args):

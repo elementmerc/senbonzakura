@@ -427,3 +427,80 @@ def test_a_localised_result_with_a_failing_predictive_check_reports_it_as_a_find
     assert result["status"] == A.LOCALISED
     assert result["predictive_check"]["supported"] is False
     assert result["tint_allowed"] is False
+
+
+# ------------------------------------------------------------------------------- the early stop
+
+FULL = dataclasses.replace(FAST, null_early_stop=False)
+
+
+@pytest.fixture(scope="module")
+def stopped_and_full():
+    out = {}
+    for name in fx.EXPECTED:
+        parts = fx.partitions(name)
+        out[name] = (A.attribute(fx.ToySubject(name), parts, seed=0, conv=FAST),
+                     A.attribute(fx.ToySubject(name), fx.partitions(name), seed=0, conv=FULL))
+    return out
+
+
+@pytest.mark.parametrize("name", list(fx.EXPECTED))
+def test_stopping_the_null_early_gives_the_full_runs_answer_on_every_plant(stopped_and_full, name):
+    early, full = stopped_and_full[name]
+    assert early["status"] == full["status"]
+    assert early["status_reason"] == full["status_reason"]
+    assert [b["effect"] for b in early.get("blocks", [])] == [b["effect"] for b in full.get("blocks", [])]
+    assert [b["exceeds_null"] for b in early.get("blocks", [])] == [b["exceeds_null"] for b in full.get("blocks", [])]
+    if "controls" in full and "total_threshold" in full["controls"]:
+        assert early["controls"]["total_threshold"] == full["controls"]["total_threshold"]
+        if not early["controls"]["family_wise_threshold_is_lower_bound"]:
+            assert early["controls"]["family_wise_threshold"] == full["controls"]["family_wise_threshold"]
+        else:
+            assert early["controls"]["family_wise_threshold"] <= full["controls"]["family_wise_threshold"]
+
+
+def test_the_early_stop_actually_stops_on_a_plant_with_no_strong_block(stopped_and_full):
+    # Without this the equivalence above could pass because nothing ever stopped.
+    stopped = [n for n, (early, _) in stopped_and_full.items()
+               if (early.get("controls") or {}).get("family_wise_threshold_is_lower_bound")]
+    assert stopped, "no plant stopped early, so the early stop was never exercised"
+    for name in stopped:
+        early = stopped_and_full[name][0]
+        assert early["controls"]["null_replicates_measured_in_full"] < (
+            FAST.shuffled_label_replicates + FAST.random_direction_replicates)
+
+
+def test_a_localised_plant_measures_every_replicate_in_full(stopped_and_full):
+    early, full = stopped_and_full["one_block"]
+    assert early["status"] == "localised"
+    assert not early["controls"]["family_wise_threshold_is_lower_bound"]
+    assert early["controls"]["null_replicates_measured_in_full"] == (
+        FAST.shuffled_label_replicates + FAST.random_direction_replicates)
+    assert early["controls"]["family_wise_threshold"] == full["controls"]["family_wise_threshold"]
+
+
+def test_the_floor_is_the_full_quantile_once_every_replicate_is_measured():
+    maxima = [0.3, 0.9, 0.1, 1.2, 0.5, 0.7]
+    assert A.threshold_floor(maxima, 6, 0.95) == float(torch.quantile(torch.tensor(maxima, dtype=torch.float64), 0.95))
+
+
+def test_the_floor_cannot_stop_a_run_before_enough_replicates_are_in():
+    assert A.threshold_floor([5.0, 5.0], 40, 0.95) < -1e200
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_the_floor_never_exceeds_the_threshold_the_full_run_reaches(seed):
+    gen = torch.Generator().manual_seed(seed)
+    maxima = (torch.randn(40, generator=gen, dtype=torch.float64) * 0.4 + 0.5).tolist()
+    final = A.threshold_floor(maxima, 40, 0.95)
+    for r in range(1, 41):
+        assert A.threshold_floor(maxima[:r], 40, 0.95) <= final
+
+
+def test_switching_the_early_stop_off_measures_every_replicate_in_full(stopped_and_full):
+    for _, full in stopped_and_full.values():
+        controls = full.get("controls") or {}
+        if "null_replicates_measured_in_full" in controls:
+            assert not controls["family_wise_threshold_is_lower_bound"]
+            assert controls["null_replicates_measured_in_full"] == (
+                FULL.shuffled_label_replicates + FULL.random_direction_replicates)

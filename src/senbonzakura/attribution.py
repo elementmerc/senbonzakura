@@ -111,6 +111,9 @@ class Conventions:
     random_direction_pcs: int = 8
     split_half_repeats: int = 200
     alpha: float = 0.05
+    # Stop measuring the replicates' single blocks once no real block can clear the threshold
+    # whatever the rest return. Exact: the status and every block figure are what the full run gives.
+    null_early_stop: bool = True
 
 
 DEFAULT = Conventions()
@@ -436,7 +439,8 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
     e_single, e_lo = point[singles], lo[singles]
     total, total_lo, total_hi = point[idx["all"]], lo[idx["all"]], hi[idx["all"]]
 
-    nulls = _null_replicates(subject, parts, res, measure, direction, seed, conv)
+    nulls = _null_replicates(subject, parts, res, measure, direction, seed, conv,
+                             strongest=float(e_single.max()))
     tau = float(torch.quantile(nulls["max_block"], conv.null_quantile))
     t_null = float(torch.quantile(nulls["abs_total"], conv.null_quantile))
 
@@ -487,6 +491,8 @@ def attribute(subject, parts, *, seed=0, conv=DEFAULT, predictive=None, log=None
             "random_direction": nulls["random"],
             "style_direction": style_direction(subject, parts, res, position, float(total), nb),
             "family_wise_threshold": tau,
+            "family_wise_threshold_is_lower_bound": nulls["stopped_early"],
+            "null_replicates_measured_in_full": nulls["measured_in_full"],
             "total_threshold": t_null,
         },
     })
@@ -654,7 +660,32 @@ def total_and_singles(subject, measure, direction, nb):
     return float(eff[1]), eff[2:]
 
 
-def _null_replicates(subject, parts, res, measure, direction, seed, conv):
+def total_only(subject, measure, direction, nb):
+    """The total effect of removing `direction` from every block, without the single blocks."""
+    sub = {"none": (), "all": tuple(range(nb))}
+    dh, dl, _, _ = _effects_for(subject, measure, direction, sub)
+    return float((dh.mean(1) - dl.mean(1))[1])
+
+
+#: Stands in for a replicate maximum that was never measured. Low enough that a quantile taken over it
+#: is the lowest value the threshold could still end up at, and finite so the artefact stays valid JSON.
+_UNMEASURED = -1e300
+
+
+def threshold_floor(maxima, replicates, quantile):
+    """The lowest the family wise threshold can end up at, with `maxima` measured out of `replicates`.
+
+    The threshold is a quantile of every replicate's largest block effect. Setting the replicates not
+    yet measured to minus infinity gives the smallest value that quantile can still take, whatever they
+    return. Until enough are measured the floor is itself enormously negative, so it never stops a run
+    early by accident.
+    """
+    import torch  # local: this module is import-light so `--help` does not pay for torch
+    filled = list(maxima) + [_UNMEASURED] * (replicates - len(maxima))
+    return float(torch.quantile(torch.tensor(filled, dtype=torch.float64), quantile))
+
+
+def _null_replicates(subject, parts, res, measure, direction, seed, conv, *, strongest=None):
     """Shuffled label and random direction replicates of the whole measurement.
 
     A shuffled label replicate permutes which REQUESTS count as harmful in the fit and search
@@ -669,12 +700,32 @@ def _null_replicates(subject, parts, res, measure, direction, seed, conv):
     4 of 6 seeds. The energy ratio is reported instead.
     Both feed the family wise threshold, which is taken over the LARGEST block effect
     per replicate, because the best of many blocks manufactures a winner from nothing.
+
+    THE EARLY STOP (`conv.null_early_stop`, given `strongest`, the real direction's largest single
+    block effect). The threshold is read in exactly one way: a block counts only if its effect is
+    above it. Once even the lowest value the threshold can still reach (`threshold_floor`) is at or
+    above `strongest`, no block can count whatever the remaining replicates return, so they measure
+    only their total, which the total threshold needs, and skip their single blocks. The status, the
+    blocks and both thresholds' verdicts are then exactly the full run's; the family wise threshold
+    is reported as that floor and marked as a lower bound. A strong block never stops it, so a run
+    that could end localised always measures every replicate in full.
     """
     import torch  # local: this module is import-light so `--help` does not pay for torch
     nb = subject.n_blocks
     gen = torch.Generator().manual_seed(seed + 7919)
+    replicates = conv.shuffled_label_replicates + conv.random_direction_replicates
+    maxima = []
+    state = {"stopped": False}
+
     def stats(d):
-        return total_and_singles(subject, measure, d, nb)
+        if state["stopped"]:
+            return total_only(subject, measure, d, nb), None
+        total, singles = total_and_singles(subject, measure, d, nb)
+        maxima.append(float(singles.max()))
+        if (conv.null_early_stop and strongest is not None
+                and threshold_floor(maxima, replicates, conv.null_quantile) >= strongest):
+            state["stopped"] = True
+        return total, singles
 
     shuffled, random_ = [], []
     pooled = {k: torch.cat([res[k]["harmful"], res[k]["harmless"]], 1) for k in ("fit", "search")}
@@ -714,19 +765,28 @@ def _null_replicates(subject, parts, res, measure, direction, seed, conv):
 
     every = shuffled + random_
     return {
-        "max_block": torch.tensor([float(s.max()) for _, s in every], dtype=torch.float64),
+        "max_block": torch.tensor(maxima + [_UNMEASURED] * (replicates - len(maxima)),
+                                  dtype=torch.float64),
         "abs_total": torch.tensor([abs(t) for t, _ in every], dtype=torch.float64),
         "shuffled": _null_summary(shuffled),
         "random": {**_null_summary(random_),
                    "energy_ratio_median": float(torch.tensor(energy_ratio).median())},
+        "stopped_early": state["stopped"],
+        "measured_in_full": len(maxima),
     }
 
 
 def _null_summary(reps):
     import torch  # local: this module is import-light so `--help` does not pay for torch
     totals = torch.tensor([t for t, _ in reps], dtype=torch.float64)
-    maxima = torch.tensor([float(s.max()) for _, s in reps], dtype=torch.float64)
-    return {"replicates": len(reps), "total_abs_max": float(totals.abs().max()),
+    full = [s for _, s in reps if s is not None]
+    if not full:
+        return {"replicates": len(reps), "measured_in_full": 0,
+                "total_abs_max": float(totals.abs().max()),
+                "max_block_median": None, "max_block_max": None}
+    maxima = torch.tensor([float(s.max()) for s in full], dtype=torch.float64)
+    return {"replicates": len(reps), "measured_in_full": len(full),
+            "total_abs_max": float(totals.abs().max()),
             "max_block_median": float(maxima.median()), "max_block_max": float(maxima.max())}
 
 

@@ -1030,28 +1030,29 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         attempt = dict(kw)
         if kernel:
             attempt["quantization_config"] = kernel_config(chosen, kernel)
+        more = position + 1 < len(kernels)
         try:
             model, info = AutoModelForCausalLM.from_pretrained(source, **attempt)
             if kernel:
                 chosen = replace(chosen, kernel=kernel)
             break
         # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
-        # present and malformed fails in a parser rather than in the filesystem.
-        except (ImportError, ValueError, RuntimeError) as e:
-            if kernel and position + 1 < len(kernels):
+        # present and malformed fails in a parser rather than in the filesystem. A missing file is
+        # never retried with another kernel; a kernel that could not be built or run (which surfaces
+        # as a ValueError, an ImportError or a RuntimeError) is.
+        except (OSError, ValueError) as e:
+            if kernel and more and isinstance(e, ValueError):
                 _log("  " + kernel_fallback_notice(kernel, kernels[position + 1], e))
                 continue
-            if isinstance(e, ImportError):
-                if chosen.kind == "plain":
-                    raise
+            raise SystemExit(remote_code_refusal(model_id, e)
+                             or _could_not_load(model_id, e)) from e
+        except (ImportError, RuntimeError) as e:
+            if kernel and more:
+                _log("  " + kernel_fallback_notice(kernel, kernels[position + 1], e))
+                continue
+            if isinstance(e, ImportError) and chosen.kind != "plain":
                 raise SystemExit(import_refusal(chosen, e)) from e
-            if isinstance(e, RuntimeError):
-                raise
-            raise SystemExit(remote_code_refusal(model_id, e)
-                             or _could_not_load(model_id, e)) from e
-        except OSError as e:
-            raise SystemExit(remote_code_refusal(model_id, e)
-                             or _could_not_load(model_id, e)) from e
+            raise
     refusal = loadreport.missing_weights(model_id, info)
     if refusal:
         raise SystemExit(refusal)

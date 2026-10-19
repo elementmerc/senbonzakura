@@ -83,6 +83,9 @@ def test_it_loads_and_says_how(loaded):
     assert info["precision"]
     if spec["fmt"] != "safetensors":
         assert info["backend"]["version"], f"{name}: the backend's version must be recorded"
+    if spec["fmt"] in ("gptq", "awq"):
+        expected = modelload.CUDA_KERNELS[spec["fmt"]] if _device() == "cuda" else (None,)
+        assert info["backend"]["kernel"] in expected, (name, info["backend"])
     if spec["fmt"] == "gguf":
         assert info["dequantised"] is True and info["dequantised_from"] == "Q4_K_M"
     else:

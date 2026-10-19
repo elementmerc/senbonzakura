@@ -314,6 +314,17 @@ def _same_fingerprint(saved, current):
     return normal(saved) == normal(current)
 
 
+def _kernel_key(identity):
+    """The GPTQ or AWQ kernel that ran, as a comparability key; absent when none was pinned.
+
+    Two kernels give slightly different numbers from the same weights, so a ranking from one is not
+    interchangeable with the other. Left out when there is none, so artefacts from before keep the keys
+    they had.
+    """
+    kernel = (identity.get("backend") or {}).get("kernel")
+    return {"quant_kernel": kernel} if kernel else {}
+
+
 def loading_options(args):
     """The loader flags from a parsed command line, as keywords for `attribution_hf.load`."""
     return {"load_in_4bit": getattr(args, "load_in_4bit", False),
@@ -425,7 +436,8 @@ def run(args, *, log=print):
         "limits": [*A.LIMITS, STANDIN_LIMIT, *model_specific_limits(arms)],
         "comparable_with": {"schema": SCHEMA, "model_id": identity["id"], "instrument_version": A.INSTRUMENT_VERSION,
                             "estimator": A.ESTIMATOR, "precision": identity["precision"],
-                            "model_revision": identity["revision"]},
+                            "model_revision": identity["revision"],
+                            **_kernel_key(identity)},
     }
     write_json(out / "attribution.json", artefact)
     log(f"status: {status}  tint_allowed: {tint}\n  {reason}\n  written to {out / 'attribution.json'}")

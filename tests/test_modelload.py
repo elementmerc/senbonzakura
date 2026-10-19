@@ -622,3 +622,139 @@ def test_attribute_uses_the_loader_without_importing_the_edit_machinery():
     imported = {a.name for n in ast.walk(ast.parse(inspect.getsource(H)))
                 if isinstance(n, ast.ImportFrom) for a in n.names}
     assert "cli" not in imported and "modelload" in imported
+
+
+# --------------------------------------------------------------------------- the kernel on a card
+
+class _Configs:
+    """Stand-ins for the two config classes, so no quantisation package is needed to build one."""
+
+    class GPTQConfig:
+        def __init__(self, bits, backend):
+            self.kind, self.bits, self.backend = "gptq", bits, backend
+
+    class AwqConfig:
+        def __init__(self, bits, backend):
+            self.kind, self.bits, self.backend = "awq", bits, backend
+
+
+@pytest.fixture
+def stored_on_a_card(plain_stubs, monkeypatch, backends):
+    import transformers
+    monkeypatch.setattr(transformers, "GPTQConfig", _Configs.GPTQConfig, raising=False)
+    monkeypatch.setattr(transformers, "AwqConfig", _Configs.AwqConfig, raising=False)
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+
+    def choose(method):
+        monkeypatch.setattr(modelload, "_config_quantisation",
+                            lambda *a, **k: {"quant_method": method, "bits": 4})
+
+    choose.install = lambda obj: monkeypatch.setattr(modelload, "AutoModelForCausalLM", obj)
+    return choose
+
+
+class _Scripted:
+    """A from_pretrained that fails the first calls as scripted and records every config it saw."""
+
+    def __init__(self, result, errors=()):
+        self.result, self.errors, self.configs = result, list(errors), []
+
+    def from_pretrained(self, *a, **k):
+        cfg = k.get("quantization_config")
+        self.configs.append(getattr(cfg, "backend", None))
+        if self.errors:
+            raise self.errors.pop(0)
+        return self.result
+
+
+@pytest.mark.parametrize(("kind", "first", "second"), [("gptq", "gptq_triton", "gptq_torch"),
+                                                       ("awq", "gemm_triton", "torch_awq")])
+def test_a_card_gets_the_no_compile_kernels_fastest_first(kind, first, second):
+    p = modelload.Plan(source="m", kind=kind, bits=4)
+    assert modelload.kernel_choices(p, "cuda") == (first, second)
+    assert modelload.kernel_choices(p, "cuda:1") == (first, second)
+    assert modelload.kernel_choices(p, "cpu") == ()
+
+
+def test_nothing_else_has_a_kernel_chosen_for_it():
+    for p in (modelload.Plan(source="m", kind="plain"), modelload.Plan(source="m", kind="gguf"),
+              modelload.Plan(source="m", kind="bnb", bits=4, on_the_fly=True),
+              modelload.Plan(source="m", kind="other")):
+        assert modelload.kernel_choices(p, "cuda") == ()
+
+
+def test_the_config_pins_the_kernel_for_each_format(monkeypatch):
+    import transformers
+    monkeypatch.setattr(transformers, "GPTQConfig", _Configs.GPTQConfig, raising=False)
+    monkeypatch.setattr(transformers, "AwqConfig", _Configs.AwqConfig, raising=False)
+    g = modelload.kernel_config(modelload.Plan(source="m", kind="gptq", bits=4), "gptq_torch")
+    a = modelload.kernel_config(modelload.Plan(source="m", kind="awq"), "gemm_triton")
+    assert (g.kind, g.bits, g.backend) == ("gptq", 4, "gptq_torch")
+    assert (a.kind, a.bits, a.backend) == ("awq", 4, "gemm_triton")
+
+
+@pytest.mark.parametrize(("method", "first"), [("gptq", "gptq_triton"), ("awq", "gemm_triton")])
+def test_the_first_kernel_that_loads_is_used_and_recorded(stored_on_a_card, plain_stubs, tiny_model,
+                                                          method, first):
+    stored_on_a_card(method)
+    scripted = _Scripted((tiny_model, {"missing_keys": []}))
+    stored_on_a_card.install(scripted)
+    said = []
+    model, _ = cli.load_model_and_tokenizer("m", device="cuda", log=said.append)
+    assert scripted.configs == [first]
+    assert model.senbon_load["backend"]["kernel"] == first
+    assert not any("kernel" in line for line in said)
+
+
+def test_a_failing_kernel_falls_back_once_with_one_sentence(stored_on_a_card, tiny_model):
+    stored_on_a_card("gptq")
+    scripted = _Scripted((tiny_model, {"missing_keys": []}), errors=[RuntimeError("triton wants a newer driver")])
+    stored_on_a_card.install(scripted)
+    said = []
+    model, _ = cli.load_model_and_tokenizer("m", device="cuda", log=said.append)
+    assert scripted.configs == ["gptq_triton", "gptq_torch"]
+    assert model.senbon_load["backend"]["kernel"] == "gptq_torch"
+    notices = [line for line in said if "kernel" in line]
+    assert len(notices) == 1 and "gptq_triton" in notices[0] and "gptq_torch" in notices[0]
+    assert "triton wants a newer driver" in notices[0]
+
+
+def test_when_both_kernels_fail_the_last_failure_is_reported(stored_on_a_card, tiny_model):
+    stored_on_a_card("awq")
+    scripted = _Scripted(None, errors=[ValueError("first"), ValueError("second")])
+    stored_on_a_card.install(scripted)
+    with pytest.raises(SystemExit, match="second"):
+        cli.load_model_and_tokenizer("m", device="cuda", log=lambda m: None)
+    assert len(scripted.configs) == 2
+    scripted = _Scripted(None, errors=[ImportError("a"), ImportError("needs gptqmodel")])
+    stored_on_a_card.install(scripted)
+    with pytest.raises(SystemExit, match="needs gptqmodel"):
+        cli.load_model_and_tokenizer("m", device="cuda", log=lambda m: None)
+    scripted = _Scripted(None, errors=[RuntimeError("a"), RuntimeError("b")])
+    stored_on_a_card.install(scripted)
+    with pytest.raises(RuntimeError, match="b"):
+        cli.load_model_and_tokenizer("m", device="cuda", log=lambda m: None)
+
+
+def test_a_missing_file_is_not_retried_with_another_kernel(stored_on_a_card):
+    stored_on_a_card("gptq")
+    scripted = _Scripted(None, errors=[OSError("no such file")])
+    stored_on_a_card.install(scripted)
+    with pytest.raises(SystemExit, match="could not load"):
+        cli.load_model_and_tokenizer("m", device="cuda", log=lambda m: None)
+    assert scripted.configs == ["gptq_triton"]
+
+
+def test_on_the_processor_no_kernel_is_pinned(plain_stubs, monkeypatch, backends):
+    monkeypatch.setattr(modelload, "_config_quantisation",
+                        lambda *a, **k: {"quant_method": "gptq", "bits": 4})
+    model, _ = cli.load_model_and_tokenizer("m", device="cpu")
+    assert "quantization_config" not in plain_stubs[1].seen
+    assert model.senbon_load["backend"]["kernel"] is None
+
+
+def test_the_kernel_is_a_comparability_key_only_when_one_was_pinned():
+    assert R._kernel_key({"backend": {"kernel": "gptq_torch"}}) == {"quant_kernel": "gptq_torch"}
+    assert R._kernel_key({"backend": {"kernel": None}}) == {}
+    assert R._kernel_key({"backend": None}) == {}
+    assert R._kernel_key({}) == {}

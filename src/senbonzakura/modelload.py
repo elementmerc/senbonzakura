@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import torch
@@ -71,6 +71,7 @@ class Plan:
     on_the_fly: bool = False
     gguf_file: str | None = None
     dequantised_from: str | None = None
+    kernel: str | None = None    # the GPTQ or AWQ kernel actually used; None when left to the library
 
     @property
     def quantised(self):
@@ -123,6 +124,34 @@ def backend_of(kind):
         return None
     dist = (needed[-1] if kind == "gptq" else needed[0])[1]
     return {"package": dist, "version": _version(dist)}
+
+
+#: The kernels the loader picks for GPTQ and AWQ on a card, fastest first. Both lists are kernels that
+#: need no compiler: gptqmodel's own default (Marlin) and AWQ's `gemm` build a C++ extension on first use,
+#: which fails on a machine without a build toolchain even when the checkpoint is fine. Measured on an
+#: RTX 3060: all four of these loaded and ranked the right token first.
+CUDA_KERNELS = {"gptq": ("gptq_triton", "gptq_torch"), "awq": ("gemm_triton", "torch_awq")}
+
+
+def kernel_choices(p, device):
+    """Kernels to try for this load, in order; empty when the library should choose (CPU, other formats)."""
+    if p.kind in CUDA_KERNELS and not p.on_the_fly and str(device).startswith("cuda"):
+        return CUDA_KERNELS[p.kind]
+    return ()
+
+
+def kernel_config(p, kernel):
+    """The quantisation config that pins one kernel; the checkpoint's own settings fill in the rest."""
+    from transformers import AwqConfig, GPTQConfig
+    if p.kind == "gptq":
+        return GPTQConfig(bits=p.bits or 4, backend=kernel)
+    return AwqConfig(bits=p.bits or 4, backend=kernel)
+
+
+def kernel_fallback_notice(failed, using, error):
+    first = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    return (f"the {failed} kernel couldn't load this model ({first[:120]}), so it was loaded with the "
+            f"{using} kernel instead; the result records which one ran")
 
 
 # ----------------------------------------------------------------------------- reading the checkpoint
@@ -301,6 +330,11 @@ def precision_label(p, dtype_name):
     return f"{p.method}"
 
 
+def _backend_record(p):
+    backend = backend_of(p.kind)
+    return None if backend is None else {**backend, "kernel": p.kernel}
+
+
 def provenance(p, dtype_name):
     """The fields a result carries about how the weights were loaded. Always the same keys."""
     return {
@@ -312,7 +346,7 @@ def provenance(p, dtype_name):
         "dequantised": p.dequantised,
         "dequantised_from": p.dequantised_from,
         "gguf_file": p.gguf_file,
-        "backend": backend_of(p.kind),
+        "backend": _backend_record(p),
         "precision": precision_label(p, dtype_name),
     }
 
@@ -988,17 +1022,36 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # The load report is asked for so a checkpoint that left weights missing is refused here; see
     # `loadreport` for the run that measured random numbers because nothing read it.
     kw["output_loading_info"] = True
-    try:
-        model, info = AutoModelForCausalLM.from_pretrained(source, **kw)
-    # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
-    # present and malformed fails in a parser rather than in the filesystem.
-    except ImportError as e:
-        if chosen.kind == "plain":
-            raise
-        raise SystemExit(import_refusal(chosen, e)) from e
-    except (OSError, ValueError) as e:
-        raise SystemExit(remote_code_refusal(model_id, e)
-                         or _could_not_load(model_id, e)) from e
+    # On a card, GPTQ and AWQ are loaded with a kernel that needs no compiler, the faster one first.
+    # A failure with the first is retried once with the second and said in a sentence; with none left,
+    # or on any other failure, the usual refusals below apply.
+    kernels = kernel_choices(chosen, device) or (None,)
+    for position, kernel in enumerate(kernels):
+        attempt = dict(kw)
+        if kernel:
+            attempt["quantization_config"] = kernel_config(chosen, kernel)
+        try:
+            model, info = AutoModelForCausalLM.from_pretrained(source, **attempt)
+            if kernel:
+                chosen = replace(chosen, kernel=kernel)
+            break
+        # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
+        # present and malformed fails in a parser rather than in the filesystem.
+        except (ImportError, ValueError, RuntimeError) as e:
+            if kernel and position + 1 < len(kernels):
+                _log("  " + kernel_fallback_notice(kernel, kernels[position + 1], e))
+                continue
+            if isinstance(e, ImportError):
+                if chosen.kind == "plain":
+                    raise
+                raise SystemExit(import_refusal(chosen, e)) from e
+            if isinstance(e, RuntimeError):
+                raise
+            raise SystemExit(remote_code_refusal(model_id, e)
+                             or _could_not_load(model_id, e)) from e
+        except OSError as e:
+            raise SystemExit(remote_code_refusal(model_id, e)
+                             or _could_not_load(model_id, e)) from e
     refusal = loadreport.missing_weights(model_id, info)
     if refusal:
         raise SystemExit(refusal)

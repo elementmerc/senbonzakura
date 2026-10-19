@@ -18,6 +18,8 @@ surface it changed, and will carry a version heading when it ships.
   rather than accepting one and comparing against it
 
 ### Command line
+- `attribute` takes `--chat-template`, checked the same way as in `score`, and its artefact records which template
+  produced the figures; a model with no template is now refused up front, before its weights are read
 - `--help` on `drift`, `score`, `coherence`, `validate` and `stream-extract` answers in about a
   sixteenth of a second instead of over three, because reading a help page no longer loads the
   machine-learning libraries the command would only need once it had work to do

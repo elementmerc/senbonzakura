@@ -262,6 +262,10 @@ def build_parser():
     p.add_argument("--out", required=True, help="directory to write attribution.json into")
     p.add_argument("--device", default="cuda", help="cuda or cpu (default: cuda)")
     p.add_argument("--revision", default=None, help="model revision to pin")
+    p.add_argument("--chat-template", dest="chat_template", default="",
+                   help="a Jinja chat template for a model that ships none: a path to one, or a bundled name "
+                        "('plain'). Prompt format decides every measurement here, so the artefact records which "
+                        "template it used.")
     p.add_argument("--n-measure", type=argresolve.whole_number(
         "--n-measure", minimum=A.DEFAULT.min_prompts), default=400,
         help="requests per arm to measure effects on (default: 400; at least "
@@ -314,7 +318,8 @@ def run(args, *, log=print):
         conv = dataclasses.replace(conv, null_early_stop=False)
 
     with _stage(log, "load"):
-        model, tok, identity = H.load(args.model, device=args.device, revision=args.revision)
+        model, tok, identity = H.load(args.model, device=args.device, revision=args.revision,
+                                      chat_template=args.chat_template or None, log=log)
     with _stage(log, "partitions"):
         parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                             n_confirm=args.n_confirm, seed=args.seed)

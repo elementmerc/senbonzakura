@@ -29,6 +29,7 @@ import torch
 
 from . import attribution as A
 from . import hubmessage, loadreport, metrics, modelmap
+from .chattemplate import ensure_chat_template
 from .firsttoken import last_token_logits, render_chat
 
 #: Greedy reply length used to label a prompt as refused or not. Long enough that a refusal after
@@ -154,14 +155,29 @@ def share_readouts(subjects):
     return shared
 
 
-def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None):
-    """The model, its tokenizer and the identity a result must carry."""
+def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None, chat_template=None, log=None):
+    """The model, its tokenizer and the identity a result must carry.
+
+    THE PROMPT FORMAT IS CHECKED AND RECORDED HERE, BY THE SAME CODE `score` USES. A model's own template, or the one
+    `chat_template` names (a path, or a bundled name), must render a chat prompt, and the provenance (its source and a
+    digest of it) rides in the identity, so the attribution artefact says which format produced its numbers exactly
+    as `score.json` does. A model with no template and none supplied is refused here.
+    """
     import transformers
     from transformers import AutoModelForCausalLM, AutoTokenizer
     # A missing or malformed file fails as OSError or ValueError deep inside transformers, which used
     # to reach the person as a traceback; it stops the run in a sentence instead.
     try:
         tok = AutoTokenizer.from_pretrained(model_id, revision=revision)
+    except (OSError, ValueError) as e:
+        detail = " ".join(hubmessage.useful_lines(e)) or type(e).__name__
+        raise A.AttributionError(f"the model '{model_id}' could not be loaded: {detail}") from e
+    # Before the weights are read: a model that cannot be measured at all should say so in seconds, not after a load.
+    try:
+        tok.senbon_chat_template = ensure_chat_template(tok, chat_template, log)
+    except SystemExit as e:
+        raise A.AttributionError(str(e.code)) from e
+    try:
         model, info = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype, revision=revision,
                                                            output_loading_info=True)
     except (OSError, ValueError) as e:
@@ -180,6 +196,7 @@ def load(model_id, *, device="cuda", dtype=torch.bfloat16, revision=None):
         "precision": str(dtype).removeprefix("torch."),
         "transformers": transformers.__version__, "torch": torch.__version__,
         "device": str(device),
+        "chat_template": tok.senbon_chat_template,
     }
     return model, tok, identity
 

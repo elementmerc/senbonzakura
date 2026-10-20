@@ -533,6 +533,24 @@ def _activation_headroom_bytes(config, *, seq=HEADROOM_SEQ_TOKENS):
     return max(2 * (states + logits + transients), HEADROOM_FLOOR_BYTES)
 
 
+def _largest_module_bytes(config, dtype_bytes):
+    """Bytes of the largest single weight the config names, or None when its shape is not in the config.
+
+    The embedding and the output head are `vocab x hidden`, and the widest MLP projection is
+    `intermediate x hidden`. The larger of the two is the most accelerate can copy onto the card at
+    once. Read from the same fields as the activation arithmetic, and None for the same reasons.
+    """
+    inner = _inner_text_config(config)
+    hidden = getattr(inner, "hidden_size", None)
+    vocab = getattr(inner, "vocab_size", None)
+    if not isinstance(hidden, int) or not isinstance(vocab, int):
+        return None
+    inter = getattr(inner, "intermediate_size", None)
+    if not isinstance(inter, int):
+        inter = 4 * hidden
+    return max(vocab, inter) * hidden * dtype_bytes
+
+
 def _reserve_activation_headroom(budgets, headroom, log):
     """Subtract `headroom` from every compute device in `budgets`. Returns True if any changed.
 
@@ -565,7 +583,7 @@ def _reserve_activation_headroom(budgets, headroom, log):
     return changed
 
 
-def _corrected_max_memory(log, config=None):
+def _corrected_max_memory(log, config=None, dtype_bytes=None):
     """The placement budget accelerate computed, corrected, or None to leave it alone.
 
     Two corrections, both of the same shape: accelerate is answering "where do the weights go" and
@@ -573,6 +591,13 @@ def _corrected_max_memory(log, config=None):
     host entry is corrected against the cgroup, and each compute device keeps back enough for one
     prompt's activations. `config` is the model's own config and may be omitted, in which case only
     the host correction is made.
+
+    `dtype_bytes` is the width of one weight. When it is given, the reserve also covers the largest
+    single weight. accelerate copies a weight that lives in host RAM or on disk onto the card for each
+    forward pass that uses it, and that copy needs room beside the activations. A card packed to the
+    last activation byte can hold every activation and still fail on the copy of the output head. The
+    FAILURE was a 2.03 GiB output head on a 24 GB card, with 1.56 GiB free after the placement. Without
+    `dtype_bytes` the reserve is the activations alone, which is every earlier caller's figure.
 
     THE DEFECT. accelerate decides how much of a model goes in host RAM from
     `psutil.virtual_memory().available`, which reads `/proc/meminfo`. Inside a container that is
@@ -600,6 +625,11 @@ def _corrected_max_memory(log, config=None):
     from . import resources
     budget, source = resources.host_memory_budget()
     headroom = _activation_headroom_bytes(config) if config is not None else None
+    largest = _largest_module_bytes(config, dtype_bytes) if headroom is not None and dtype_bytes else None
+    if largest is not None:
+        headroom += largest
+        log(f"  the largest weight is {largest / 1e9:.2f} GB, and it is reserved beside the activations, "
+            f"because an offloaded weight is copied onto the card for each forward pass that uses it.")
     if budget is None and headroom is None:
         log("  host memory: unmeasured on this platform, so accelerate's own placement budget "
             "stands. A model that does not fit will fail at load rather than being refused here.")
@@ -999,7 +1029,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
         except Exception as e:
             _log(f"  the model config could not be read before the weights "
                  f"({type(e).__name__}: {e}), so no activation headroom is reserved.")
-        corrected = _corrected_max_memory(_log, cfg)
+        corrected = _corrected_max_memory(_log, cfg, dtype_bytes=torch.empty((), dtype=dtype).element_size())
         if corrected is not None:
             kw["max_memory"] = corrected
     # SAID BEFORE THE WAIT, NOT AFTER IT. Measured 2026-10-11 while reproducing a journey

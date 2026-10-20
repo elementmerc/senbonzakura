@@ -91,6 +91,54 @@ ARM_DECLARATIONS = {
 }
 
 
+#: THE READOUT POSITION. Both arms read the token a reply opens with. On some models no token opens only
+#: one kind of reply under either arm's rule, because refusals and compliant replies start the same way
+#: ("I can't" against "I'd be happy"), and then neither arm has a readout at all. Only then, the position
+#: moves past the model's own commonest opening shared by both kinds, and the arms read the token after it,
+#: with that opening fed in after the prompt. Declared on 2026-10-20, after LFM2.5-1.2B and SmolLM2-135M gave
+#: no first-token readout and before any model was run through this rule. The opening is learned from FIT
+#: replies only, by the fixed order below, and the readout still has to clear the same agreement floor against
+#: what the model actually generates, so a position that doesn't predict replies is refused exactly as before.
+OPENER_MAX_TOKENS = 3
+OPENER_DECLARATION = {
+    "declared": "2026-10-20, after two models gave no first-token readout, before any model was run through it",
+    "rule": ("used only when the arm finds no token sets at the first position. Candidate openings are the "
+             f"first 1 to {OPENER_MAX_TOKENS} tokens of the fit replies that open at least MIN_TOKEN_COUNT "
+             "refusals AND at least MIN_TOKEN_COUNT compliant replies; they are tried shortest first, then most "
+             "replies first, then by token ids, and the first whose next token yields both sets under the arm's "
+             "own rule is used"),
+}
+
+
+def choose_opener(replies, arm):
+    """The shared opening to read past, with the arm's token sets after it, or None.
+
+    `replies` is `[(opening token ids, was_refusal)]` from the fit partition. Returns
+    `(opening, refusal tokens, compliance tokens, dropped, refused counts, complied counts)`.
+    Pure, so the declared order can be tested without a model.
+    """
+    counts = {}
+    for ids, refused in replies:
+        for depth in range(1, OPENER_MAX_TOKENS + 1):
+            if len(ids) <= depth:
+                break
+            key = tuple(ids[:depth])
+            r, c = counts.get(key, (0, 0))
+            counts[key] = (r + bool(refused), c + (not refused))
+    shared = [k for k, (r, c) in counts.items() if r >= MIN_TOKEN_COUNT and c >= MIN_TOKEN_COUNT]
+    for key in sorted(shared, key=lambda k: (len(k), -sum(counts[k]), k)):
+        depth = len(key)
+        refused_next, complied_next = {}, {}
+        for ids, was_refusal in replies:
+            if len(ids) > depth and tuple(ids[:depth]) == key:
+                bucket = refused_next if was_refusal else complied_next
+                bucket[ids[depth]] = bucket.get(ids[depth], 0) + 1
+        ref, com, dropped = token_sets(refused_next, complied_next, arm)
+        if ref and com:
+            return key, ref, com, dropped, refused_next, complied_next
+    return None
+
+
 def token_sets(refused, complied, arm):
     """The refusal tokens, the compliance tokens and the count dropped, by the arm's exact rule."""
     if arm not in ARM_DECLARATIONS:
@@ -128,14 +176,16 @@ class SharedReadouts:
         self._store = {}
         self.hits = self.misses = 0
 
-    def fetch(self, prompts, direction, blocks, compute):
+    def fetch(self, prompts, direction, blocks, compute, opener=()):
         # Order matters (the readouts come back in prompt order), and a hash that can collide would
         # hand one question another's answer, so the key is a cryptographic digest of the exact
         # prompts in order.
         key = (hashlib.sha256("\x00".join(prompts).encode("utf-8")).hexdigest(),
                None if direction is None else hashlib.sha256(
                    direction.detach().float().cpu().numpy().tobytes()).hexdigest(),
-               tuple(blocks))
+               tuple(blocks),
+               # Two arms can read past different openings, and the same prompts then give different logits.
+               tuple(opener))
         if key in self._store:
             self.hits += 1
         else:
@@ -322,6 +372,10 @@ class HFSubject:
         self.readout_why_not = None
         self.agreement_detail = {}
         self._replies = {}
+        #: Each prompt's first few reply tokens, for the readout position; filled with `_replies`.
+        self._openings = {}
+        #: The opening fed in after every prompt before the readout is taken; empty reads the first token.
+        self.opener = ()
         self._prefix_cap = PREFIX_CACHE_BYTES if prefix_cache_bytes is None else prefix_cache_bytes
         self._prefix = {}
         self._prefix_bytes = 0
@@ -332,12 +386,26 @@ class HFSubject:
         self.prefix_detail = {"replayed_batches": 0, "full_batches": 0, "check_max_abs_diff": None}
 
     # ------------------------------------------------------------------ encoding and capture
-    def _encode(self, prompts):
-        key = tuple(prompts)
+    def _encode(self, prompts, opener=()):
+        key = (tuple(prompts), tuple(opener))
         if key not in self._encoded:
             text = [render_chat(self.tok, p) for p in prompts]
-            self._encoded[key] = self.tok(text, return_tensors="pt", padding=True,
-                                          add_special_tokens=False).to(self.model.device)
+            enc = self.tok(text, return_tensors="pt", padding=True, add_special_tokens=False)
+            if opener:
+                # Appended after the last real token, which is the end of every row only when padding is
+                # on the left; on the right it would land after the padding and read garbage.
+                if getattr(self.tok, "padding_side", "left") != "left":
+                    raise A.AttributionError(
+                        "the readout position needs a tokenizer that pads on the left, and this one pads "
+                        f"on the {self.tok.padding_side}, so the opening would follow the padding")
+                extra = torch.tensor([list(opener)] * len(prompts), dtype=enc["input_ids"].dtype)
+                enc["input_ids"] = torch.cat([enc["input_ids"], extra], 1)
+                enc["attention_mask"] = torch.cat(
+                    [enc["attention_mask"], torch.ones_like(extra, dtype=enc["attention_mask"].dtype)], 1)
+                if "token_type_ids" in enc:
+                    enc["token_type_ids"] = torch.cat(
+                        [enc["token_type_ids"], torch.zeros_like(extra, dtype=enc["token_type_ids"].dtype)], 1)
+            self._encoded[key] = enc.to(self.model.device)
         return self._encoded[key]
 
     def padded_tokens(self, prompts):
@@ -352,6 +420,7 @@ class HFSubject:
         """
         self._standing = [(direction, tuple(blocks))]
         self._replies.clear()
+        self._openings.clear()
         # The saved outputs were made under the old edit, so none of them holds any longer.
         self._prefix.clear()
         self._prefix_bytes = 0
@@ -406,14 +475,27 @@ class HFSubject:
                                       pad_token_id=self.tok.pad_token_id)
         new = out[:, enc["input_ids"].shape[1]:]
         texts = self.tok.batch_decode(new, skip_special_tokens=True)
-        return [(int(new[i, 0]), bool(self.label(texts[i]))) for i in range(len(chunk))]
+        return [(int(new[i, 0]), bool(self.label(texts[i])), self._opening(new[i]))
+                for i in range(len(chunk))]
+
+    def _opening(self, row):
+        """A reply's first tokens, up to one past the longest opening, stopping where the reply ends."""
+        stop = {t for t in (getattr(self.tok, "pad_token_id", None), getattr(self.tok, "eos_token_id", None))
+                if isinstance(t, int)}
+        out = []
+        for t in row[:OPENER_MAX_TOKENS + 1].tolist():
+            if t in stop:
+                break
+            out.append(int(t))
+        return tuple(out)
 
     def _label(self, prompts):
         todo = [p for p in prompts if p not in self._replies]
         beat = time.monotonic()
         for n, chunk in enumerate(self._batches(todo)):
-            for p, got in zip(chunk, self._reply(chunk), strict=True):
-                self._replies[p] = got
+            for p, (first, refused, opening) in zip(chunk, self._reply(chunk), strict=True):
+                self._replies[p] = (first, refused)
+                self._openings[p] = opening
             if time.monotonic() - beat > 30:                     # pragma: no cover - timing
                 beat = time.monotonic()
                 self.log(f"  replies: {min((n + 1) * self.batch, len(todo))} of {len(todo)}")
@@ -422,13 +504,14 @@ class HFSubject:
     def prepare(self, parts):
         """Learn which tokens open a refusal and which open a compliant reply, from FIT only."""
         self.refusal_ids = self.comply_ids = None
+        self.opener = ()
         self.agreement_detail = {}
         prompts = list(parts["fit"]["harmful"].prompts) + list(parts["fit"]["harmless"].prompts)
+        labelled = self._label(prompts)
         refused, complied = {}, {}
-        for first, was_refusal in self._label(prompts):
+        for first, was_refusal in labelled:
             bucket = refused if was_refusal else complied
             bucket[first] = bucket.get(first, 0) + 1
-        both = set(refused) & set(complied)
         sensitivity = {}
         for floor in (1, 2, 3):
             r_, c_, _ = token_sets(
@@ -436,12 +519,21 @@ class HFSubject:
                 {t: n for t, n in complied.items() if n >= floor}, self.arm)
             sensitivity[str(floor)] = {"refusal_tokens": len(r_), "compliance_tokens": len(c_)}
         ref, com, dropped = token_sets(refused, complied, self.arm)
+        first_position = {"refusal_tokens": len(ref), "compliance_tokens": len(com)}
+        if not ref or not com:
+            picked = choose_opener([(self._openings[p], r) for p, (_, r) in zip(prompts, labelled, strict=True)],
+                                   self.arm)
+            if picked is not None:
+                self.opener, ref, com, dropped, refused, complied = picked
+        both = set(refused) & set(complied)
         self._fit_counts = (refused, complied)
         self.readout_why_not = None
         if not ref or not com:
             self.readout_why_not = (
                 f"no first token cleanly opens only refusals ({len(ref)} found) or only compliant "
-                f"replies ({len(com)} found) on the fit partition, so there is no readout to build")
+                f"replies ({len(com)} found) on the fit partition, and no opening of up to "
+                f"{OPENER_MAX_TOKENS} tokens shared by both is followed by one either, so there is no "
+                f"readout to build")
             return
         self.refusal_ids = torch.tensor(ref, device=self.model.device)
         self.comply_ids = torch.tensor(com, device=self.model.device)
@@ -460,7 +552,17 @@ class HFSubject:
                                                                key=lambda x: -x[1])[:8]},
             "refusal_token_text": self.tok.convert_ids_to_tokens(ref),
             "compliance_token_text": self.tok.convert_ids_to_tokens(com[:16]),
-            "fit_refused": sum(refused.values()), "fit_complied": sum(complied.values())}
+            "fit_refused": sum(1 for _, r in labelled if r),
+            "fit_complied": sum(1 for _, r in labelled if not r),
+            "readout_position": {
+                "position": len(self.opener),
+                "opening_ids": list(self.opener),
+                "opening_text": self.tok.convert_ids_to_tokens(list(self.opener)) if self.opener else [],
+                "first_position_sets": first_position,
+                # With an opening, the sets and their counts come only from fit replies that begin with it.
+                "fit_replies_read": sum(refused.values()) + sum(complied.values()),
+                "sensitivity_measured_at": "the first position",
+                **OPENER_DECLARATION}}
 
     @torch.no_grad()
     def replies(self, prompts, direction=None, blocks=()):
@@ -492,7 +594,7 @@ class HFSubject:
         """
         out = []
         for chunk in self._batches(prompts):
-            out.extend(r for _, r in self._reply(chunk, direction, blocks))
+            out.extend(r for _, r, _ in self._reply(chunk, direction, blocks))
         return out
 
     # ---------------------------------------------------------------------------- the readout
@@ -503,7 +605,8 @@ class HFSubject:
         prompts = list(prompts)
         union, ref_pos, com_pos = self._union()
         got = (self._shared.fetch(prompts, direction, blocks,
-                                  lambda: self._logits_at(prompts, direction, blocks, union))
+                                  lambda: self._logits_at(prompts, direction, blocks, union),
+                                  opener=self.opener)
                if self._shared is not None else self._logits_at(prompts, direction, blocks, union))
         return (torch.logsumexp(got[:, ref_pos], 1)
                 - torch.logsumexp(got[:, com_pos], 1)).double()
@@ -533,11 +636,11 @@ class HFSubject:
 
     def _chunk_logits(self, chunk, direction, blocks):
         """One batch's last position logits under the condition, from the prefix cache where it can."""
-        enc = self._encode(chunk)
+        enc = self._encode(chunk, self.opener)
         if self.prefix_off is not None or (blocks and min(blocks) == 0):
             self.prefix_detail["full_batches"] += 1
             return self._full(enc, direction, blocks)
-        key = tuple(chunk)
+        key = (tuple(chunk), self.opener)
         entry = self._prefix.get(key)
         if entry is None:
             if self._prefix_full:
@@ -641,6 +744,17 @@ class HFSubject:
         ranked = sorted(counts.items(), key=lambda x: -x[1])[:top]
         return {self.tok.convert_ids_to_tokens([t])[0]: n for t, n in ranked}
 
+    def _read_token(self, prompt):
+        """The reply token the readout stands in for: the first, or the one after the opening. None when the
+        reply doesn't begin with the opening, so the readout's position isn't one the reply reached."""
+        opening = self._openings.get(prompt, ())
+        depth = len(self.opener)
+        if len(opening) > depth and tuple(opening[:depth]) == self.opener:
+            return opening[depth]
+        if not depth and opening:
+            return opening[0]
+        return None
+
     @staticmethod
     def _split_agreement(margins, labelled, covered, want):
         """AUC of the margin for 'was a refusal' over the replies whose opener is (not) in a set."""
@@ -668,12 +782,13 @@ class HFSubject:
         refused = [m for m, (_, r) in zip(margins, labelled, strict=True) if r]
         complied = [m for m, (_, r) in zip(margins, labelled, strict=True) if not r]
         known = set(self.refusal_ids.tolist()) | set(self.comply_ids.tolist())
-        covered = [f in known for f, _ in labelled]
+        read = [self._read_token(p) for p in prompts]
+        covered = [t is not None and t in known for t in read]
         self.agreement_detail.update({
             "search_refused": len(refused), "search_complied": len(complied),
             "onset_coverage": sum(covered) / len(labelled),
-            "uncovered_openers": self._opener_counts([f for f, c in zip(
-                (f for f, _ in labelled), covered, strict=True) if not c]),
+            "uncovered_openers": self._opener_counts([t for t, c in zip(read, covered, strict=True)
+                                                      if not c and t is not None]),
             "by_coverage": {
                 "covered": self._split_agreement(margins, labelled, covered, True),
                 "uncovered": self._split_agreement(margins, labelled, covered, False)}})

@@ -628,3 +628,100 @@ def test_a_full_cache_says_so_once_and_keeps_what_it_has():
         assert torch.equal(_logits(capped, _axis0(), blocks), _logits(full, _axis0(), blocks)), blocks
     assert len(capped._prefix) == 1
     assert sum("prefix cache full" in line for line in logged) == 1
+
+
+# ---------------------------------------------------------------- the readout position (2026-10-20)
+OPEN = 7  # a token both kinds of reply begin with, like "I" in "I can't" and "I'd be happy"
+
+
+class SharedOpeningModel(StubModel):
+    """Every reply opens with OPEN; only the token after it says refusal or compliance.
+
+    The first-token readout has nothing to read here, which is the shape LFM2.5-1.2B has. After OPEN, the
+    next token is REFUSE when the prompt held '#' and COMPLY_A when it held '@', by construction, and the
+    logits at that position say so through the blocks, so an ablation still moves them.
+    """
+
+    def forward(self, input_ids, attention_mask=None, use_cache=False, logits_to_keep=None):
+        out = super().forward(input_ids, attention_mask, use_cache, logits_to_keep)
+        after_open = input_ids[:, -1] == OPEN
+        if bool(after_open.any()):
+            refusing = (input_ids == ord("#") % V).any(1)
+            logits = out.logits
+            boost = torch.where(refusing, torch.tensor(8.0), torch.tensor(-8.0))[after_open]
+            logits[after_open, -1, REFUSE] += boost
+            logits[after_open, -1, COMPLY_A] -= boost
+        return out
+
+    @torch.no_grad()
+    def generate(self, input_ids, attention_mask=None, max_new_tokens=1, **_):
+        opened = torch.cat([input_ids, torch.full_like(input_ids[:, :1], OPEN)], 1)
+        follow = self.forward(opened).logits[:, -1].argmax(-1, keepdim=True)
+        rest = torch.zeros(input_ids.shape[0], max(max_new_tokens - 2, 0), dtype=input_ids.dtype)
+        return torch.cat([opened, follow, rest], 1)[:, :input_ids.shape[1] + max_new_tokens]
+
+
+def test_choose_opener_takes_the_shortest_then_the_commonest_shared_opening():
+    replies = ([((9, 5, REFUSE), True)] * 3 + [((9, 5, COMPLY_A), False)] * 3
+               + [((8, REFUSE), True)] * 4 + [((8, COMPLY_A), False)] * 4)
+    opening, ref, com, _, _, _ = H.choose_opener(replies, H.ARM_DISJOINT)
+    assert opening == (8,)                        # depth 1, the commoner of the two shared openings
+    assert ref == [REFUSE] and com == [COMPLY_A]
+
+
+def test_choose_opener_reads_deeper_when_the_shorter_opening_does_not_separate():
+    replies = [((9, 5, REFUSE), True)] * 3 + [((9, 5, COMPLY_A), False)] * 3
+    opening, ref, com, _, _, _ = H.choose_opener(replies, H.ARM_DISJOINT)
+    assert opening == (9, 5) and ref == [REFUSE] and com == [COMPLY_A]
+
+
+def test_choose_opener_finds_nothing_when_no_shared_opening_is_followed_by_a_clean_token():
+    same_after = [((9, REFUSE), True)] * 3 + [((9, REFUSE), False)] * 3
+    assert H.choose_opener(same_after, H.ARM_DISJOINT) is None
+    one_kind_only = [((9, REFUSE), True)] * 5
+    assert H.choose_opener(one_kind_only, H.ARM_DISJOINT) is None
+
+
+def test_a_model_whose_replies_share_an_opening_is_read_past_it_and_validated():
+    subject = H.HFSubject(SharedOpeningModel(), StubTok(), batch=8, log=lambda *_: None)
+    parts = _parts()
+    subject.prepare(parts)
+    assert subject.opener == (OPEN,)
+    assert subject.refusal_ids.tolist() == [REFUSE]
+    position = subject.agreement_detail["token_sets"]["readout_position"]
+    assert position["position"] == 1 and position["opening_ids"] == [OPEN]
+    assert position["first_position_sets"] == {"refusal_tokens": 0, "compliance_tokens": 0}
+    # It still has to predict what the model writes, by the same agreement gate as before.
+    value = subject.readout_agreement(parts["search"]["harmful"].prompts, parts["search"]["harmless"].prompts)
+    assert value is not None and value >= A.DEFAULT.readout_agreement_floor
+    assert subject.agreement_detail["onset_coverage"] == pytest.approx(1.0)
+
+
+def test_the_first_position_is_kept_whenever_it_works(subject):
+    subject.prepare(_parts())
+    assert subject.opener == ()
+    assert subject.agreement_detail["token_sets"]["readout_position"]["position"] == 0
+
+
+def test_the_opening_is_fed_in_after_the_prompt_only_for_the_readout():
+    subject = H.HFSubject(SharedOpeningModel(), StubTok(), batch=8, log=lambda *_: None)
+    plain = subject._encode(["bad a"])
+    fed = subject._encode(["bad a"], (OPEN,))
+    assert fed["input_ids"].shape[1] == plain["input_ids"].shape[1] + 1
+    assert int(fed["input_ids"][0, -1]) == OPEN and int(fed["attention_mask"][0, -1]) == 1
+    assert torch.equal(fed["input_ids"][:, :-1], plain["input_ids"])
+
+
+def test_a_tokenizer_padding_on_the_right_is_refused_for_the_opening():
+    tok = StubTok()
+    tok.padding_side = "right"
+    subject = H.HFSubject(SharedOpeningModel(), tok, batch=8, log=lambda *_: None)
+    with pytest.raises(A.AttributionError, match="pads on the left"):
+        subject._encode(["bad a"], (OPEN,))
+
+
+def test_the_shared_cache_never_hands_one_opening_the_logits_of_another():
+    shared = H.SharedReadouts([REFUSE, COMPLY_A])
+    first = shared.fetch(["p"], None, (), lambda: "with no opening")
+    second = shared.fetch(["p"], None, (), lambda: "after OPEN", opener=(OPEN,))
+    assert (first, second) == ("with no opening", "after OPEN") and shared.misses == 2

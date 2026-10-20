@@ -49,7 +49,6 @@ import sys
 import time
 from pathlib import Path
 
-import optuna
 import torch
 import torch.nn.functional as F
 
@@ -1206,7 +1205,7 @@ def _owned_weight(parent, name, *, for_writing=True):
 
 #: THE NAMES NOW LIVE IN `writers.py`, and are re-exported here so every reference in this file
 #: is unchanged. They moved because `streaming.py` needs the same list and deliberately imports
-#: no torch, while this module imports torch, optuna and transformers at module scope. Copying
+#: no torch, while this module imports torch and transformers at module scope. Copying
 #: them would have recreated the two-hand-kept-copies defect the list exists to prevent; see that
 #: module's docstring for the full argument.
 from .writers import ATTN_BLOCKS
@@ -3991,6 +3990,10 @@ class Abliterator:
         The db path comes back as well as the study because the failure message when no trial
         produced a measurement needs to tell the operator where the completed work is.
         """
+        # Imported here, not at the top: only the search uses it, and a top-level import made every
+        # command need it, so a scoring run on an environment without it refused to start.
+        import optuna
+
         args, log = self.args, self.log
         lo, hi = self.lo, self.hi
         log(f"searching {args.trials} trials over layers [{lo},{hi}] ({args.search})")

@@ -175,6 +175,64 @@ def test_no_block_clearing_the_null_is_diffuse_even_with_a_real_total(runs):
     assert _status_with(ev, exceeding=[]) == A.DIFFUSE
 
 
+def test_a_null_reliability_with_nothing_to_reproduce_is_diffuse_and_never_read_as_a_score(runs):
+    ev = _evidence(runs, "one_block")
+    assert _status_with(ev, exceeding=[], reliability=None) == A.DIFFUSE
+
+
+def test_a_null_reliability_with_blocks_clearing_the_null_is_refused_not_passed(runs):
+    ev = _evidence(runs, "one_block")
+    with pytest.raises(A.AttributionError, match="internal error"):
+        _status_with(ev, reliability=None)
+
+
+def test_the_recorded_reliability_is_null_exactly_when_no_block_cleared_the_null(runs):
+    for name in fx.EXPECTED:
+        result = runs[name][2]
+        if "evidence" not in result:
+            continue
+        ev, recorded = result["evidence"], result["reliability"]
+        if ev["exceeding"]:
+            assert isinstance(ev["reliability"], float)
+            assert recorded["median_jaccard"] == ev["reliability"]
+            assert recorded["reference_set_size"] == len(ev["exceeding"])
+        else:
+            assert ev["reliability"] is None and recorded["median_jaccard"] is None
+            assert recorded["reference_set_size"] == 0 and recorded["repeats"] == 0
+
+
+def _halves(groups_h, groups_l, value_h, value_l, blocks=1):
+    drop_h = torch.full((blocks, len(groups_h)), value_h, dtype=torch.float64)
+    drop_l = torch.full((blocks, len(groups_l)), value_l, dtype=torch.float64)
+    return drop_h, drop_l
+
+
+def test_split_half_with_an_empty_reference_set_records_null_and_no_repeats():
+    groups = [0, 0, 1, 1, 2, 2]
+    drop_h, drop_l = _halves(groups, groups, 0.0, 0.0)
+    gen = torch.Generator().manual_seed(0)
+    out = A._split_half(drop_h, drop_l, groups, groups, 0.5, A.DEFAULT, gen, reference=set())
+    assert out == {"median_jaccard": None, "repeats": 0, "reference_set_size": 0}
+
+
+def test_split_half_with_a_reference_set_keeps_a_number_and_scores_no_overlap_as_zero():
+    groups = [0, 0, 1, 1, 2, 2]
+    drop_h, drop_l = _halves(groups, groups, 0.0, 0.0)
+    gen = torch.Generator().manual_seed(0)
+    out = A._split_half(drop_h, drop_l, groups, groups, 0.5, A.DEFAULT, gen, reference={0})
+    assert out["median_jaccard"] == 0.0
+    assert out["repeats"] == A.DEFAULT.split_half_repeats and out["reference_set_size"] == 1
+
+
+def test_split_half_with_a_reference_set_that_reproduces_gives_a_fraction_between_zero_and_one():
+    groups = [0, 0, 1, 1, 2, 2, 3, 3]
+    drop_h, drop_l = _halves(groups, groups, 1.0, 0.0, blocks=2)
+    gen = torch.Generator().manual_seed(0)
+    out = A._split_half(drop_h, drop_l, groups, groups, 0.5, A.DEFAULT, gen, reference={0, 1})
+    assert isinstance(out["median_jaccard"], float) and 0.0 <= out["median_jaccard"] <= 1.0
+    assert out["reference_set_size"] == 2
+
+
 # ------------------------------------------------------------- mutants of the measurement itself
 
 def _run(name, **patches):

@@ -81,6 +81,7 @@ they ran the command.
   be reached from no command
 
 ### Fixed
+- `attribute` records the split-half reliability as not applicable (null) when no block clears the null, where it used to record 0, which read as a failed reproduction. No status changes, because such a run was never tested for reliability. Older artefacts keep their 0, and their reference set size of 0 says it was not applicable
 - `attribute` records the torch and transformers versions it was made with in the artefact's comparability
   block, and its follow-up runs refuse an artefact made under different versions, naming both. An artefact
   from before this change is refused rather than assumed to match, because its versions were not recorded

@@ -623,6 +623,11 @@ def classify(ev, conv, n_blocks):
             f"the effect is real but no block stands out: {len(ev['exceeding'])} clear the "
             f"family wise null and the effect is shared as if by {ev['n_eff']:.1f} of "
             f"{n_blocks} blocks.")
+    if ev["reliability"] is None:
+        raise AttributionError(
+            "internal error: the reliability check ran with no reference set. A status that reaches it "
+            "has blocks clearing the null, which always gives a reference set, so the order of the checks "
+            "is wrong; please report this.")
     if ev["reliability"] < conv.reliability_floor:
         return UNRESOLVED, (f"{len(ev['exceeding'])} block(s) clear the null but the set is not "
                             f"reproduced between random halves (median Jaccard "
@@ -805,8 +810,16 @@ def _null_summary(reps):
 
 
 def _split_half(drop_h, drop_l, gh, gl, tau, conv, gen, *, reference):
-    """How often two random halves of the requests agree on which blocks clear the threshold."""
+    """How often two random halves of the requests agree on which blocks clear the threshold.
+
+    With an empty reference set no block cleared the threshold on the whole sample, so there is nothing
+    for the halves to reproduce. That is a null median, not a score: a 0.0 would say the halves disagree.
+    """
     import torch  # local: this module is import-light so `--help` does not pay for torch
+    if not reference:
+        # Artefacts written before this was recorded hold 0.0 here with the same reference_set_size of 0,
+        # so a reader should test the size, not the value.
+        return {"median_jaccard": None, "repeats": 0, "reference_set_size": 0}
     ih, nh = _group_index(gh)
     il, nl = _group_index(gl)
     scores = []

@@ -21,6 +21,9 @@ REFUSE, COMPLY_A, COMPLY_B = 1, 2, 3
 WORDS = {REFUSE: "I cannot help with that.", COMPLY_A: "Sure, here is how.", COMPLY_B: "Of course."}
 FAST = dataclasses.replace(A.DEFAULT, resamples=100, shuffled_label_replicates=4,
                            random_direction_replicates=4, split_half_repeats=20)
+#: The identity the real loader returns, with the library versions it always records.
+STUB_IDENTITY = {"id": "stub", "revision": "abc", "precision": "bfloat16",
+                 "torch": "2.9.1", "transformers": "5.20.1"}
 
 
 class Block(nn.Module):

@@ -250,6 +250,7 @@ def run(args, *, log=print):
                                   revision=original["model"]["revision"],
                                   **_loading_options(args))
     H.refuse_other_loading_form(identity, original["model"])
+    R.refuse_if_library_versions_differ(original, identity)
     parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                         n_confirm=args.n_confirm, seed=args.seed)
     wanted = original["behaviour"]["partitions"]
@@ -337,6 +338,7 @@ def run_start(args, *, log=print):
                                   revision=original["model"]["revision"],
                                   **_loading_options(args))
     H.refuse_other_loading_form(identity, original["model"])
+    R.refuse_if_library_versions_differ(original, identity)
     parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                         n_confirm=args.n_confirm, seed=args.seed)
     if (json.loads(json.dumps(digests)) != original["behaviour"]["partitions"]

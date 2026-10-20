@@ -8,13 +8,14 @@ import hashlib
 import json
 
 import pytest
-from test_attribution_hf import StubModel, StubTok, _parts
+from test_attribution_hf import STUB_IDENTITY, StubModel, StubTok, _parts
 
 from senbonzakura import attribution as A
 from senbonzakura import attribution_hf as H
 from senbonzakura import attribution_run as R
 
 PASSED = {"passed": True, "cases": {}}
+NOW = dict(STUB_IDENTITY)
 
 
 def _arm(status, blocks=(), tint=False, detail=None, style=None):
@@ -110,7 +111,7 @@ def test_a_value_the_artefact_cannot_hold_is_refused_not_stringified():
 
 
 def _stub_run(monkeypatch, tmp_path, **flags):
-    identity = {"id": "stub", "revision": "abc", "precision": "bfloat16"}
+    identity = dict(STUB_IDENTITY)
     monkeypatch.setattr(H, "load", lambda *_a, **_k: (StubModel(), StubTok(), identity))
     monkeypatch.setattr(H, "build_partitions",
                         lambda *_a, **_k: (_parts(confirm=True), {"measure": {"n": 40}}))
@@ -398,6 +399,44 @@ def test_the_artefact_names_the_model_id_it_is_comparable_with(monkeypatch, tmp_
     assert doc["comparable_with"]["model_id"] == "stub"
     assert doc["render"]["binds_to"]["model_id"] == "stub"
     assert doc["render"]["permitted"]["marks_only_from_render"] is True
+
+
+def test_the_artefact_records_the_library_versions_it_was_made_with(monkeypatch, tmp_path):
+    R.run(_stub_run(monkeypatch, tmp_path), log=lambda *_: None)
+    doc = json.loads((tmp_path / "attribution.json").read_text())
+    assert doc["model"]["torch"] == doc["comparable_with"]["torch"] == "2.9.1"
+    assert doc["model"]["transformers"] == doc["comparable_with"]["transformers"] == "5.20.1"
+
+
+def _recorded(torch_version="2.9.1", transformers_version="5.20.1"):
+    return {"comparable_with": {"torch": torch_version, "transformers": transformers_version}}
+
+
+def test_matching_library_versions_let_a_comparison_go_ahead():
+    assert R.refuse_if_library_versions_differ(_recorded(), NOW) is None
+
+
+@pytest.mark.parametrize("saved, was_and_now", [
+    (_recorded(torch_version="2.8.0"), ("2.8.0", "2.9.1")),
+    (_recorded(transformers_version="5.19.0"), ("5.19.0", "5.20.1")),
+])
+def test_a_torch_or_transformers_difference_is_refused_and_names_both_versions(saved, was_and_now):
+    with pytest.raises(A.AttributionError) as refused:
+        R.refuse_if_library_versions_differ(saved, NOW)
+    assert all(version in str(refused.value) for version in was_and_now)
+
+
+@pytest.mark.parametrize("saved, missing", [
+    ({}, "torch and transformers versions"),
+    ({"comparable_with": None}, "torch and transformers versions"),
+    ({"comparable_with": {"torch": "2.9.1"}}, "transformers version"),
+    ({"comparable_with": {"torch": None, "transformers": "5.20.1"}}, "torch version"),
+])
+def test_an_artefact_that_never_recorded_its_versions_is_refused_not_assumed(saved, missing):
+    with pytest.raises(A.AttributionError) as refused:
+        R.refuse_if_library_versions_differ(saved, NOW)
+    assert f"does not record the {missing} it was made with" in str(refused.value)
+    assert "2.9.1" in str(refused.value) and "5.20.1" in str(refused.value)
 
 
 def test_amending_an_older_artefact_adds_the_model_id_to_what_it_is_comparable_with(tmp_path):

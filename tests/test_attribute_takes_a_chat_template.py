@@ -101,7 +101,8 @@ def test_a_template_that_renders_nothing_usable_is_refused(models, monkeypatch, 
 def test_the_command_passes_the_flag_to_the_loader_and_the_artefact_carries_the_record(monkeypatch, tmp_path):
     seen = {}
     record = {"source": "supplied.jinja", "sha256": "0123456789abcdef", "audit": {}}
-    identity = {"id": "stub", "revision": "abc", "precision": "bfloat16", "chat_template": record}
+    identity = {"id": "stub", "revision": "abc", "precision": "bfloat16", "chat_template": record,
+                "torch": "2.9.1", "transformers": "5.20.1"}
 
     def load(*_a, **kwargs):
         seen.update(kwargs)

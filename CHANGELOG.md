@@ -81,6 +81,9 @@ they ran the command.
   be reached from no command
 
 ### Fixed
+- `attribute` records the torch and transformers versions it was made with in the artefact's comparability
+  block, and its follow-up runs refuse an artefact made under different versions, naming both. An artefact
+  from before this change is refused rather than assumed to match, because its versions were not recorded
 - `setup --apply` put back the torch it replaced when the new one will not start. It used to leave
   the machine with no working torch at all, after a download of several gigabytes
 - `setup` says the download is large, and on WSL says the chosen CUDA build may not run there, both

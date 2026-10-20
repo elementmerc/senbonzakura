@@ -6,6 +6,7 @@
 import hashlib
 
 import pytest
+from test_attribution_hf import STUB_IDENTITY
 
 from senbonzakura import attribution_followups as F
 
@@ -88,7 +89,7 @@ def _original_artefact(tmp_path, monkeypatch):
     from senbonzakura import attribution as A
     from senbonzakura import attribution_hf as H
     from senbonzakura import attribution_run as R
-    identity = {"id": "stub", "revision": "abc", "precision": "bfloat16"}
+    identity = dict(STUB_IDENTITY)
     digests = {"measure": {"harmful": {"n": 40}}}
     monkeypatch.setattr(H, "load", lambda *_a, **_k: (StubModel(), StubTok(), identity))
     monkeypatch.setattr(H, "build_partitions", lambda *_a, **_k: (_parts(confirm=True), digests))
@@ -138,6 +139,62 @@ def test_inputs_that_are_not_the_original_runs_are_refused(tmp_path, monkeypatch
 def _parts_unused():
     from test_attribution_hf import _parts
     return _parts(confirm=True)
+
+
+def _load_as(monkeypatch, changed):
+    """This follow-up's own load reports other library versions, and any input built first fails the test."""
+    from test_attribution_hf import StubModel, StubTok
+
+    from senbonzakura import attribution_hf as H
+    other = {**STUB_IDENTITY, **changed}
+    monkeypatch.setattr(H, "load", lambda *_a, **_k: (StubModel(), StubTok(), other))
+    monkeypatch.setattr(H, "build_partitions", _built_too_early)
+
+
+def _built_too_early(*_a, **_k):
+    raise AssertionError("the inputs were built before the library versions were checked")
+
+
+VERSION_CHANGES = [({"transformers": "5.19.0"}, ("5.20.1", "5.19.0")),
+                   ({"torch": "2.8.0"}, ("2.9.1", "2.8.0"))]
+
+
+@pytest.mark.parametrize("changed, was_and_now", VERSION_CHANGES)
+def test_a_follow_up_refuses_a_different_library_version_before_building_its_inputs(
+        tmp_path, monkeypatch, changed, was_and_now):
+    from senbonzakura import attribution as A
+    original, _, _ = _original_artefact(tmp_path / "orig", monkeypatch)
+    _load_as(monkeypatch, changed)
+    args = F.build_parser().parse_args(["stub", "--track", "t", "--artefact", str(original),
+                                        "--out", str(tmp_path / "f")])
+    with pytest.raises(A.AttributionError) as refused:
+        F.run(args, log=lambda *_: None)
+    assert all(version in str(refused.value) for version in was_and_now)
+
+
+@pytest.mark.parametrize("changed, was_and_now", VERSION_CHANGES)
+def test_the_start_test_refuses_a_different_library_version_too(
+        tmp_path, monkeypatch, changed, was_and_now):
+    from senbonzakura import attribution as A
+    original, _, _ = _original_artefact(tmp_path / "orig", monkeypatch)
+    _load_as(monkeypatch, changed)
+    with pytest.raises(A.AttributionError) as refused:
+        F.run_start(_start_args(tmp_path, original), log=lambda *_: None)
+    assert all(version in str(refused.value) for version in was_and_now)
+
+
+def test_a_follow_up_refuses_an_artefact_that_never_recorded_its_versions(tmp_path, monkeypatch):
+    import json
+
+    from senbonzakura import attribution as A
+    original, _, _ = _original_artefact(tmp_path / "orig", monkeypatch)
+    doc = json.loads(original.read_text())
+    del doc["comparable_with"]["torch"]
+    original.write_text(json.dumps(doc))
+    args = F.build_parser().parse_args(["stub", "--track", "t", "--artefact", str(original),
+                                        "--out", str(tmp_path / "f")])
+    with pytest.raises(A.AttributionError, match="does not record the torch version"):
+        F.run(args, log=lambda *_: None)
 
 
 def test_a_direction_that_does_not_reproduce_stops_the_follow_up(tmp_path, monkeypatch):

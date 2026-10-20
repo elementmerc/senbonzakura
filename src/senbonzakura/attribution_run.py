@@ -325,6 +325,37 @@ def _kernel_key(identity):
     return {"quant_kernel": kernel} if kernel else {}
 
 
+#: The library versions that decide whether two artefacts' numbers may be compared. They are recorded
+#: in `comparable_with` next to the other comparability keys, copied from the identity the run loaded.
+LIBRARY_VERSIONS = ("torch", "transformers")
+
+
+def refuse_if_library_versions_differ(saved, identity):
+    """Refuse a comparison or a reference reproduction across different torch or transformers versions.
+
+    The same weights can give different numbers under another release of either library, so a
+    difference is not a rounding question. An artefact that never recorded its versions is refused
+    too, because it cannot be shown to match and this function does not assume that it does.
+    """
+    recorded = saved.get("comparable_with") or {}
+    now = {name: identity[name] for name in LIBRARY_VERSIONS}
+    missing = [name for name in LIBRARY_VERSIONS if not recorded.get(name)]
+    if missing:
+        noun = "versions" if len(missing) > 1 else "version"
+        raise A.AttributionError(
+            f"this artefact does not record the {' and '.join(missing)} {noun} it was made with, so "
+            f"it cannot be shown to match this run, which used torch {now['torch']} and transformers "
+            f"{now['transformers']}. Artefacts written before the versions were recorded are refused "
+            f"rather than assumed to match. Make a new artefact to compare against.")
+    if any(recorded[name] != now[name] for name in LIBRARY_VERSIONS):
+        raise A.AttributionError(
+            f"this run used torch {now['torch']} and transformers {now['transformers']}, but the "
+            f"artefact was made with torch {recorded['torch']} and transformers "
+            f"{recorded['transformers']}. The same weights can give different numbers under another "
+            f"release of either library, so the two are not compared. Run this with the artefact's "
+            f"versions installed, or make a new artefact with these.")
+
+
 def loading_options(args):
     """The loader flags from a parsed command line, as keywords for `attribution_hf.load`."""
     return {"load_in_4bit": getattr(args, "load_in_4bit", False),
@@ -437,6 +468,7 @@ def run(args, *, log=print):
         "comparable_with": {"schema": SCHEMA, "model_id": identity["id"], "instrument_version": A.INSTRUMENT_VERSION,
                             "estimator": A.ESTIMATOR, "precision": identity["precision"],
                             "model_revision": identity["revision"],
+                            "torch": identity["torch"], "transformers": identity["transformers"],
                             **_kernel_key(identity)},
     }
     write_json(out / "attribution.json", artefact)

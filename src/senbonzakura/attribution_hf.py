@@ -54,6 +54,26 @@ PREFIX_CACHE_BYTES = 2 * 1024 ** 3
 #: Logits further apart than this switch the cache off for that subject, and the run says so.
 PREFIX_CHECK_ATOL = 1e-3
 
+#: THE SWEEP. `reference` runs every condition the way it was first written. `fast` (opt in, with
+#: `--fast-sweep`) computes the front conditions, which ablate blocks 0 to k, as one chain: front k
+#: starts from what front k - 1 wrote at block k - 1 and runs from block k, so the blocks below each
+#: edit are never run twice. It also reuses greedy replies across the arms and the stand-in, but only
+#: for the same prompts in the same order from the same unedited model at the same batch size. Both
+#: paths run the same arithmetic on the same shapes, so the numbers are bitwise equal. The chain checks
+#: itself against a full pass on its first batch, and switches itself off, saying so, if they differ.
+SWEEP_REFERENCE, SWEEP_FAST = "reference", "fast"
+SWEEPS = (SWEEP_REFERENCE, SWEEP_FAST)
+
+
+def is_front_prefix(blocks, n_blocks):
+    """True for a condition that ablates blocks 0 to k for some k short of the last block.
+
+    The all-blocks condition is left out on purpose: a null replicate asks for it alone, and a
+    chain would then cost more than the single full pass it needs.
+    """
+    b = tuple(blocks)
+    return 0 < len(b) < n_blocks and b == tuple(range(len(b)))
+
 
 class _Replay(torch.nn.Module):
     """Stands in for a block below the first edited one, handing on what the blocks below wrote."""
@@ -174,6 +194,8 @@ class SharedReadouts:
     def __init__(self, ids):
         self.ids = torch.as_tensor(sorted({int(t) for t in ids}))
         self._store = {}
+        #: The front chains, keyed like `_store` and holding every front's logits at once.
+        self.chains = {}
         self.hits = self.misses = 0
 
     def fetch(self, prompts, direction, blocks, compute, opener=()):
@@ -353,10 +375,20 @@ class HFSubject:
     """
 
     def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None,
-                 prefix_cache_bytes=None):
+                 prefix_cache_bytes=None, sweep=SWEEP_REFERENCE, reply_store=None):
         if arm not in ARM_DECLARATIONS:
             raise A.AttributionError(f"{arm!r} is not a readout arm; the arms are "
                                      f"{sorted(ARM_DECLARATIONS)}.")
+        if sweep not in SWEEPS:
+            raise A.AttributionError(f"{sweep!r} is not a sweep; the sweeps are {list(SWEEPS)}.")
+        #: Which sweep runs the front conditions (see SWEEP_FAST), and where greedy replies may be
+        #: shared. A store is only ever given to an unedited subject of the same run.
+        self.sweep = sweep
+        self._reply_store = reply_store if sweep == SWEEP_FAST else None
+        self._own_chains = {}
+        #: None until the first chain has been checked against a full pass; then True, or False if it failed.
+        self._chain_ok = None
+        self.sweep_detail = {"chains_computed": 0, "checked_batches": 0}
         self.model, self.tok, self.batch, self.log, self.arm = model, tok, batch, log, arm
         self.label = metrics.is_refusal if label is None else label
         if not callable(self.label):
@@ -421,6 +453,9 @@ class HFSubject:
         self._standing = [(direction, tuple(blocks))]
         self._replies.clear()
         self._openings.clear()
+        # An edited model writes different replies and logits, so nothing shared may serve it again.
+        self._reply_store = None
+        self._own_chains = {}
         # The saved outputs were made under the old edit, so none of them holds any longer.
         self._prefix.clear()
         self._prefix_bytes = 0
@@ -490,6 +525,17 @@ class HFSubject:
         return tuple(out)
 
     def _label(self, prompts):
+        # A store entry is the whole list in order, from the same batch size and label, so the
+        # batches it was generated in are the batches this list would have been, and the greedy
+        # replies are the same numbers. A partly known list is generated afresh, never mixed.
+        store = self._reply_store
+        key = (tuple(prompts), self.batch, self.label)
+        if store is not None and key in store:
+            for p, (first, refused, opening) in zip(prompts, store[key], strict=True):
+                self._replies[p] = (first, refused)
+                self._openings[p] = opening
+            self.sweep_detail["replies_reused"] = self.sweep_detail.get("replies_reused", 0) + len(prompts)
+            return [self._replies[p] for p in prompts]
         todo = [p for p in prompts if p not in self._replies]
         beat = time.monotonic()
         for n, chunk in enumerate(self._batches(todo)):
@@ -499,6 +545,8 @@ class HFSubject:
             if time.monotonic() - beat > 30:                     # pragma: no cover - timing
                 beat = time.monotonic()
                 self.log(f"  replies: {min((n + 1) * self.batch, len(todo))} of {len(todo)}")
+        if store is not None and len(todo) == len(prompts):
+            store[key] = [(*self._replies[p], self._openings[p]) for p in prompts]
         return [self._replies[p] for p in prompts]
 
     def prepare(self, parts):
@@ -604,10 +652,14 @@ class HFSubject:
             raise A.AttributionError(self.readout_why_not or "prepare() has not been called")
         prompts = list(prompts)
         union, ref_pos, com_pos = self._union()
-        got = (self._shared.fetch(prompts, direction, blocks,
-                                  lambda: self._logits_at(prompts, direction, blocks, union),
-                                  opener=self.opener)
-               if self._shared is not None else self._logits_at(prompts, direction, blocks, union))
+        got = None
+        if is_front_prefix(blocks, self.n_blocks):
+            got = self._front_logits(prompts, direction, union, len(blocks) - 1)
+        if got is None:
+            got = (self._shared.fetch(prompts, direction, blocks,
+                                      lambda: self._logits_at(prompts, direction, blocks, union),
+                                      opener=self.opener)
+                   if self._shared is not None else self._logits_at(prompts, direction, blocks, union))
         return (torch.logsumexp(got[:, ref_pos], 1)
                 - torch.logsumexp(got[:, com_pos], 1)).double()
 
@@ -729,6 +781,103 @@ class HFSubject:
             finally:
                 for j, layer in enumerate(originals):
                     self.layers[j] = layer
+
+    def _chains(self):
+        if self._shared is not None and not self._standing:
+            return self._shared.chains
+        return self._own_chains
+
+    def _front_logits(self, prompts, direction, ids, k):
+        """Logits at front condition `k` from the chain for these prompts, or None to run the reference.
+
+        One chain computes every front at once, so the first front asked for pays for all of them and the
+        rest are read back. None when the fast sweep is off or the chain has been found wrong.
+        """
+        if self.sweep != SWEEP_FAST or self._chain_ok is False:
+            return None
+        store = self._chains()
+        key = (hashlib.sha256("\x00".join(prompts).encode("utf-8")).hexdigest(),
+               hashlib.sha256(direction.detach().float().cpu().numpy().tobytes()).hexdigest(),
+               tuple(self.opener), tuple(int(t) for t in ids.tolist()))
+        if key not in store:
+            chain = self._compute_chain(prompts, direction, ids)
+            if chain is None:
+                return None
+            store[key] = chain
+        return store[key][k]
+
+    @torch.no_grad()
+    def _compute_chain(self, prompts, direction, ids):
+        """Every front condition's logits, `[prompts, ids]` each, one batch at a time, or None if refused.
+
+        Within a batch, front k is computed from front k - 1's output at block k - 1, so the blocks below
+        each edit are not run again. The first batch is checked against a full pass for every front, and
+        any difference, however small, switches the chain off: a chain that is not bitwise the reference
+        is not used.
+        """
+        nf = self.n_blocks - 1
+        per = [[] for _ in range(nf)]
+        for chunk in self._batches(prompts):
+            enc = self._encode(chunk, self.opener)
+            carry = None
+            for k in range(nf):
+                logits, out = self._chain_step(enc, direction, k, carry)
+                if not self._stream_only(out):
+                    self._switch_chain_off("this architecture's blocks hand on more than the stream")
+                    return None
+                if self._chain_ok is None:
+                    full = self._full(enc, direction, tuple(range(k + 1)))
+                    if not torch.equal(full, logits):
+                        diff = float((full - logits).abs().max())
+                        self._switch_chain_off(f"the chain's logits at front {k} differ from a full pass "
+                                               f"by {diff:.3g}")
+                        return None
+                per[k].append(logits[:, ids.to(logits.device)].cpu())
+                carry = out
+            if self._chain_ok is None:
+                self._chain_ok = True
+                self.sweep_detail["checked_batches"] += 1
+        self.sweep_detail["chains_computed"] += 1
+        return [torch.cat(p) for p in per]
+
+    def _chain_step(self, enc, direction, k, carry):
+        """The logits with blocks 0 to k ablated, and what block k wrote under that condition.
+
+        Blocks below k are replaced by stand-ins that hand on `carry`, what block k - 1 wrote under the
+        same condition, so only block k and up run. The standing edit's hooks are attached first, as in
+        `_replayed`, and the capture is attached last, so it sees the stream after the ablation.
+        """
+        captured = {}
+        originals = list(self.layers[:k])
+        with self._under_standing_edit():
+            try:
+                for j in range(k):
+                    self.layers[j] = _Replay(carry)
+                with A.ablating(self.layers, direction, (k,)):
+                    handle = self.layers[k].register_forward_hook(
+                        lambda _m, _a, out: captured.__setitem__("out", out))
+                    try:
+                        logits = last_token_logits(self.model, enc, log=self.log)
+                    finally:
+                        handle.remove()
+            finally:
+                for j, layer in enumerate(originals):
+                    self.layers[j] = layer
+        return logits, captured["out"]
+
+    @staticmethod
+    def _stream_only(out):
+        """True when a block hands on its stream and nothing else, the only thing a replay can carry."""
+        if isinstance(out, tuple) and any(isinstance(t, torch.Tensor) for t in out[1:]):
+            return False
+        return isinstance(A.unwrap(out), torch.Tensor)
+
+    def _switch_chain_off(self, why):
+        self._chain_ok = False
+        self._own_chains = {}
+        if self._shared is not None:
+            self._shared.chains.clear()
+        self.log(f"  chain sweep off for this model: {why}; front conditions run as in the reference sweep")
 
     def _switch_prefix_off(self, why):
         self.prefix_off = why

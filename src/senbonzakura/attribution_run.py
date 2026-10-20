@@ -293,6 +293,10 @@ def build_parser():
                    help="memory the block sweep may use to replay the blocks below each edited one, in "
                         "GiB (default %(default).0f; 0 turns it off). More of the run fits with more "
                         "memory; the numbers are the same either way")
+    p.add_argument("--fast-sweep", action="store_true",
+                   help="share the forward passes of the front blocks, and the greedy replies between the arms "
+                        "and the stand-in, when the numbers are provably the same; every number is bitwise "
+                        "equal to the default sweep, and the default stays the reference")
     p.add_argument("--keep-raw", action="store_true",
                    help="also save the per prompt readout drops behind every figure, real direction and "
                         "every null replicate, to raw-<arm>.pt beside the artefact, for studying what fewer "
@@ -381,7 +385,14 @@ def run(args, *, log=print):
                 continue
         todo.append(arm_name)
     cache_bytes = int(args.prefix_cache_gib * 2 ** 30)
-    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log, prefix_cache_bytes=cache_bytes)
+    sweep = H.SWEEP_FAST if args.fast_sweep else H.SWEEP_REFERENCE
+    # Greedy replies are shared only where they are provably the same (see attribution_hf._label), so
+    # the store exists only for the fast sweep and every reference run generates its own, as it always did.
+    reply_store = {} if args.fast_sweep else None
+    log(f"sweep: {sweep}" + ("; greedy replies are shared between the arms and the stand-in"
+                             if args.fast_sweep else ""))
+    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log, prefix_cache_bytes=cache_bytes,
+                               sweep=sweep, reply_store=reply_store)
                 for n in todo}
     with _stage(log, "readout tokens"):
         for subject in subjects.values():
@@ -402,6 +413,9 @@ def run(args, *, log=print):
     if shared is not None:
         log(f"shared forward passes: {shared.misses} computed, {shared.hits} reused by the other arm")
     for arm_name, subject in subjects.items():
+        log(f"[{arm_name}] sweep: {subject.sweep}, front chains computed {subject.sweep_detail['chains_computed']}, "
+            f"replies reused {subject.sweep_detail.get('replies_reused', 0)}, chain check "
+            f"{'passed' if subject._chain_ok else ('off' if subject._chain_ok is False else 'not run')}")
         detail = subject.prefix_detail
         log(f"[{arm_name}] prefix cache: {detail['replayed_batches']} batch(es) replayed from the lower "
             f"blocks, {detail['full_batches']} run in full"
@@ -411,7 +425,7 @@ def run(args, *, log=print):
     with _stage(log, "selftest"):
         selftest = A.selftest()
     with _stage(log, "behaviour removed stand-in"):
-        removed = _behaviour_removed(model, tok, parts, args, conv, log)
+        removed = _behaviour_removed(model, tok, parts, args, conv, log, sweep=sweep, reply_store=reply_store)
 
     status, reason, tint = combine(arms, selftest)
     artefact = {
@@ -519,7 +533,7 @@ def _project(model, tok, parts, nb, conv, args, log):
             f"first; lower --n-measure or raise --budget-minutes knowingly.")
 
 
-def _behaviour_removed(model, tok, parts, args, conv, log):
+def _behaviour_removed(model, tok, parts, args, conv, log, *, sweep=None, reply_store=None):
     """Run the readout stage on the model with the direction already removed from every block.
 
     An instrument that has never been seen to return nothing has not been validated. With the
@@ -529,7 +543,10 @@ def _behaviour_removed(model, tok, parts, args, conv, log):
     import dataclasses
 
     from . import attribution_hf as H
-    base = H.HFSubject(model, tok, batch=args.batch, log=log)
+    sweep = H.SWEEP_REFERENCE if sweep is None else sweep
+    # The unedited stand-in base generates the same fit replies the arms did, so it takes them from the
+    # store when the run has one; its edited copy below never does.
+    base = H.HFSubject(model, tok, batch=args.batch, log=log, sweep=sweep, reply_store=reply_store)
     base.prepare(parts)
     if base.refusal_ids is None:
         return {"ran": False, "why": base.readout_why_not}
@@ -537,7 +554,7 @@ def _behaviour_removed(model, tok, parts, args, conv, log):
     srch = {s: base.residuals(list(parts["search"][s].prompts)) for s in ("harmful", "harmless")}
     direction, _, _ = A.fit_direction(res["harmful"], res["harmless"], srch["harmful"],
                                       srch["harmless"])
-    edited = H.HFSubject(model, tok, batch=args.batch, log=log)
+    edited = H.HFSubject(model, tok, batch=args.batch, log=log, sweep=sweep)
     edited.edit_standing(direction, range(edited.n_blocks))
     fast = dataclasses.replace(conv, shuffled_label_replicates=6, random_direction_replicates=6,
                                resamples=300)

@@ -69,7 +69,8 @@ def _direction(seed=1):
 # ------------------------------------------------------------------------ the pure rule
 
 @pytest.mark.parametrize("blocks, expected", [
-    ((0,), True), ((0, 1), True), ((0, 1, 2), True),
+    ((0, 1), True), ((0, 1, 2), True),
+    ((0,), False),                   # the same blocks as single:0, which a null replicate asks for alone
     ((0, 1, 2, 3), False),           # all blocks: a null replicate asks for it alone
     ((), False), ((1,), False), ((1, 2), False), ((0, 2), False),
 ])
@@ -294,3 +295,16 @@ def test_the_shared_store_has_its_own_chain_table_and_the_subjects_see_it():
     assert a._chains() is shared.chains
     a.edit_standing(_direction(), (0,))
     assert a._chains() is a._own_chains
+
+
+def test_single_block_conditions_never_build_a_chain():
+    # A null replicate asks for single:k for every k, and single:0 has the same blocks as front:0. Neither
+    # may build a chain, or every replicate would compute every front (the bug the side-by-side run found).
+    model = _tiny_llama()
+    d = _direction()
+    fast = _subject(model, H.SWEEP_FAST)
+    for k in range(4):
+        fast.readout(PROMPTS, d, (k,))
+    fast.readout(PROMPTS, d, (0, 1, 2, 3))
+    assert fast.sweep_detail["chains_computed"] == 0
+    assert fast._chain_ok is None

@@ -66,13 +66,14 @@ SWEEPS = (SWEEP_REFERENCE, SWEEP_FAST)
 
 
 def is_front_prefix(blocks, n_blocks):
-    """True for a condition that ablates blocks 0 to k for some k short of the last block.
+    """True for a condition that ablates blocks 0 to k for some k from 1 up to the last block but one.
 
-    The all-blocks condition is left out on purpose: a null replicate asks for it alone, and a
-    chain would then cost more than the single full pass it needs.
+    Blocks (0,) alone are left out: that is also single:0, which a null replicate asks for on its own,
+    so a chain would compute every front to answer one block. The all-blocks condition is left out for
+    the same reason, and a front of one block is a single pass from the start either way.
     """
     b = tuple(blocks)
-    return 0 < len(b) < n_blocks and b == tuple(range(len(b)))
+    return 1 < len(b) < n_blocks and b == tuple(range(len(b)))
 
 
 class _Replay(torch.nn.Module):

@@ -12,7 +12,7 @@ Measure, uncensor and audit.
 
 <p>
   <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/elementmerc/senbonzakura/ci.yml?branch=main&amp;logo=githubactions&amp;logoColor=white&amp;label=CI&amp;labelColor=24292f" alt="CI on the released branch" /></a>
-  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-12448-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="12448 tests" /></a>
+  <a href="https://github.com/elementmerc/senbonzakura/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-11390-0A9EDC?logo=pytest&amp;logoColor=white&amp;labelColor=24292f" alt="11390 tests" /></a>
   <a href="https://app.codecov.io/gh/elementmerc/senbonzakura/tree/dev"><img src="https://img.shields.io/codecov/c/github/elementmerc/senbonzakura/dev?logo=codecov&amp;logoColor=white&amp;label=coverage%20dev&amp;labelColor=24292f" alt="Coverage on the development branch, measured in CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0--or--later-A42E2B?logo=gnu&amp;logoColor=white&amp;labelColor=24292f" alt="Licence: AGPL-3.0-or-later" /></a>
 </p>

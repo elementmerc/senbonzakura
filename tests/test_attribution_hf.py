@@ -728,3 +728,42 @@ def test_the_shared_cache_never_hands_one_opening_the_logits_of_another():
     first = shared.fetch(["p"], None, (), lambda: "with no opening")
     second = shared.fetch(["p"], None, (), lambda: "after OPEN", opener=(OPEN,))
     assert (first, second) == ("with no opening", "after OPEN") and shared.misses == 2
+
+
+# ── readouts in length order, results in the order asked ────────────────────────────────────────
+
+
+class _Sorted:
+    """Just enough of HFSubject for the readout loop: a tokeniser whose token count is the prompt's
+    length, and a chunk whose logits name each prompt, so a row out of place is visible."""
+
+    _batches = H.HFSubject._batches
+    _by_length = H.HFSubject._by_length
+    _unsorted = staticmethod(H.HFSubject._unsorted)
+
+    def __init__(self, batch):
+        self.batch, self._lengths, self.chunks = batch, {}, []
+        self.tok = lambda text, add_special_tokens=False: {"input_ids": list(text)}
+
+    def _chunk_logits(self, chunk, direction, blocks):
+        self.chunks.append(list(chunk))
+        return torch.tensor([[float(len(p)), float(int(p.split(":")[0]))] for p in chunk])
+
+
+def test_readouts_run_shortest_first_and_come_back_in_the_order_asked(monkeypatch):
+    monkeypatch.setattr(H, "render_chat", lambda tok, p: p)
+    prompts = ["0:" + "x" * 9, "1:x", "2:" + "x" * 5, "3:xx", "4:" + "x" * 5, "5:x"]
+    subject = _Sorted(batch=2)
+    got = H.HFSubject._logits_at(subject, prompts, None, (), torch.tensor([0, 1]))
+    assert got[:, 1].tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+    assert got[:, 0].tolist() == [float(len(p)) for p in prompts]
+    # Batches hold neighbours in length, ties in their given order.
+    assert subject.chunks == [["1:x", "5:x"], ["3:xx", "2:xxxxx"], ["4:xxxxx", "0:xxxxxxxxx"]]
+
+
+def test_length_order_is_the_same_for_the_same_prompts_so_the_caches_still_hit(monkeypatch):
+    monkeypatch.setattr(H, "render_chat", lambda tok, p: p)
+    prompts = ["0:abc", "1:a", "2:ab"]
+    subject = _Sorted(batch=2)
+    assert subject._by_length(prompts) == subject._by_length(list(prompts))
+    assert subject._by_length(prompts)[0] == [1, 2, 0]

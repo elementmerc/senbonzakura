@@ -398,6 +398,7 @@ class HFSubject:
                 f"function from one reply's text to True when the reply shows the behaviour.")
         self._standing = []
         self._encoded = {}
+        self._lengths = {}
         self._shared = None
         self.layers = modelmap.stack_or_raise(model)
         self.n_blocks = len(self.layers)
@@ -472,6 +473,28 @@ class HFSubject:
         prompts = list(prompts)
         for i in range(0, len(prompts), self.batch):
             yield prompts[i:i + self.batch]
+
+    def _by_length(self, prompts):
+        """`(order, prompts in that order)`: shortest first, ties in their given order.
+
+        Readout batches pad every row to the batch's longest prompt, and on the bundled corpus that
+        was 1.15 to 1.9 times the real tokens. Sorted, it is 1.01 to 1.10 times. Only readouts are
+        sorted; generation keeps its order, because its replies become labels.
+        """
+        prompts = list(prompts)
+        for p in prompts:
+            if p not in self._lengths:
+                text = render_chat(self.tok, p)
+                self._lengths[p] = len(self.tok(text, add_special_tokens=False)["input_ids"])
+        order = sorted(range(len(prompts)), key=lambda i: self._lengths[prompts[i]])
+        return order, [prompts[i] for i in order]
+
+    @staticmethod
+    def _unsorted(rows, order):
+        """`rows` in sorted order, put back in the order the prompts were given."""
+        back = torch.empty_like(rows)
+        back[torch.tensor(order, dtype=torch.long)] = rows
+        return back
 
     @torch.no_grad()
     def residuals(self, prompts):
@@ -677,11 +700,12 @@ class HFSubject:
 
     @torch.no_grad()
     def _logits_at(self, prompts, direction, blocks, ids):
+        order, ordered = self._by_length(prompts)
         out = []
-        for chunk in self._batches(prompts):
+        for chunk in self._batches(ordered):
             logits = self._chunk_logits(chunk, direction, tuple(blocks))
             out.append(logits[:, ids.to(logits.device)].cpu())
-        return torch.cat(out)
+        return self._unsorted(torch.cat(out), order)
 
     def _full(self, enc, direction, blocks):
         with self._under_standing_edit(), A.ablating(self.layers, direction, blocks):
@@ -818,7 +842,8 @@ class HFSubject:
         """
         nf = self.n_blocks - 1
         per = [[] for _ in range(nf)]
-        for chunk in self._batches(prompts):
+        order, ordered = self._by_length(prompts)
+        for chunk in self._batches(ordered):
             enc = self._encode(chunk, self.opener)
             carry = None
             for k in range(nf):
@@ -839,7 +864,7 @@ class HFSubject:
                 self._chain_ok = True
                 self.sweep_detail["checked_batches"] += 1
         self.sweep_detail["chains_computed"] += 1
-        return [torch.cat(p) for p in per]
+        return [self._unsorted(torch.cat(p), order) for p in per]
 
     def _chain_step(self, enc, direction, k, carry):
         """The logits with blocks 0 to k ablated, and what block k wrote under that condition.

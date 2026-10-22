@@ -32,8 +32,14 @@ replaces the block itself, which is why an unrecognised method is refused for at
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.metadata
 import importlib.util
+import os
+import sys
+import threading
+import time
+import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -911,7 +917,160 @@ def _refuse_without_the_checker():
         f"without any of it.")
 
 
+#: Seconds between heartbeat lines while a model load is in progress. A load on a rented pod once went
+#: silent for an hour and nothing said where it was stuck, so a stalled load now names its sub-step.
+HEARTBEAT_SECONDS = 60.0
+
+#: Heartbeats in the SAME sub-step after which every thread's stack is written to the log, once.
+#: At the default interval that is ten minutes, long past any load that is merely slow.
+STACK_DUMP_AFTER_BEATS = 10
+
+_JOIN_SECONDS = 5.0
+_active_heartbeat = None
+
+
+def _resident_bytes():
+    """This process's resident memory in bytes, from the kernel's own account of it."""
+    with open("/proc/self/statm", "rb") as f:
+        pages = int(f.read().split()[1])
+    return pages * os.sysconf("SC_PAGE_SIZE")
+
+
+def _cuda_allocated_bytes():
+    """Bytes torch has allocated on the current device, or None when there is no card."""
+    if not torch.cuda.is_available():
+        return None
+    return torch.cuda.memory_allocated()
+
+
+def _reading(read):
+    # A failed reading must show up in the line as unavailable, with its reason, and never raise.
+    try:
+        value = read()
+    except Exception as e:
+        return f"unavailable ({type(e).__name__}: {e})"
+    if value is None:
+        return "no card"
+    return f"{value / (1 << 30):.2f} GiB"
+
+
+class _Heartbeat:
+    def __init__(self, log, step, interval, dump_after):
+        self._log = log
+        self.step = step
+        self._interval = interval
+        self._dump_after = dump_after
+        self._stop = threading.Event()
+        self._started = time.monotonic()
+        self._step_started = self._started
+        self._beats_in_step = 0
+        self._dumped = False
+        self._thread = threading.Thread(target=self._run, name="load-heartbeat", daemon=True)
+
+    def set_step(self, name):
+        if name != self.step:
+            self.step = name
+            self._step_started = time.monotonic()
+            self._beats_in_step = 0
+            self._dumped = False
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(_JOIN_SECONDS)
+
+    def _say(self, message):
+        try:
+            self._log(message)
+        except Exception as e:
+            # The log sink failed; the one other place a reader can look is stderr.
+            try:
+                sys.stderr.write(f"{message}\n[load heartbeat] the log could not be written: "
+                                 f"{type(e).__name__}: {e}\n")
+            except Exception:
+                pass
+
+    def _run(self):
+        while not self._stop.wait(self._interval):
+            try:
+                self._beat()
+            except Exception as e:
+                self._say(f"  [load] heartbeat failed ({type(e).__name__}: {e}); the load continues")
+
+    def _beat(self):
+        now = time.monotonic()
+        self._beats_in_step += 1
+        step = self.step
+        self._say(
+            f"  [load] still working: {step}, {now - self._started:.0f}s since the load began "
+            f"({now - self._step_started:.0f}s in this step), resident memory "
+            f"{_reading(_resident_bytes)}, cuda allocated {_reading(_cuda_allocated_bytes)}")
+        if self._beats_in_step >= self._dump_after and not self._dumped:
+            self._dumped = True
+            self._say(f"  [load] no progress past '{step}' for {self._beats_in_step} heartbeats; "
+                      f"stacks of every thread follow\n{_all_stacks()}")
+
+
+def _all_stacks():
+    names = {t.ident: t.name for t in threading.enumerate()}
+    parts = []
+    for ident, frame in sys._current_frames().items():
+        parts.append(f"--- thread {names.get(ident, '?')} ({ident})\n"
+                     + "".join(traceback.format_stack(frame)))
+    return "\n".join(parts).rstrip("\n")
+
+
+@contextlib.contextmanager
+def load_heartbeat(log, step):
+    """While the block runs, log one line every HEARTBEAT_SECONDS naming the current sub-step.
+
+    A nested use joins the heartbeat already running instead of starting a second thread, so the
+    outer caller and the loader can each name their steps. Silent when `log` is None.
+    """
+    global _active_heartbeat
+    if _active_heartbeat is not None:
+        _active_heartbeat.set_step(step)
+        yield _active_heartbeat
+        return
+    if log is None:
+        yield None
+        return
+    beat = _Heartbeat(log, step, HEARTBEAT_SECONDS, STACK_DUMP_AFTER_BEATS)
+    _active_heartbeat = beat
+    beat.start()
+    try:
+        yield beat
+    finally:
+        try:
+            beat.stop()
+        finally:
+            _active_heartbeat = None
+
+
+def load_step(name):
+    """Name the sub-step now running; does nothing when no heartbeat is active."""
+    beat = _active_heartbeat
+    if beat is not None:
+        beat.set_step(name)
+
+
 def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
+                             trust_remote_code=False, attn_impl=None, log=None,
+                             chat_template=None, needs_chat_template=True,
+                             offload_dir=None, revision=None, load_in_8bit=False,
+                             gguf_file=None, forward_only=True, dtype=None):
+    with load_heartbeat(log, "checks before the weights"):
+        return _load_model_and_tokenizer(
+            model_id, device=device, load_in_4bit=load_in_4bit,
+            trust_remote_code=trust_remote_code, attn_impl=attn_impl, log=log,
+            chat_template=chat_template, needs_chat_template=needs_chat_template,
+            offload_dir=offload_dir, revision=revision, load_in_8bit=load_in_8bit,
+            gguf_file=gguf_file, forward_only=forward_only, dtype=dtype)
+
+
+def _load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
                              trust_remote_code=False, attn_impl=None, log=None,
                              chat_template=None, needs_chat_template=True,
                              offload_dir=None, revision=None, load_in_8bit=False,
@@ -958,9 +1117,11 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # able to stand in front of a security one. The weights are still downstream of this line, so
     # the cost it exists to save is still saved.
     argresolve.refuse_unusable_device(device, offload_dir=offload_dir)
+    load_step("tokenizer")
     tok = load_tokenizer(source, trust_remote_code=trust_remote_code, log=log,
                          chat_template=chat_template, needs_chat_template=needs_chat_template,
                          revision=revision, gguf_file=chosen.gguf_file)
+    load_step("memory budget")
     dtype = dtype or dtype_for(chosen, torch)
     kw = dict(dtype=dtype, trust_remote_code=trust_remote_code)
     if chosen.gguf_file:
@@ -1056,6 +1217,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     # A failure with the first is retried once with the second and said in a sentence; with none left,
     # or on any other failure, the usual refusals below apply.
     kernels = kernel_choices(chosen, device) or (None,)
+    load_step("weights")
     for position, kernel in enumerate(kernels):
         attempt = dict(kw)
         if kernel:
@@ -1083,6 +1245,7 @@ def load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
             if isinstance(e, ImportError) and chosen.kind != "plain":
                 raise SystemExit(import_refusal(chosen, e)) from e
             raise
+    load_step("after the weights")
     refusal = loadreport.missing_weights(model_id, info)
     if refusal:
         raise SystemExit(refusal)

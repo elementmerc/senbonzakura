@@ -251,20 +251,23 @@ def load(model_id, *, device="cuda", dtype=None, revision=None, chat_template=No
     from . import modelload
     # The loader speaks in SystemExit sentences, which is right for a command line and wrong for a
     # caller that wants to catch a failed load, so every one is carried across as the same words.
-    try:
-        model, tok = modelload.load_model_and_tokenizer(
-            model_id, device=device, load_in_4bit=load_in_4bit, load_in_8bit=load_in_8bit,
-            gguf_file=gguf_file, trust_remote_code=trust_remote_code, chat_template=chat_template,
-            revision=revision, log=log, dtype=dtype)
-    except SystemExit as e:
-        raise A.AttributionError(str(e.code)) from e
-    loaded = dict(getattr(model, "senbon_load", None) or modelload.LEGACY)
-    try:
-        modelload.check_hookable(loaded)
-        layers = modelmap.stack_or_raise(model)
-        modelload.probe_block_output(layers, lambda: _one_forward(model))
-    except modelload.LoadRefusedError as e:
-        raise A.AttributionError(str(e)) from e
+    with modelload.load_heartbeat(log, "checks before the weights"):
+        try:
+            model, tok = modelload.load_model_and_tokenizer(
+                model_id, device=device, load_in_4bit=load_in_4bit, load_in_8bit=load_in_8bit,
+                gguf_file=gguf_file, trust_remote_code=trust_remote_code,
+                chat_template=chat_template, revision=revision, log=log, dtype=dtype)
+        except SystemExit as e:
+            raise A.AttributionError(str(e.code)) from e
+        loaded = dict(getattr(model, "senbon_load", None) or modelload.LEGACY)
+        try:
+            modelload.load_step("hook check")
+            modelload.check_hookable(loaded)
+            layers = modelmap.stack_or_raise(model)
+            modelload.load_step("block output probe")
+            modelload.probe_block_output(layers, lambda: _one_forward(model))
+        except modelload.LoadRefusedError as e:
+            raise A.AttributionError(str(e)) from e
     identity = {
         "id": model_id,
         "revision": getattr(model.config, "_commit_hash", None) or revision,

@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Daniel Iwugo <ops@themalwarefiles.com>
+# Author:  Daniel Iwugo
+# Comment: Christ is King  # noqa: ERA001
 """A model load that stalls has to say which sub-step it is stuck in."""
 from __future__ import annotations
 
@@ -148,7 +150,22 @@ def test_stacks_are_dumped_once_after_the_threshold(fast, monkeypatch):
     assert len(dumps) == 1
     assert "no progress past 'weights'" in dumps[0]
     assert "--- thread" in dumps[0]
-    assert sink.snapshot().index(dumps[0]) >= 3
+    # Dumped on the third beat, ahead of that beat's own line: two progress lines come before it.
+    assert sink.snapshot().index(dumps[0]) == 2
+
+
+def test_the_stacks_still_come_out_when_a_reading_blocks(fast, monkeypatch):
+    # A reading can block on whatever the load is stuck on; the dump must not wait behind it.
+    monkeypatch.setattr(modelload, "STACK_DUMP_AFTER_BEATS", 1)
+    release = threading.Event()
+    monkeypatch.setattr(modelload, "_cuda_allocated_bytes", lambda: release.wait(10))
+    sink = Sink()
+    try:
+        with modelload.load_heartbeat(sink, "weights"):
+            sink.wait_for(1)
+            assert "stacks of every thread follow" in sink.snapshot()[0]
+    finally:
+        release.set()
 
 
 def test_changing_step_restarts_the_stall_count_and_the_dump():

@@ -937,8 +937,12 @@ def _resident_bytes():
 
 
 def _cuda_allocated_bytes():
-    """Bytes torch has allocated on the current device, or None when there is no card."""
-    if not torch.cuda.is_available():
+    """Bytes torch has allocated on the current device, or None before the card is started.
+
+    `is_initialized` only looks, where `is_available` can start the card itself: if starting the card is what
+    the load is stuck on, a heartbeat that started it too would hang beside it and say nothing.
+    """
+    if not torch.cuda.is_initialized():
         return None
     return torch.cuda.memory_allocated()
 
@@ -1003,14 +1007,16 @@ class _Heartbeat:
         now = time.monotonic()
         self._beats_in_step += 1
         step = self.step
-        self._say(
-            f"  [load] still working: {step}, {now - self._started:.0f}s since the load began "
-            f"({now - self._step_started:.0f}s in this step), resident memory "
-            f"{_reading(_resident_bytes)}, cuda allocated {_reading(_cuda_allocated_bytes)}")
+        # The stacks first: a reading below could block on whatever the load is stuck on, and the dump is
+        # the one line a stall must leave.
         if self._beats_in_step >= self._dump_after and not self._dumped:
             self._dumped = True
             self._say(f"  [load] no progress past '{step}' for {self._beats_in_step} heartbeats; "
                       f"stacks of every thread follow\n{_all_stacks()}")
+        self._say(
+            f"  [load] still working: {step}, {now - self._started:.0f}s since the load began "
+            f"({now - self._step_started:.0f}s in this step), resident memory "
+            f"{_reading(_resident_bytes)}, cuda allocated {_reading(_cuda_allocated_bytes)}")
 
 
 def _all_stacks():

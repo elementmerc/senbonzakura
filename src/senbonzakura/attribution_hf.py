@@ -379,7 +379,8 @@ class HFSubject:
     """
 
     def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None,
-                 prefix_cache_bytes=None, sweep=SWEEP_REFERENCE, reply_store=None):
+                 prefix_cache_bytes=None, sweep=SWEEP_REFERENCE, reply_store=None,
+                 prefix_spill_bytes=0, spill_guard=None):
         if arm not in ARM_DECLARATIONS:
             raise A.AttributionError(f"{arm!r} is not a readout arm; the arms are "
                                      f"{sorted(ARM_DECLARATIONS)}.")
@@ -417,10 +418,23 @@ class HFSubject:
         self._prefix = {}
         self._prefix_bytes = 0
         self._prefix_full = False
+        #: THE SPILL TIER (opt in). Host memory past the main cap, pinned where the machine allows, for
+        #: batches the main cap has no room for. `spill_guard` returns the host memory still free right
+        #: now (None when it can't be measured, which refuses the spill); a batch is only spilled while
+        #: it takes at most half of that, so a run on a shared or capped machine stays well inside.
+        if prefix_spill_bytes < 0:
+            raise A.AttributionError(f"the spill budget is {prefix_spill_bytes}, which is below zero.")
+        self._spill_cap = int(prefix_spill_bytes)
+        self._spill_guard = spill_guard
+        self._spill_bytes = 0
+        self._spill_pinned = True
+        self._spill_announced = False
         self._prefix_checked = set()
         #: None while the cache may be used, else why it was switched off for this subject.
         self.prefix_off = None if self._prefix_cap > 0 else "switched off by the caller"
-        self.prefix_detail = {"replayed_batches": 0, "full_batches": 0, "check_max_abs_diff": None}
+        #: `replayed_batches` is `served_main` plus `served_spill`; `full_batches` are the recomputed ones.
+        self.prefix_detail = {"replayed_batches": 0, "full_batches": 0, "check_max_abs_diff": None,
+                              "served_main": 0, "served_spill": 0}
 
     # ------------------------------------------------------------------ encoding and capture
     def _encode(self, prompts, opener=()):
@@ -464,6 +478,7 @@ class HFSubject:
         # The saved outputs were made under the old edit, so none of them holds any longer.
         self._prefix.clear()
         self._prefix_bytes = 0
+        self._spill_bytes = 0
         self._prefix_full = False
 
     def _under_standing_edit(self):
@@ -747,6 +762,7 @@ class HFSubject:
                 return full
             self._prefix_checked.add(min(blocks))
         self.prefix_detail["replayed_batches"] += 1
+        self.prefix_detail["served_spill" if entry.get("tier") == "spill" else "served_main"] += 1
         return got
 
     def _fill(self, enc):
@@ -765,9 +781,8 @@ class HFSubject:
         return logits, [written.get(k) for k in range(self.n_blocks)]
 
     def _keep(self, key, logits, outputs):
-        """Save one batch's block outputs if they fit under the cap; None when they don't."""
-        saved = []
-        size = 0
+        """Save one batch's block outputs if they fit the main cap or the spill tier; None when neither has room."""
+        streams, tails, size = [], [], 0
         for out in outputs:
             if out is None:
                 self._switch_prefix_off("a block did not run in the saved pass")
@@ -776,17 +791,67 @@ class HFSubject:
             if tail is not None and any(isinstance(t, torch.Tensor) for t in tail):
                 self._switch_prefix_off("this architecture's blocks hand on more than the stream")
                 return None
-            stream = A.unwrap(out).detach().to("cpu", copy=True)
+            stream = A.unwrap(out).detach()
             size += stream.numel() * stream.element_size()
-            saved.append((stream, tail))
-        if self._prefix_bytes + size > self._prefix_cap:
+            streams.append(stream)
+            tails.append(tail)
+        tier = None
+        if self._prefix_bytes + size <= self._prefix_cap:
+            tier, saved = "main", [s.to("cpu", copy=True) for s in streams]
+        elif self._spill_has_room(size):
+            if not self._spill_announced:
+                self._spill_announced = True
+                self.log(f"  prefix cache main tier full at {len(self._prefix)} batch(es) "
+                         f"({self._prefix_bytes / 2 ** 20:.0f} MiB); further batches go to the spill tier "
+                         f"(up to {self._spill_cap / 2 ** 20:.0f} MiB of host memory)")
+            saved = self._spill_copy(streams)
+            tier = "spill" if saved is not None else None
+        if tier is None:
+            spilt = f", spill tier {self._spill_bytes / 2 ** 20:.0f} MiB" if self._spill_cap else ""
             self.log(f"  prefix cache full at {len(self._prefix)} batch(es) "
-                     f"({self._prefix_bytes / 2 ** 20:.0f} MiB); later batches run in full")
+                     f"({self._prefix_bytes / 2 ** 20:.0f} MiB{spilt}); later batches run in full")
             self._prefix_full = True
             return None
-        self._prefix_bytes += size
-        self._prefix[key] = {"logits": logits.detach().cpu(), "outputs": saved}
+        if tier == "main":
+            self._prefix_bytes += size
+        else:
+            self._spill_bytes += size
+        self._prefix[key] = {"logits": logits.detach().cpu(), "outputs": list(zip(saved, tails)), "tier": tier}
         return self._prefix[key]
+
+    def _spill_has_room(self, size):
+        if self._spill_cap <= 0 or self._spill_bytes + size > self._spill_cap:
+            return False
+        try:
+            free = self._spill_guard() if self._spill_guard is not None else None
+        except (OSError, ValueError, RuntimeError) as error:
+            self.log(f"  prefix cache spill: free host memory could not be read ({error}); not spilling")
+            return False
+        return free is not None and size <= free // 2
+
+    def _spill_copy(self, streams):
+        """Copies of the streams in host memory, pinned where possible; None when the memory can't be had."""
+        saved = []
+        for stream in streams:
+            copy = None
+            if self._spill_pinned and torch.cuda.is_available():
+                try:
+                    copy = torch.empty(stream.shape, dtype=stream.dtype, pin_memory=True)
+                    copy.copy_(stream)
+                except RuntimeError as error:
+                    self._spill_pinned = False
+                    copy = None
+                    self.log(f"  prefix cache spill: pinned memory was refused ({str(error).splitlines()[0]}); "
+                             f"using ordinary host memory")
+            try:
+                if copy is None:
+                    copy = stream.to("cpu", copy=True)
+            except (RuntimeError, MemoryError) as error:
+                self.log(f"  prefix cache spill: host memory ran out ({str(error).splitlines()[0]}); "
+                         f"later batches run in full")
+                return None
+            saved.append(copy)
+        return saved
 
     def _replayed(self, entry, enc, direction, blocks):
         """The condition's logits with the blocks below its lowest edited block replayed, not run.
@@ -797,7 +862,7 @@ class HFSubject:
         """
         k = min(blocks)
         stream, tail = entry["outputs"][k - 1]
-        stream = stream.to(self.model.device)
+        stream = stream.to(self.model.device, non_blocking=stream.is_pinned())
         value = (stream, *tail) if tail is not None else stream
         originals = [self.layers[j] for j in range(k)]
         with self._under_standing_edit():
@@ -912,6 +977,7 @@ class HFSubject:
         self.prefix_off = why
         self._prefix.clear()
         self._prefix_bytes = 0
+        self._spill_bytes = 0
         self.log(f"  prefix cache off for this model: {why}; every condition runs in full")
 
     def _opener_counts(self, ids, top=12):

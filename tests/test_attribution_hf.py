@@ -9,6 +9,8 @@ agreement gate should say is decided here and not by the code being tested.
 """
 import dataclasses
 
+import json
+
 import pytest
 import torch
 from torch import nn
@@ -631,6 +633,165 @@ def test_a_full_cache_says_so_once_and_keeps_what_it_has():
         assert torch.equal(_logits(capped, _axis0(), blocks), _logits(full, _axis0(), blocks)), blocks
     assert len(capped._prefix) == 1
     assert sum("prefix cache full" in line for line in logged) == 1
+
+
+# ------------------------------------------------------------------------- the spill tier
+
+def _one_batch_bytes():
+    probe = H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None)
+    _logits(probe, _axis0(), (2,))
+    first = next(iter(probe._prefix.values()))["outputs"]
+    return sum(stream.numel() * stream.element_size() for stream, _ in first)
+
+
+def _sizes():
+    """Each batch's saved bytes, in the order the batches arrive (21504, 23040, 11520 on this stand-in)."""
+    probe = H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None)
+    _logits(probe, _axis0(), (2,))
+    return [sum(stream.numel() * stream.element_size() for stream, _ in e["outputs"]) for e in probe._prefix.values()]
+
+
+def _front_only_batches():
+    """The batches that run in full whatever the cache holds: the conditions that edit block 0."""
+    plain = H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None)
+    for blocks in CONDITIONS:
+        _logits(plain, _axis0(), blocks)
+    return plain.prefix_detail["full_batches"]
+
+
+def _spiller(main, spill, guard=lambda: 10 ** 12, log=None):
+    return H.HFSubject(StubModel(), StubTok(), batch=8, log=log or (lambda *_: None), prefix_cache_bytes=main,
+                       prefix_spill_bytes=spill, spill_guard=guard)
+
+
+def _same_as_full(subject):
+    full = H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None, prefix_cache_bytes=0)
+    for blocks in CONDITIONS:
+        assert torch.equal(_logits(subject, _axis0(), blocks), _logits(full, _axis0(), blocks)), blocks
+
+
+def test_a_spill_tier_with_room_serves_every_batch_from_the_cache_with_the_same_numbers():
+    sizes = _sizes()
+    logged = []
+    spiller = _spiller(sizes[0], sum(sizes[1:]), log=logged.append)
+    _same_as_full(spiller)
+    tiers = sorted(e["tier"] for e in spiller._prefix.values())
+    assert tiers.count("main") == 1 and tiers.count("spill") == len(tiers) - 1 > 0
+    assert spiller.prefix_detail["full_batches"] == _front_only_batches()
+    assert spiller.prefix_detail["served_spill"] > 0 and spiller.prefix_detail["served_main"] > 0
+    assert spiller.prefix_detail["replayed_batches"] == (spiller.prefix_detail["served_spill"]
+                                                         + spiller.prefix_detail["served_main"])
+    assert not any("run in full" in line for line in logged)
+    assert sum("main tier full" in line for line in logged) == 1
+
+
+def test_a_spill_tier_with_partial_room_recomputes_the_rest_with_the_same_numbers():
+    sizes = _sizes()
+    logged = []
+    spiller = _spiller(sizes[0], sizes[1], log=logged.append)
+    _same_as_full(spiller)
+    assert sorted(e["tier"] for e in spiller._prefix.values()) == ["main", "spill"]
+    assert spiller.prefix_detail["full_batches"] > _front_only_batches()
+    assert sum("prefix cache full" in line for line in logged) == 1
+    assert spiller._spill_bytes == sizes[1] and spiller._prefix_bytes == sizes[0]
+
+
+def test_a_spill_tier_with_no_room_behaves_as_if_it_were_not_asked_for():
+    one = _one_batch_bytes()
+    spiller = _spiller(one, 0)
+    _same_as_full(spiller)
+    assert [e["tier"] for e in spiller._prefix.values()] == ["main"]
+    assert spiller.prefix_detail["served_spill"] == 0
+
+
+@pytest.mark.parametrize("guard", [lambda: None, lambda: 1, lambda: (_ for _ in ()).throw(OSError("gone"))])
+def test_a_guard_that_cannot_vouch_for_free_memory_refuses_the_spill_and_the_run_goes_on(guard):
+    one = _one_batch_bytes()
+    logged = []
+    spiller = _spiller(one, 10 * one, guard=guard, log=logged.append)
+    _same_as_full(spiller)
+    assert [e["tier"] for e in spiller._prefix.values()] == ["main"]
+    assert spiller.prefix_detail["served_spill"] == 0 and spiller.prefix_detail["full_batches"] > 0
+
+
+def test_no_guard_means_no_spill():
+    one = _one_batch_bytes()
+    spiller = _spiller(one, 10 * one, guard=None)
+    _same_as_full(spiller)
+    assert spiller._spill_bytes == 0
+
+
+def test_a_batch_may_take_at_most_half_of_the_free_memory():
+    one = _one_batch_bytes()
+    assert _spiller(one, 10 * one, guard=lambda: 2 * one)._spill_has_room(one)
+    assert not _spiller(one, 10 * one, guard=lambda: 2 * one - 1)._spill_has_room(one)
+
+
+def test_a_spill_that_runs_out_of_host_memory_falls_back_to_recomputing(monkeypatch):
+    one = _one_batch_bytes()
+    logged = []
+    spiller = _spiller(one, 10 * one, log=logged.append)
+    real = torch.Tensor.to
+
+    def failing(self, *a, **k):
+        if a and a[0] == "cpu" and spiller._prefix_bytes >= one:
+            raise MemoryError("no room")
+        return real(self, *a, **k)
+    monkeypatch.setattr(torch.Tensor, "to", failing)
+    _logits(spiller, _axis0(), (2,))
+    monkeypatch.undo()
+    assert any("host memory ran out" in line for line in logged)
+    assert [e["tier"] for e in spiller._prefix.values()] == ["main"]
+    _same_as_full(spiller)
+
+
+def test_pinned_memory_refused_falls_back_to_ordinary_host_memory(monkeypatch):
+    one = _one_batch_bytes()
+    logged = []
+    spiller = _spiller(one, 10 * one, log=logged.append)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    real = torch.empty
+
+    def empty(*a, **k):
+        if k.get("pin_memory"):
+            raise RuntimeError("cudaHostAlloc failed\nmore")
+        return real(*a, **k)
+    monkeypatch.setattr(torch, "empty", empty)
+    _same_as_full(spiller)
+    assert spiller._spill_pinned is False
+    assert sum("pinned memory was refused" in line for line in logged) == 1
+    assert spiller.prefix_detail["served_spill"] > 0
+
+
+def test_a_changed_standing_edit_empties_the_spill_tier_too():
+    one = _one_batch_bytes()
+    spiller = _spiller(one, 10 * one)
+    _logits(spiller, _axis0(), (2,))
+    assert spiller._spill_bytes > 0
+    spiller.edit_standing(_axis0(), (0,))
+    assert spiller._spill_bytes == 0 and spiller._prefix == {}
+
+
+def test_a_negative_spill_budget_is_refused():
+    with pytest.raises(A.AttributionError, match="below zero"):
+        _spiller(1, -1)
+
+
+def test_the_whole_attribution_is_identical_with_and_without_the_spill():
+    def arm(prefix, base):
+        prompts = [f"{prefix} request {i} " + "x" * (i % base) for i in range(40)]
+        return A.arm(prompts, [f"{prefix}{i}" for i in range(40)])
+    parts = {k: {"harmful": arm("bad", 7), "harmless": arm("fine", 5)}
+             for k in ("fit", "search", "measure")}
+    one = _one_batch_bytes()
+
+    def run(**kwargs):
+        subject = H.HFSubject(StubModel(), StubTok(), batch=8, log=lambda *_: None, **kwargs)
+        return A.attribute(subject, parts, seed=0, conv=FAST), subject
+    plain, _ = run(prefix_cache_bytes=one)
+    spilt, subject = run(prefix_cache_bytes=one, prefix_spill_bytes=10 ** 9, spill_guard=lambda: 10 ** 12)
+    assert subject.prefix_detail["served_spill"] > 0
+    assert json.dumps(spilt, sort_keys=True, default=str) == json.dumps(plain, sort_keys=True, default=str)
 
 
 # ---------------------------------------------------------------- the readout position (2026-10-20)

@@ -6,6 +6,7 @@
 import argparse
 import hashlib
 import json
+import re
 
 import pytest
 from test_attribution_hf import STUB_IDENTITY, StubModel, StubTok, _parts
@@ -484,3 +485,63 @@ def test_without_keep_raw_no_raw_file_is_written(monkeypatch, tmp_path):
     written = json.loads((tmp_path / "attribution.json").read_text())
     assert not list(tmp_path.glob("raw-*.pt"))
     assert all("raw" not in a for a in written["arms"].values())
+
+
+# ------------------------------------------------------------------------- the prefix cache spill
+
+TINY_CACHE_GIB = 25000 / 2 ** 30      # about one batch of the stand-in model
+
+
+def _written(monkeypatch, tmp_path, name, **flags):
+    out = tmp_path / name
+    out.mkdir()
+    lines = []
+    R.run(_stub_run(monkeypatch, out, **flags), log=lines.append)
+    return json.loads((out / "attribution.json").read_text()), lines
+
+
+def _share(lines):
+    line = next(x for x in lines if x.startswith("projection:"))
+    return int(re.search(r"with (\d+)% of the batches", line).group(1))
+
+
+def test_the_spill_flag_is_off_by_default_and_takes_a_size_or_none():
+    parse = R.build_parser().parse_args
+    assert parse(["m", "--track", "t", "--out", "o"]).prefix_cache_spill == 0.0
+    assert parse(["m", "--track", "t", "--out", "o", "--prefix-cache-spill"]).prefix_cache_spill == R.PREFIX_SPILL_GIB
+    assert parse(["m", "--track", "t", "--out", "o", "--prefix-cache-spill", "3"]).prefix_cache_spill == 3.0
+
+
+def test_the_artefact_is_identical_with_and_without_the_spill(monkeypatch, tmp_path):
+    monkeypatch.setattr(R, "_free_host_bytes", lambda: 64 * 2 ** 30)
+    plain, _ = _written(monkeypatch, tmp_path, "a", prefix_cache_gib=TINY_CACHE_GIB)
+    spilt, lines = _written(monkeypatch, tmp_path, "b", prefix_cache_gib=TINY_CACHE_GIB, prefix_cache_spill=1.0)
+    served = [line for line in lines if "served from the main cache" in line]
+    assert any(int(re.search(r"spill tier (\d+)", line).group(1)) > 0 for line in served), served
+    plain.pop("created"), spilt.pop("created")
+    assert json.dumps(spilt, sort_keys=True) == json.dumps(plain, sort_keys=True)
+
+
+def test_the_spill_budget_is_held_to_half_the_free_memory_less_the_main_cache(monkeypatch):
+    args = R.build_parser().parse_args(["m", "--track", "t", "--out", "o", "--prefix-cache-spill", "100"])
+    lines = []
+    monkeypatch.setattr(R, "_free_host_bytes", lambda: 20 * 2 ** 30)
+    assert R._spill_budget(args, 2 * 2 ** 30, lines.append) == 8 * 2 ** 30
+    monkeypatch.setattr(R, "_free_host_bytes", lambda: 4 * 2 ** 30)
+    assert R._spill_budget(args, 2 * 2 ** 30, lines.append) == 0
+    assert "no room" in lines[-1]
+    monkeypatch.setattr(R, "_free_host_bytes", lambda: None)
+    assert R._spill_budget(args, 2 * 2 ** 30, lines.append) == 0
+    assert "could not be measured" in lines[-1]
+    assert R._spill_budget(args, 0, lines.append) == 0
+    assert "main cache is off" in lines[-1]
+    args.prefix_cache_spill = 0.0
+    assert R._spill_budget(args, 2 * 2 ** 30, lines.append) == 0
+
+
+def test_the_projection_counts_the_spilled_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(R, "_free_host_bytes", lambda: 64 * 2 ** 30)
+    _, without = _written(monkeypatch, tmp_path, "a", prefix_cache_gib=TINY_CACHE_GIB)
+    _, within = _written(monkeypatch, tmp_path, "b", prefix_cache_gib=TINY_CACHE_GIB, prefix_cache_spill=1.0)
+    assert _share(within) > _share(without)
+    assert any("of spill" in x for x in within if x.startswith("projection:"))

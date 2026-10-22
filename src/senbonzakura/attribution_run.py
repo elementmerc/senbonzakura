@@ -32,6 +32,12 @@ from ._version import __version__
 #: this module doesn't import torch until a run starts, so `--help` stays quick; a test keeps the two equal.
 PREFIX_CACHE_GIB = 2.0
 
+#: What `--prefix-cache-spill` allows when it is given with no number.
+PREFIX_SPILL_GIB = 8.0
+#: How much of the host memory that is free the spill tier may take, as a fraction. Half, so a run that
+#: spills still leaves the rest for the loader, the tokeniser and everything else on the machine.
+SPILL_HOST_FRACTION = 0.5
+
 SCHEMA = "senbonzakura-attribution/1"
 ARMS_DISAGREE = "arms_disagree"
 SELFTEST_FAILED = "instrument_failed_selftest"
@@ -293,6 +299,13 @@ def build_parser():
                    help="memory the block sweep may use to replay the blocks below each edited one, in "
                         "GiB (default %(default).0f; 0 turns it off). More of the run fits with more "
                         "memory; the numbers are the same either way")
+    p.add_argument("--prefix-cache-spill", type=argresolve.real_number("--prefix-cache-spill", minimum=0),
+                   nargs="?", const=PREFIX_SPILL_GIB, default=0.0, metavar="GIB",
+                   help="let the block sweep keep more replayed blocks in ordinary host memory, past the "
+                        "--prefix-cache-gib cap, at most this many GiB (default %(const).0f when given with no "
+                        "number; off when the flag is absent). It never takes more than half of the host memory "
+                        "free when it checks, falls back to recomputing when there is no room, and gives the "
+                        "same numbers")
     p.add_argument("--fast-sweep", action="store_true",
                    help="share the forward passes of the front blocks, and the greedy replies between the arms "
                         "and the stand-in, when the numbers are provably the same; every number is bitwise "
@@ -402,7 +415,9 @@ def run(args, *, log=print):
     nb = H.HFSubject(model, tok).n_blocks
     fingerprint = {"model": identity, "digests": digests, "seed": args.seed,
                    "instrument": A.INSTRUMENT_VERSION, "conventions": conv.__dict__}
-    _project(model, tok, parts, nb, conv, args, log)
+    cache_cap = int(args.prefix_cache_gib * 2 ** 30)
+    spill_bytes = _spill_budget(args, cache_cap, log)
+    _project(model, tok, parts, nb, conv, args, log, spill_bytes=spill_bytes)
 
     arms = {}
     todo = []
@@ -423,7 +438,8 @@ def run(args, *, log=print):
     log(f"sweep: {sweep}" + ("; greedy replies are shared between the arms and the stand-in"
                              if args.fast_sweep else ""))
     subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log, prefix_cache_bytes=cache_bytes,
-                               sweep=sweep, reply_store=reply_store)
+                               sweep=sweep, reply_store=reply_store,
+                               prefix_spill_bytes=spill_bytes, spill_guard=_free_host_bytes)
                 for n in todo}
     with _stage(log, "readout tokens"):
         for subject in subjects.values():
@@ -450,6 +466,8 @@ def run(args, *, log=print):
         detail = subject.prefix_detail
         log(f"[{arm_name}] prefix cache: {detail['replayed_batches']} batch(es) replayed from the lower "
             f"blocks, {detail['full_batches']} run in full"
+            + (f" (served from the main cache {detail['served_main']}, from the spill tier "
+               f"{detail['served_spill']}, recomputed {detail['full_batches']})" if spill_bytes else "")
             + (f"; off: {subject.prefix_off}" if subject.prefix_off else
                f"; checked against a full pass, largest difference {detail['check_max_abs_diff']}"))
 
@@ -525,7 +543,38 @@ def projected_passes(nb, conv, cached_share=1.0):
     return cached_share * cached + (1 - cached_share) * full
 
 
-def _project(model, tok, parts, nb, conv, args, log):
+def _free_host_bytes():
+    """Host memory free right now under the tighter of the cgroup limit and the kernel's own figure, or None."""
+    from . import resources
+    return resources.host_memory_budget()[0]
+
+
+def _spill_budget(args, cache_cap, log):
+    """Bytes the spill tier may use: what was asked for, held to half the host memory free, less the main cap.
+
+    Zero when the flag is off, when the host memory can't be measured (no guessing), or when there is no
+    room. The tier checks the free memory again before every batch it spills, so this is the ceiling and not
+    a promise.
+    """
+    asked = int(args.prefix_cache_spill * 2 ** 30)
+    if asked <= 0 or cache_cap <= 0:
+        if asked > 0:
+            log("prefix cache spill: the main cache is off, so there is nothing to spill from; spill off")
+        return 0
+    free = _free_host_bytes()
+    if free is None:
+        log("prefix cache spill: host memory could not be measured on this machine, so the spill is off")
+        return 0
+    allowed = int(free * SPILL_HOST_FRACTION) - cache_cap
+    got = max(0, min(asked, allowed))
+    log(f"prefix cache spill: asked for {asked / 2 ** 30:.1f} GiB; {free / 2 ** 30:.1f} GiB of host memory is free "
+        f"(the cgroup limit counted), half of it less the {cache_cap / 2 ** 30:g} GiB main cache leaves "
+        f"{max(0, allowed) / 2 ** 30:.1f} GiB, so the spill tier may hold up to {got / 2 ** 30:.1f} GiB"
+        + ("" if got else "; no room, so batches past the main cache run in full"))
+    return got
+
+
+def _project(model, tok, parts, nb, conv, args, log, *, spill_bytes=0):
     """Time a real pass and refuse before the long work if it will not fit the budget."""
     from . import attribution_hf as H
     probe = H.HFSubject(model, tok, batch=args.batch, log=log)
@@ -550,13 +599,15 @@ def _project(model, tok, parts, nb, conv, args, log):
     element = torch.empty((), dtype=next(model.parameters()).dtype).element_size()
     need = nb * tokens * width * element * prompts
     cap = int(args.prefix_cache_gib * 2 ** 30)
-    share = 1.0 if need <= 0 else min(1.0, cap / need)
+    share = 1.0 if need <= 0 else min(1.0, (cap + spill_bytes) / need)
     passes = projected_passes(nb, conv, share)
     minutes = passes * prompts * per_prompt / 60.0
     log(f"projection: {per_prompt * 1000:.1f} ms per prompt with every block hooked; "
         f"{passes:.0f} passes' worth x {prompts} prompts, shared by both arms, is about {minutes:.0f} "
         f"minutes of readout work, with {share:.0%} of the batches inside the prefix cache's "
-        f"{args.prefix_cache_gib:g} GiB (a projection from {len(sample)} prompts, generation "
+        f"{args.prefix_cache_gib:g} GiB"
+        + (f" plus up to {spill_bytes / 2 ** 30:.1f} GiB of spill" if spill_bytes else "")
+        + f" (a projection from {len(sample)} prompts, generation "
         f"not included)")
     if minutes > args.budget_minutes:
         raise SystemExit(

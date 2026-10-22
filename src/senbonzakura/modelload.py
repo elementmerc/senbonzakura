@@ -46,7 +46,7 @@ from pathlib import Path
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-from . import argresolve, checkpoint, hubmessage, loadreport
+from . import argresolve, checkpoint, hubmessage, legacyremote, loadreport
 from .chattemplate import ensure_chat_template
 
 #: Packages each format needs, as (import name, distribution name), and the extra that brings them.
@@ -353,6 +353,7 @@ def provenance(p, dtype_name):
         "dequantised_from": p.dequantised_from,
         "gguf_file": p.gguf_file,
         "backend": _backend_record(p),
+        "remote_code_adapters": [],
         "precision": precision_label(p, dtype_name),
     }
 
@@ -360,7 +361,7 @@ def provenance(p, dtype_name):
 #: What an older artefact, written before these fields, is read as.
 LEGACY = {"format": "safetensors", "quant_method": None, "quant_bits": None, "quant_type": None,
           "on_the_fly": False, "dequantised": False, "dequantised_from": None, "gguf_file": None,
-          "backend": None}
+          "backend": None, "remote_code_adapters": []}
 
 
 def with_defaults(identity):
@@ -1230,10 +1231,15 @@ def _load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
             attempt["quantization_config"] = kernel_config(chosen, kernel)
         more = position + 1 < len(kernels)
         try:
-            model, info = AutoModelForCausalLM.from_pretrained(source, **attempt)
+            # A model that ships transformers 4 code gets two narrow, logged adaptations while it loads
+            # (see `legacyremote`); for every other load this does nothing.
+            with legacyremote.adapting(trust_remote_code, log=_log) as legacy:
+                model, info = AutoModelForCausalLM.from_pretrained(source, **attempt)
             if kernel:
                 chosen = replace(chosen, kernel=kernel)
             break
+        except legacyremote.Refusal as e:
+            raise SystemExit(f"senbonzakura: '{model_id}' can't be loaded. {e}") from e
         # `ValueError` beside `OSError` for the same reason as the tokenizer above: a file that is
         # present and malformed fails in a parser rather than in the filesystem. A missing file is
         # never retried with another kernel; a kernel that could not be built or run (which surfaces
@@ -1258,5 +1264,8 @@ def _load_model_and_tokenizer(model_id, device="cuda", load_in_4bit=False,
     if "device_map" not in kw:                          # cpu path
         model = model.to(device)
     model.eval()
-    attach(model, chosen, str(dtype).removeprefix("torch."))
+    loaded = attach(model, chosen, str(dtype).removeprefix("torch."))
+    # The live list: an adaptation that first acts later (a mask call during a forward pass) lands in it too.
+    loaded["remote_code_adapters"] = legacy.applied
+    legacyremote.note_if_not_adapted(model, legacy, _log)
     return model, tok

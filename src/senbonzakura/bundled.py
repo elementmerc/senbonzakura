@@ -332,6 +332,30 @@ class BundledTrackError(Exception):
     """
 
 
+#: A private extraction folder older than this was left by a process that died; a live one is minutes old at most.
+LEFTOVER_AGE_S = 3600
+
+
+def _sweep_leftovers(target):
+    """Remove extraction folders that killed runs left behind. The old shared ".unpacking" name is never in use any
+    more, so it always goes; a private one goes only once it is too old to belong to a run still extracting."""
+    import shutil
+    import time
+    for leftover in target.parent.glob(f"{target.name}.*"):
+        legacy = leftover.name == f"{target.name}.unpacking"
+        private = leftover.name.startswith((f"{target.name}.unpacking-", f"{target.name}.stale-"))
+        try:
+            old = time.time() - leftover.stat().st_mtime > LEFTOVER_AGE_S
+        except OSError:
+            continue
+        if leftover.is_dir() and (legacy or (private and old)):
+            shutil.rmtree(leftover, ignore_errors=True)
+
+
+#: How many times a freshly extracted track tries to replace an older one that keeps reappearing.
+PUBLISH_ATTEMPTS = 3
+
+
 def ensure(log=print):
     """The bundled track as a directory on disk, extracting it the first time it is needed."""
     target = cache_dir()
@@ -358,21 +382,36 @@ def ensure(log=print):
     if _cache_is_current(target):
         notice(log=log)
         return target
-    tmp = target.with_name(target.name + ".unpacking")
-    if tmp.exists():
-        import shutil
-        shutil.rmtree(tmp)
-    extract(tmp, log=log)
-    inner = tmp / "track"
-    source = inner if inner.is_dir() else tmp
-    if target.exists():
-        import shutil
-        shutil.rmtree(target)
-    source.rename(target)
-    if tmp.exists():
-        import shutil
+    # TWO PROCESSES MAY EXTRACT AT ONCE (two jobs starting together on one machine, 2026-10-22), so each one
+    # extracts into its own folder and stamps it there, and a single rename publishes a whole, stamped track.
+    # The shared ".unpacking" folder this replaced let one process delete files the other was writing or
+    # reading, and a run then found an evaluation split missing a shard it listed.
+    import shutil
+    import uuid
+    _sweep_leftovers(target)
+    tmp = target.with_name(f"{target.name}.unpacking-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+    try:
+        extract(tmp, log=log)
+        inner = tmp / "track"
+        source = inner if inner.is_dir() else tmp
+        (source / STAMP_NAME).write_text(packed_digest() + "\n", encoding="utf-8")
+        for _ in range(PUBLISH_ATTEMPTS):
+            try:
+                source.rename(target)
+                return target
+            except OSError:
+                if _cache_is_current(target):
+                    return target   # another process published the same track first; this copy is discarded
+                if target.exists():
+                    # An older track: moved aside rather than deleted in place, so the rename above is atomic.
+                    aside = target.with_name(f"{target.name}.stale-{uuid.uuid4().hex[:8]}")
+                    try:
+                        target.rename(aside)
+                    except OSError:
+                        continue
+                    shutil.rmtree(aside, ignore_errors=True)
+        raise BundledTrackError(
+            f"the bundled evaluation track was extracted but could not be put in place at {target} after "
+            f"{PUBLISH_ATTEMPTS} tries. Another program may be holding that folder open; close it and try again.")
+    finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    # Stamped LAST, after everything else is in place, so an interrupted extraction leaves a cache
-    # that fails the check and gets redone rather than one that passes it and is half a track.
-    (target / STAMP_NAME).write_text(packed_digest() + "\n", encoding="utf-8")
-    return target

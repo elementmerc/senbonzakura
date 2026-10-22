@@ -13,6 +13,7 @@ import io
 import json
 import os
 import tarfile
+import time
 
 import pytest
 from artefacts import needs_track
@@ -400,3 +401,41 @@ def test_the_digest_is_of_the_packed_bytes_and_is_stable():
     assert len(a) == 64
     import hashlib
     assert a == hashlib.sha256(bundled.data_path().read_bytes()).hexdigest()
+
+
+@needs_track
+def test_ensure_from_several_processes_at_once_gives_every_one_a_whole_track(tmp_path, monkeypatch):
+    """2026-10-22: two jobs starting together on one pod shared one unpack folder, and one found an evaluation split
+    missing a shard it listed. Each extraction is now private and published by one rename."""
+    import concurrent.futures
+    import subprocess
+    import sys
+    code = ("import os, sys; from senbonzakura import bundled\n"
+            "t = bundled.ensure(log=lambda *a: None)\n"
+            "assert bundled._cache_is_current(t), 'not current'\n"
+            "assert (t / 'track.json').is_file()\n"
+            "print(t)\n")
+    env = {**os.environ, "XDG_CACHE_HOME": str(tmp_path)}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        runs = list(pool.map(lambda _: subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                                                      text=True, timeout=600), range(4)))
+    assert all(r.returncode == 0 for r in runs), [r.stderr[-800:] for r in runs if r.returncode]
+    assert len({r.stdout.strip() for r in runs}) == 1
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    target = bundled.cache_dir()
+    assert not list(target.parent.glob(f"{target.name}.unpacking-*")), "a private unpack folder was left behind"
+
+
+@needs_track
+def test_a_recent_private_unpack_is_left_alone_and_an_old_one_is_swept(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    target = bundled.cache_dir()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    live = target.with_name(f"{target.name}.unpacking-1-aaaaaaaa")
+    dead = target.with_name(f"{target.name}.unpacking-2-bbbbbbbb")
+    live.mkdir()
+    dead.mkdir()
+    old = time.time() - bundled.LEFTOVER_AGE_S - 60
+    os.utime(dead, (old, old))
+    bundled.ensure(log=lambda *a: None)
+    assert live.exists() and not dead.exists()

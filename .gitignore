@@ -209,3 +209,7 @@ rust/target/
 # every other safetensors file stays ignored, and any new exception needs the same justification.
 !recipes/conformance/**/*.safetensors
 
+
+# The compiled half, when built in place for development (rust/ is its source; wheels carry it).
+/src/senbonzakura/_native*.so
+/src/senbonzakura/_native*.pyd

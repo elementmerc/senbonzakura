@@ -96,6 +96,18 @@ _THINKING = re.compile(r"<\|?/?(think|thinking|reasoning|analysis)\|?>", re.IGNO
 _DATED = re.compile(r"strftime_now|datetime\.now|\bnow\(\)")
 
 
+def uses_date(tok):
+    """True when the tokenizer's chat template asks for the current date.
+
+    A template given as several named templates counts if any of them does. A tokenizer with no template
+    text to read (a stand-in, or one that renders some other way) is not dated, which is why this answers
+    for what the template says and never for what a particular render happened to print.
+    """
+    source = getattr(tok, "chat_template", None)
+    texts = source.values() if isinstance(source, dict) else [source]
+    return any(isinstance(t, str) and _DATED.search(t) for t in texts)
+
+
 @dataclass(frozen=True)
 class Finding:
     """One thing observed about the template, and what it does to a measurement."""
@@ -328,8 +340,7 @@ def _check_deterministic(tok):
                 "the same conversation rendered differently on two consecutive calls",
                 "Two runs of one command are then two different measurements, and no figure from "
                 "this model can be compared with another."))
-    source = getattr(tok, "chat_template", None)
-    if isinstance(source, str) and _DATED.search(source):
+    if uses_date(tok):
         found.append(Finding(
             "dated_template", SUSPECT,
             "the template puts the current date into every prompt",

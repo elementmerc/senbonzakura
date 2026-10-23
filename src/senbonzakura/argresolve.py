@@ -53,6 +53,22 @@ SLICES_ROWS = frozenset({
 })
 
 
+def calendar_date(what):
+    """An argparse `type=` for a day written YYYY-MM-DD, kept as that text.
+
+    The check is `firsttoken.check_template_date`, imported when a date is actually given so that a
+    help page, which never gives one, still doesn't load the machine-learning libraries.
+    """
+    def parse(value):
+        from .firsttoken import check_template_date
+        try:
+            check_template_date(value)
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(f"{what}: {e}.") from None
+        return value
+    return parse
+
+
 def whole_number(what, *, minimum=0):
     """An argparse `type=` for a count or an offset: a whole number, never below `minimum`.
 

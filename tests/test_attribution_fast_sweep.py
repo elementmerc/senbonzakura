@@ -78,17 +78,18 @@ def test_only_a_front_prefix_short_of_every_block_is_chained(blocks, expected):
     assert H.is_front_prefix(blocks, 4) is expected
 
 
-def test_the_sweep_names_are_checked_and_the_reference_is_the_default():
+def test_the_sweep_names_are_checked_and_a_bare_subject_still_defaults_to_the_reference():
     assert H.SWEEPS == ("reference", "fast")
     assert H.HFSubject(_tiny_llama(), CharTok()).sweep == H.SWEEP_REFERENCE
     with pytest.raises(A.AttributionError, match="not a sweep"):
         H.HFSubject(_tiny_llama(), CharTok(), sweep="turbo")
 
 
-def test_the_flag_reaches_the_parser_and_defaults_to_the_reference():
+def test_the_command_runs_the_fast_sweep_unless_the_reference_is_asked_for():
     base = ["m", "--track", "t", "--out", "o"]
-    assert R.build_parser().parse_args(base).fast_sweep is False
-    assert R.build_parser().parse_args([*base, "--fast-sweep"]).fast_sweep is True
+    assert R.build_parser().parse_args(base).reference_sweep is False
+    assert R.build_parser().parse_args([*base, "--reference-sweep"]).reference_sweep is True
+    assert R.build_parser().parse_args([*base, "--fast-sweep"]).reference_sweep is False
 
 
 # --------------------------------------------------------- fast against reference, bitwise

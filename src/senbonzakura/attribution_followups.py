@@ -235,6 +235,15 @@ def _loading_options(args):
             "gguf_file": args.gguf_file or None, "trust_remote_code": args.trust_remote_code}
 
 
+def _recorded_template_date(original):
+    """The date the original run pinned for its chat template, or None for an artefact that recorded none.
+
+    A follow-up refits the original's direction and has to land on it, which a dated template only allows
+    when its prompts are the original's, so the original's date is used rather than today's.
+    """
+    return (original.get("sampling") or {}).get("template_date")
+
+
 def run(args, *, log=print):
     import json
     import time
@@ -262,7 +271,8 @@ def run(args, *, log=print):
             f"these are not the inputs the original run used (differing: {differing}), so a "
             f"follow-up on them would answer a different question.")
 
-    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log)
+    subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log,
+                               template_date=_recorded_template_date(original))
                 for n in (H.ARM_DISJOINT, H.ARM_PURITY)}
     for s in subjects.values():
         s.prepare(parts)
@@ -348,7 +358,8 @@ def run_start(args, *, log=print):
     used = set(parts["measure"]["harmful"].groups) | set(parts["confirm"]["harmful"].groups)
     fresh, fresh_digest = H.fresh_requests(args.track, used, n=args.n_fresh, seed=args.seed)
 
-    subject = H.HFSubject(model, tok, batch=args.batch, log=log)
+    subject = H.HFSubject(model, tok, batch=args.batch, log=log,
+                          template_date=_recorded_template_date(original))
     nb = subject.n_blocks
     res = {k: {s: subject.residuals(list(parts[k][s].prompts)) for s in ("harmful", "harmless")}
            for k in ("fit", "search")}

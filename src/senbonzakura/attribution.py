@@ -359,8 +359,12 @@ def _conditions(n_blocks):
 def _readouts(subject, arm_, direction, conds):
     import torch  # local: this module is import-light so `--help` does not pay for torch
     rows = []
-    for blocks in conds.values():
-        out = torch.as_tensor(subject.readout(list(arm_.prompts), direction, blocks),
+    prompts = list(arm_.prompts)
+    # A subject that can answer many conditions together (the wavefront) does so; the others are asked one by one.
+    many = getattr(subject, "readouts", None)
+    together = None if many is None else many(prompts, direction, list(conds.values()))
+    for i, blocks in enumerate(conds.values()):
+        out = torch.as_tensor(subject.readout(prompts, direction, blocks) if together is None else together[i],
                               dtype=torch.float64)
         if out.shape != (len(arm_.prompts),) or not bool(torch.isfinite(out).all()):
             raise AttributionError(

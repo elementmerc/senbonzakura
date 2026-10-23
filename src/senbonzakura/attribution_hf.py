@@ -28,6 +28,7 @@ import time
 import torch
 
 from . import attribution as A
+from . import attribution_wavefront as W
 from . import metrics, modelmap
 from .firsttoken import last_token_logits, render_chat
 
@@ -63,6 +64,14 @@ PREFIX_CHECK_ATOL = 1e-3
 #: itself against a full pass on its first batch, and switches itself off, saying so, if they differ.
 SWEEP_REFERENCE, SWEEP_FAST = "reference", "fast"
 SWEEPS = (SWEEP_REFERENCE, SWEEP_FAST)
+
+#: THE EXECUTOR. `reference` runs one condition at a time through the whole model. `wavefront` walks the model
+#: once per group of micro batches and pushes every condition through each block before moving on, with the
+#: blocks parked on the host and copied to the card one ahead of the one that runs (see attribution_wavefront).
+#: `wavefront-resident` is the same walk with the blocks left where they are, for a model that fits the card.
+#: All three give bitwise equal numbers; the wavefront proves it on the first micro batch of its first run.
+EXECUTOR_REFERENCE, EXECUTOR_WAVEFRONT, EXECUTOR_RESIDENT = "reference", "wavefront", "wavefront-resident"
+EXECUTORS = (EXECUTOR_REFERENCE, EXECUTOR_WAVEFRONT, EXECUTOR_RESIDENT)
 
 
 def is_front_prefix(blocks, n_blocks):
@@ -199,16 +208,29 @@ class SharedReadouts:
         self.chains = {}
         self.hits = self.misses = 0
 
-    def fetch(self, prompts, direction, blocks, compute, opener=()):
+    @staticmethod
+    def key_for(prompts, direction, blocks, opener=()):
         # Order matters (the readouts come back in prompt order), and a hash that can collide would
         # hand one question another's answer, so the key is a cryptographic digest of the exact
         # prompts in order.
-        key = (hashlib.sha256("\x00".join(prompts).encode("utf-8")).hexdigest(),
-               None if direction is None else hashlib.sha256(
-                   direction.detach().float().cpu().numpy().tobytes()).hexdigest(),
-               tuple(blocks),
-               # Two arms can read past different openings, and the same prompts then give different logits.
-               tuple(opener))
+        return (hashlib.sha256("\x00".join(prompts).encode("utf-8")).hexdigest(),
+                None if direction is None else hashlib.sha256(
+                    direction.detach().float().cpu().numpy().tobytes()).hexdigest(),
+                tuple(blocks),
+                # Two arms can read past different openings, and the same prompts then give different logits.
+                tuple(opener))
+
+    def peek(self, key):
+        """The saved answer for `key`, or None, without counting it as a hit."""
+        return self._store.get(key)
+
+    def put(self, key, value):
+        """Save an answer computed elsewhere, a whole group of conditions at once. Counts as a miss."""
+        self.misses += 1
+        self._store[key] = value
+
+    def fetch(self, prompts, direction, blocks, compute, opener=()):
+        key = self.key_for(prompts, direction, blocks, opener)
         if key in self._store:
             self.hits += 1
         else:
@@ -380,7 +402,8 @@ class HFSubject:
 
     def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None,
                  prefix_cache_bytes=None, sweep=SWEEP_REFERENCE, reply_store=None,
-                 prefix_spill_bytes=0, spill_guard=None):
+                 prefix_spill_bytes=0, spill_guard=None, executor=EXECUTOR_REFERENCE,
+                 wavefront_state_bytes=None):
         if arm not in ARM_DECLARATIONS:
             raise A.AttributionError(f"{arm!r} is not a readout arm; the arms are "
                                      f"{sorted(ARM_DECLARATIONS)}.")
@@ -401,6 +424,11 @@ class HFSubject:
                 f"the behaviour label is {self.label!r}, which is not callable. It must be a "
                 f"function from one reply's text to True when the reply shows the behaviour.")
         self._standing = []
+        self.executor = EXECUTOR_REFERENCE
+        self._wavefront = None
+        self._wavefront_state_bytes = W.STATE_BYTES if wavefront_state_bytes is None else wavefront_state_bytes
+        #: The wavefront's answers for a subject that shares none, so a repeated question isn't walked again.
+        self._wf_own = None
         self._encoded = {}
         self._lengths = {}
         self._shared = None
@@ -430,11 +458,24 @@ class HFSubject:
         self._spill_pinned = True
         self._spill_announced = False
         self._prefix_checked = set()
+        self.use_executor(executor)
         #: None while the cache may be used, else why it was switched off for this subject.
         self.prefix_off = None if self._prefix_cap > 0 else "switched off by the caller"
         #: `replayed_batches` is `served_main` plus `served_spill`; `full_batches` are the recomputed ones.
         self.prefix_detail = {"replayed_batches": 0, "full_batches": 0, "check_max_abs_diff": None,
                               "served_main": 0, "served_spill": 0}
+
+    def use_executor(self, name):
+        """Choose how conditions are run. The numbers are the same either way; only the order of the work differs."""
+        if name not in EXECUTORS:
+            raise A.AttributionError(f"{name!r} is not an executor; the executors are {list(EXECUTORS)}.")
+        self.executor = name
+        self._wavefront = None
+        self._wf_own = None
+
+    def executor_summary(self):
+        """What the wavefront did (sweeps, copy and compute seconds per block, the self check), or None."""
+        return None if self._wavefront is None else self._wavefront.summary()
 
     # ------------------------------------------------------------------ encoding and capture
     def _encode(self, prompts, opener=()):
@@ -476,6 +517,7 @@ class HFSubject:
         self._reply_store = None
         self._own_chains = {}
         # The saved outputs were made under the old edit, so none of them holds any longer.
+        self._wf_own = None
         self._prefix.clear()
         self._prefix_bytes = 0
         self._spill_bytes = 0
@@ -693,6 +735,8 @@ class HFSubject:
         if self.refusal_ids is None:
             raise A.AttributionError(self.readout_why_not or "prepare() has not been called")
         prompts = list(prompts)
+        if self.executor != EXECUTOR_REFERENCE:
+            return self.readouts(prompts, direction, [blocks])[0]
         union, ref_pos, com_pos = self._union()
         got = None
         if is_front_prefix(blocks, self.n_blocks):
@@ -705,12 +749,66 @@ class HFSubject:
         return (torch.logsumexp(got[:, ref_pos], 1)
                 - torch.logsumexp(got[:, com_pos], 1)).double()
 
+    @torch.no_grad()
+    def readouts(self, prompts, direction, conditions):
+        """`[conditions, prompts]` readouts, the same numbers `readout` gives one condition at a time.
+
+        Under the reference executor this is exactly that loop. Under the wavefront every condition not
+        already known is walked through the blocks together, which is where the saving comes from.
+        """
+        if self.refusal_ids is None:
+            raise A.AttributionError(self.readout_why_not or "prepare() has not been called")
+        prompts = list(prompts)
+        conditions = [tuple(b) for b in conditions]
+        if self.executor == EXECUTOR_REFERENCE:
+            return torch.stack([self.readout(prompts, direction, b) for b in conditions])
+        store = self._wavefront_store()
+        union, ref_pos, com_pos = self._union(store)
+        keys = {b: store.key_for(prompts, direction, b, self.opener) for b in dict.fromkeys(conditions)}
+        missing = [b for b, key in keys.items() if store.peek(key) is None]
+        store.hits += len(keys) - len(missing)
+        if missing:
+            for b, answer in self._wavefront_answers(prompts, direction, missing, union).items():
+                store.put(keys[b], answer)
+        rows = []
+        for b in conditions:
+            got = store.peek(keys[b])
+            rows.append((torch.logsumexp(got[:, ref_pos], 1) - torch.logsumexp(got[:, com_pos], 1)).double())
+        return torch.stack(rows)
+
+    def _wavefront_store(self):
+        """Where the wavefront's answers are kept: the cache the arms share, or this subject's own.
+
+        A subject under a standing edit never shares, because its answers are not the unedited model's.
+        """
+        if self._shared is not None and not self._standing:
+            return self._shared
+        if self._wf_own is None:
+            self._wf_own = SharedReadouts(torch.cat([self.refusal_ids, self.comply_ids]).cpu())
+        return self._wf_own
+
+    def _wavefront_executor(self):
+        if self._wavefront is None:
+            self._wavefront = W.WavefrontExecutor(
+                self.model, self.layers, standing=self._under_standing_edit, reference=self._full, log=self.log,
+                streaming=self.executor == EXECUTOR_WAVEFRONT, state_bytes=self._wavefront_state_bytes,
+                host_free=self._spill_guard)
+        return self._wavefront
+
+    def _wavefront_answers(self, prompts, direction, conditions, ids):
+        """`{condition: [prompts, ids] answers}` in prompt order, for conditions walked together."""
+        order, ordered = self._by_length(prompts)
+        encs = [self._encode(chunk, self.opener) for chunk in self._batches(ordered)]
+        got = self._wavefront_executor().run(encs, direction, conditions, ids)
+        return {b: self._unsorted(torch.cat(got[b]), order) for b in conditions}
+
     def use_shared(self, shared):
         self._shared = shared
 
-    def _union(self):
+    def _union(self, store=None):
         """The token ids to read, and where each arm's tokens sit among them."""
-        ids = (self._shared.ids if self._shared is not None
+        store = self._shared if store is None else store
+        ids = (store.ids if store is not None
                else torch.cat([self.refusal_ids, self.comply_ids]).cpu())
         where = {int(t): i for i, t in enumerate(ids.tolist())}
         return (ids, torch.tensor([where[int(t)] for t in self.refusal_ids.tolist()]),

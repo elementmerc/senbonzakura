@@ -32,6 +32,9 @@ from ._version import __version__
 #: this module doesn't import torch until a run starts, so `--help` stays quick; a test keeps the two equal.
 PREFIX_CACHE_GIB = 2.0
 
+#: The executors `--executor` offers, as `attribution_hf.EXECUTORS` names them; a test keeps the two equal.
+EXECUTOR_CHOICES = ("reference", "wavefront", "wavefront-resident")
+
 #: What `--prefix-cache-spill` allows when it is given with no number.
 PREFIX_SPILL_GIB = 8.0
 #: How much of the host memory that is free the spill tier may take, as a fraction. Half, so a run that
@@ -367,6 +370,12 @@ def build_parser():
                         "Without it the run takes today's date once, at the start, and uses it for every "
                         "prompt, so a run that crosses midnight is not split across two dates; the artefact "
                         "records it. Give the recorded date to repeat a run on another day")
+    p.add_argument("--executor", choices=EXECUTOR_CHOICES, default="reference",
+                   help="how the conditions are run. reference runs them one at a time (the default). wavefront "
+                        "walks the model once per group of micro batches and pushes every condition through each "
+                        "block, with the blocks held in host memory and copied to the card one ahead; "
+                        "wavefront-resident does the same walk with the blocks left on the card. Every number is "
+                        "bitwise equal to the reference, and the first micro batch is checked against it")
     p.add_argument("--keep-raw", action="store_true",
                    help="also save the per prompt readout drops behind every figure, real direction and "
                         "every null replicate, to raw-<arm>.pt beside the artefact, for studying what fewer "
@@ -537,6 +546,9 @@ def run(args, *, log=print):
         for subject in subjects.values():
             subject.prepare(parts)
     shared = H.share_readouts(subjects.values())
+    for subject in subjects.values():
+        subject.use_executor(args.executor)
+    log(f"executor: {args.executor}")
     for arm_name, subject in subjects.items():
         raw = {} if args.keep_raw else None
         with _stage(log, f"arm {arm_name}"):
@@ -551,6 +563,14 @@ def run(args, *, log=print):
         write_json(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
     if shared is not None:
         log(f"shared forward passes: {shared.misses} computed, {shared.hits} reused by the other arm")
+    walked = {n: s.executor_summary() for n, s in subjects.items() if s.executor_summary() is not None}
+    for arm_name, walk in walked.items():
+        checked = bool(walk["self_check"] and walk["self_check"]["passed"])
+        log(f"[{arm_name}] wavefront: {walk['sweeps']} sweep(s), copy {walk['copy_s']:.1f} s, compute "
+            f"{walk['compute_s']:.1f} s, overlap {walk['overlap_s']:.1f} s, at most {walk['peak_blocks_resident']} "
+            f"block(s) resident, self check {'passed' if checked else 'not run'}")
+    if walked:
+        write_json(out / "wavefront-timeline.json", {"executor": args.executor, "arms": walked})
     sweep_record = {}
     for arm_name, subject in subjects.items():
         sweep_record[arm_name] = {

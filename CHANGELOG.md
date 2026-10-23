@@ -31,6 +31,9 @@ surface it changed, and will carry a version heading when it ships.
   or fewer would change which tokens are in either set, and says so in its output and its limits; the verdict is not changed
 - `attribute` also records a stricter reading in its results file only (`readout_fragile_strict`): whether one fit reply
   changing its label would change either token set. It raises no warning
+- `attribute --executor wavefront` walks the model once per group of batches and pushes every condition through each
+  block, with the blocks kept in host memory and copied to the card one ahead (`wavefront-resident` leaves them on the
+  card). The numbers are the same as the default, the first batch is checked against it, and a mismatch stops the run
 - Every command that measures a model now loads the same formats and takes the same flags: plain safetensors, 4-bit and
   8-bit bitsandbytes (on the fly with `--load-in-4bit` or `--load-in-8bit`, or stored that way in the checkpoint), GPTQ,
   AWQ and GGUF (a file, a folder, or a hub id with `--gguf-file`); `attribute` had none of these and now has all of them,

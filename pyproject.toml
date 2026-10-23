@@ -595,6 +595,9 @@ notice-rgx = "(?i)Copyright \\(C\\) \\d{4}"
 # `validate` is a sibling module reaching into `cli`'s module-private helpers, which
 # is package-internal reuse rather than reaching across an API boundary.
 "src/senbonzakura/validate.py" = ["SLF001"]
+# The wavefront parks and swaps a block's tensors in place (`_parameters`, `_buffers`) and watches a tensor's
+# `_version` to see a block change its own state; torch has no public way to do either.
+"src/senbonzakura/attribution_wavefront.py" = ["SLF001"]
 "tools/research/axis_probe.py" = ["SLF001"]
 
 # The vendoring tool runs from a git checkout, where the package is not installed, so it must

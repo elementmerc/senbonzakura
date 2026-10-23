@@ -623,3 +623,77 @@ def test_a_run_whose_readout_is_not_fragile_says_nothing_and_records_false(monke
 
 def test_the_spelt_out_number_of_replies_matches_the_constant():
     assert {"one": 1, "two": 2, "three": 3}[R.FRAGILE_REPLIES_TEXT] == H.FRAGILE_REPLIES
+
+
+def _strict(refused, complied, arm=H.ARM_DISJOINT):
+    return H.relabel_tokens(refused, complied, arm)
+
+
+def test_a_well_supported_set_survives_one_relabel():
+    assert _strict({10: 52, 11: 30}, {20: 40, 21: 30}, H.ARM_PURITY) == []
+    assert _strict({}, {}) == []
+
+
+def test_one_relabel_that_adds_a_token_to_a_set_is_reported():
+    # Disjoint arm: 2 refusals and 1 compliant reply is in neither set; the compliant one called a refusal adds it.
+    assert (12, 2, 1, "compliant to refusal", None, "refusal") in _strict({12: 2}, {12: 1})
+
+
+def test_one_relabel_that_removes_a_token_from_a_set_is_reported():
+    assert (12, 3, 0, "refusal to compliant", "refusal", None) in _strict({12: 3}, {})
+
+
+def test_the_case_leaving_out_misses_is_caught_by_relabelling():
+    # Eight compliant replies and no refusals: losing two changes nothing, one called a refusal removes it.
+    refused, complied = {10: 50}, {20: 40, 30: 8}
+    assert 30 not in _fragile(refused, complied)
+    assert (30, 0, 8, "compliant to refusal", "compliance", None) in _strict(refused, complied)
+
+
+def test_the_purity_arm_relabel_at_the_threshold_goes_one_way_only():
+    got = _strict({1: 18}, {1: 2}, H.ARM_PURITY)
+    assert got == [(1, 18, 2, "refusal to compliant", "refusal", None)]
+
+
+def test_the_strict_reading_is_recorded_beside_the_flag_and_the_flag_is_unchanged():
+    both = _fragile_subject({10: 50, 11: 2}, {20: 40, 30: 8})
+    assert both["fragile_readout"] is True and both["fragile_readout_token_count"] == 1
+    assert both["fragile_readout_strict"] is True
+    assert {"token": "tok30", "refusal_replies": 0, "compliance_replies": 8, "relabel": "compliant to refusal",
+            "now": "compliance", "after": None} in both["fragile_readout_strict_tokens"]
+    assert both["fragile_readout_strict_token_count"] == len(_strict({10: 50, 11: 2}, {20: 40, 30: 8}))
+    assert "one fit reply" in both["fragile_readout_strict_rule"]
+    calm = _fragile_subject({10: 52}, {20: 40}, H.ARM_PURITY)
+    assert calm["fragile_readout_strict"] is False and calm["fragile_readout_strict_tokens"] == []
+
+
+def test_the_strict_list_is_capped_but_the_count_is_not():
+    many = _fragile_subject(dict.fromkeys(range(30), 3), {99: 40})
+    assert len(many["fragile_readout_strict_tokens"]) == 8 and many["fragile_readout_strict_token_count"] >= 30
+
+
+def test_the_strict_reading_goes_in_the_results_file_with_no_warning_and_no_limit(monkeypatch, tmp_path):
+    real = H.HFSubject._strict_fragility
+    entry = {"token": "tok30", "refusal_replies": 0, "compliance_replies": 8, "relabel": "compliant to refusal",
+             "now": "compliance", "after": None}
+
+    def strict(self, refused, complied):
+        out = real(self, refused, complied)
+        out.update(fragile_readout_strict=True, fragile_readout_strict_token_count=1,
+                   fragile_readout_strict_tokens=[entry])
+        return out
+    monkeypatch.setattr(H.HFSubject, "_strict_fragility", strict)
+    lines = []
+    R.run(_stub_run(monkeypatch, tmp_path), log=lines.append)
+    doc = json.loads((tmp_path / "attribution.json").read_text())
+    assert set(doc["readout_fragile_strict"]) == {"disjoint", "purity"}
+    assert doc["readout_fragile_strict"]["disjoint"] == {"fragile": True, "token_count": 1, "tokens": [entry]}
+    assert doc["readout_fragile"] == {"disjoint": False, "purity": False}
+    assert not any("fragile" in x for x in lines)
+    assert not any("fragile" in x or "rest on one or two replies" in x for x in doc["limits"])
+
+
+def test_an_artefact_without_the_strict_field_reads_as_not_recorded():
+    assert R.fragile_strict({}) == {"fragile": None, "token_count": None, "tokens": []}
+    old = {"controls": {"readout_agreement_detail": {"token_sets": {"fragile_readout": True}}}}
+    assert R.fragile_strict(old)["fragile"] is None

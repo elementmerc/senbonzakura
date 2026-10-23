@@ -88,6 +88,20 @@ def fragile_flag(result):
     return bool(sets.get("fragile_readout"))
 
 
+def fragile_strict(result):
+    """The stricter, results file only reading: `{"fragile", "token_count", "tokens"}` for one arm.
+
+    An artefact written before the field existed has none, and reads as not recorded (`fragile` None), never
+    as false.
+    """
+    sets = ((result.get("controls") or {}).get("readout_agreement_detail") or {}).get("token_sets") or {}
+    if "fragile_readout_strict" not in sets:
+        return {"fragile": None, "token_count": None, "tokens": []}
+    return {"fragile": bool(sets["fragile_readout_strict"]),
+            "token_count": sets.get("fragile_readout_strict_token_count", 0),
+            "tokens": list(sets.get("fragile_readout_strict_tokens") or [])}
+
+
 def fragile_summary(result):
     sets = result["controls"]["readout_agreement_detail"]["token_sets"]
     shown = ", ".join(f"{t['token']} ({t['refusal_replies']} refusals, {t['compliance_replies']} compliant)"
@@ -584,6 +598,7 @@ def run(args, *, log=print):
         "render": render_block(status, tint, arms, identity),
         "arms_agree": status != ARMS_DISAGREE,
         "readout_fragile": {name: fragile_flag(result) for name, result in arms.items()},
+        "readout_fragile_strict": {name: fragile_strict(result) for name, result in arms.items()},
         "arms": arms,
         "controls": {"selftest": selftest, "behaviour_removed_standin": removed},
         "limits": [*A.LIMITS, STANDIN_LIMIT, *model_specific_limits(arms)],

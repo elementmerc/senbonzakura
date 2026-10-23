@@ -29,6 +29,8 @@ surface it changed, and will carry a version heading when it ships.
   `--no-prefix-cache-spill` forces it off, and the artefact records the choice
 - `attribute` marks a readout as fragile (`readout_fragile`, with the tokens behind it) when leaving out two fit replies
   or fewer would change which tokens are in either set, and says so in its output and its limits; the verdict is not changed
+- `attribute` also records a stricter reading in its results file only (`readout_fragile_strict`): whether one fit reply
+  changing its label would change either token set. It raises no warning
 - Every command that measures a model now loads the same formats and takes the same flags: plain safetensors, 4-bit and
   8-bit bitsandbytes (on the fly with `--load-in-4bit` or `--load-in-8bit`, or stored that way in the checkpoint), GPTQ,
   AWQ and GGUF (a file, a folder, or a hub id with `--gguf-file`); `attribute` had none of these and now has all of them,

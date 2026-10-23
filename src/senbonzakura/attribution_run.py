@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import argresolve
+from . import argresolve, chattemplate
 from . import attribution as A
 from ._version import __version__
 
@@ -37,6 +37,9 @@ PREFIX_SPILL_GIB = 8.0
 #: How much of the host memory that is free the spill tier may take, as a fraction. Half, so a run that
 #: spills still leaves the rest for the loader, the tokeniser and everything else on the machine.
 SPILL_HOST_FRACTION = 0.5
+#: How the spill tier was chosen. `auto` (no flag) turns it on exactly when the projection says the main cache
+#: can't hold every batch; `on` is `--prefix-cache-spill`; `off` is `--no-prefix-cache-spill` or a size of 0.
+SPILL_AUTO, SPILL_ON, SPILL_OFF = "auto", "on", "off"
 
 SCHEMA = "senbonzakura-attribution/1"
 ARMS_DISAGREE = "arms_disagree"
@@ -79,6 +82,26 @@ def combine(arms, selftest):
             all(r.get("tint_allowed") for r in results) and status == A.LOCALISED)
 
 
+def fragile_flag(result):
+    """True when the arm's token sets rest on one or two fit replies (see `attribution_hf.fragile_tokens`)."""
+    sets = ((result.get("controls") or {}).get("readout_agreement_detail") or {}).get("token_sets") or {}
+    return bool(sets.get("fragile_readout"))
+
+
+def fragile_summary(result):
+    sets = result["controls"]["readout_agreement_detail"]["token_sets"]
+    shown = ", ".join(f"{t['token']} ({t['refusal_replies']} refusals, {t['compliance_replies']} compliant)"
+                      for t in sets["fragile_readout_tokens"])
+    more = sets["fragile_readout_token_count"] - len(sets["fragile_readout_tokens"])
+    return (f"leaving out {FRAGILE_REPLIES_TEXT} fit replies or fewer would change a token set; tokens: {shown}"
+            + (f" and {more} more" if more > 0 else "")
+            + ". The verdict is unchanged, but it may not repeat on another run of the same model")
+
+
+#: `attribution_hf.FRAGILE_REPLIES`, spelt out for a sentence; a test keeps the two together.
+FRAGILE_REPLIES_TEXT = "two"
+
+
 def model_specific_limits(arms):
     """Limits that only a run can know, drawn from what it measured."""
     out = []
@@ -90,6 +113,10 @@ def model_specific_limits(arms):
             out.append(f"{name} arm: the refusal tokens open only {share:.0%} of this model's fit "
                        f"refusals, so on this model the readout is mostly measuring the absence "
                        f"of a compliance opener rather than the presence of a refusal.")
+        if sets.get("fragile_readout"):
+            out.append(f"{name} arm: the readout's token sets rest on one or two replies, so a single fit reply "
+                       f"labelled differently could change them and with them the agreement figure. "
+                       f"{fragile_summary(result)}.")
         cover = detail.get("onset_coverage")
         if cover is not None and cover < 0.5:
             out.append(f"{name} arm: only {cover:.0%} of search replies open with a token in "
@@ -299,17 +326,33 @@ def build_parser():
                    help="memory the block sweep may use to replay the blocks below each edited one, in "
                         "GiB (default %(default).0f; 0 turns it off). More of the run fits with more "
                         "memory; the numbers are the same either way")
-    p.add_argument("--prefix-cache-spill", type=argresolve.real_number("--prefix-cache-spill", minimum=0),
-                   nargs="?", const=PREFIX_SPILL_GIB, default=0.0, metavar="GIB",
-                   help="let the block sweep keep more replayed blocks in ordinary host memory, past the "
-                        "--prefix-cache-gib cap, at most this many GiB (default %(const).0f when given with no "
-                        "number; off when the flag is absent). It never takes more than half of the host memory "
-                        "free when it checks, falls back to recomputing when there is no room, and gives the "
-                        "same numbers")
-    p.add_argument("--fast-sweep", action="store_true",
-                   help="share the forward passes of the front blocks, and the greedy replies between the arms "
-                        "and the stand-in, when the numbers are provably the same; every number is bitwise "
-                        "equal to the default sweep, and the default stays the reference")
+    spill = p.add_mutually_exclusive_group()
+    spill.add_argument("--prefix-cache-spill", type=argresolve.real_number("--prefix-cache-spill", minimum=0),
+                       nargs="?", const=PREFIX_SPILL_GIB, default=None, metavar="GIB",
+                       help="always let the block sweep keep more replayed blocks in ordinary host memory, past "
+                            "the --prefix-cache-gib cap, at most this many GiB (default %(const).0f when given "
+                            "with no number; 0 is the same as --no-prefix-cache-spill). Without this flag the "
+                            "run decides: it turns the spill on only when its projection says the batches won't "
+                            "all fit the main cache. It never takes more than half of the host memory free when "
+                            "it checks, falls back to recomputing when there is no room, and gives the same "
+                            "numbers")
+    spill.add_argument("--no-prefix-cache-spill", action="store_true",
+                       help="never spill, even when the main cache will overflow; batches past the cap are "
+                            "recomputed")
+    sweep = p.add_mutually_exclusive_group()
+    sweep.add_argument("--reference-sweep", action="store_true",
+                       help="run every condition as the first version did, one full forward pass each, and "
+                            "generate every set of replies afresh. Slower and gives the same numbers; it is the "
+                            "yardstick the default sweep is checked against")
+    sweep.add_argument("--fast-sweep", action="store_true",
+                       help="accepted so older command lines keep working; the front blocks' shared forward "
+                            "passes and the shared greedy replies are the default now, and this changes nothing")
+    p.add_argument("--template-date", type=argresolve.calendar_date("--template-date"), default=None,
+                   metavar="YYYY-MM-DD",
+                   help="the date a chat template that writes today's date (Llama 3's does) should write. "
+                        "Without it the run takes today's date once, at the start, and uses it for every "
+                        "prompt, so a run that crosses midnight is not split across two dates; the artefact "
+                        "records it. Give the recorded date to repeat a run on another day")
     p.add_argument("--keep-raw", action="store_true",
                    help="also save the per prompt readout drops behind every figure, real direction and "
                         "every null replicate, to raw-<arm>.pt beside the artefact, for studying what fewer "
@@ -392,6 +435,36 @@ def _stage(log, name):
     return _S()
 
 
+def _today():
+    """The machine's calendar date as YYYY-MM-DD, the day a dated chat template would write right now."""
+    return _dt.date.today().isoformat()  # noqa: DTZ011 - the local day is what a template's own clock reads
+
+
+def choose_template_date(given, dated, log):
+    """`(date to pin or None, where it came from)`: the flag's, else today's once if the template is dated.
+
+    A template that never asks for the date gets no pin unless one was given, and an artefact for it
+    stays as it was. The clock is read here, once, and nowhere else in the run.
+    """
+    if given is not None:
+        return given, "flag"
+    if not dated:
+        return None, None
+    day = _today()
+    log(f"template date: this model's chat template writes today's date, so every prompt in this run is "
+        f"rendered with {day}; repeat the run with --template-date {day}")
+    return day, "clock"
+
+
+def spill_mode(args):
+    """`auto`, `on` or `off` from the spill flags: no flag is auto, a size above zero is on, zero is off."""
+    if args.no_prefix_cache_spill:
+        return SPILL_OFF
+    if args.prefix_cache_spill is None:
+        return SPILL_AUTO
+    return SPILL_ON if args.prefix_cache_spill > 0 else SPILL_OFF
+
+
 def run(args, *, log=print):
     import torch
 
@@ -412,12 +485,16 @@ def run(args, *, log=print):
         parts, digests = H.build_partitions(args.track, n_measure=args.n_measure,
                                             n_confirm=args.n_confirm, seed=args.seed)
 
-    nb = H.HFSubject(model, tok).n_blocks
+    dated = chattemplate.uses_date(tok)
+    template_date, date_source = choose_template_date(args.template_date, dated, log)
+    nb = H.HFSubject(model, tok, template_date=template_date).n_blocks
     fingerprint = {"model": identity, "digests": digests, "seed": args.seed,
                    "instrument": A.INSTRUMENT_VERSION, "conventions": conv.__dict__}
-    cache_cap = int(args.prefix_cache_gib * 2 ** 30)
-    spill_bytes = _spill_budget(args, cache_cap, log)
-    _project(model, tok, parts, nb, conv, args, log, spill_bytes=spill_bytes)
+    if dated:
+        # An arm saved under another date was built from other prompts, and must not be read back as this run's.
+        fingerprint["template_date"] = template_date
+    plan = _project(model, tok, parts, nb, conv, args, log, template_date=template_date)
+    spill_bytes = plan["spill_bytes"]
 
     arms = {}
     todo = []
@@ -431,14 +508,15 @@ def run(args, *, log=print):
                 continue
         todo.append(arm_name)
     cache_bytes = int(args.prefix_cache_gib * 2 ** 30)
-    sweep = H.SWEEP_FAST if args.fast_sweep else H.SWEEP_REFERENCE
+    fast = not args.reference_sweep
+    sweep = H.SWEEP_FAST if fast else H.SWEEP_REFERENCE
     # Greedy replies are shared only where they are provably the same (see attribution_hf._label), so
-    # the store exists only for the fast sweep and every reference run generates its own, as it always did.
-    reply_store = {} if args.fast_sweep else None
-    log(f"sweep: {sweep}" + ("; greedy replies are shared between the arms and the stand-in"
-                             if args.fast_sweep else ""))
+    # the store exists only for the fast sweep and a reference run generates its own, as it always did.
+    reply_store = {} if fast else None
+    log(f"sweep: {sweep}" + (" (the default); greedy replies are shared between the arms and the stand-in"
+                             if fast else " (--reference-sweep); every condition is a full pass"))
     subjects = {n: H.HFSubject(model, tok, batch=args.batch, arm=n, log=log, prefix_cache_bytes=cache_bytes,
-                               sweep=sweep, reply_store=reply_store,
+                               sweep=sweep, reply_store=reply_store, template_date=template_date,
                                prefix_spill_bytes=spill_bytes, spill_guard=_free_host_bytes)
                 for n in todo}
     with _stage(log, "readout tokens"):
@@ -459,10 +537,15 @@ def run(args, *, log=print):
         write_json(out / f"arm-{arm_name}.json", {"fingerprint": fingerprint, "result": result})
     if shared is not None:
         log(f"shared forward passes: {shared.misses} computed, {shared.hits} reused by the other arm")
+    sweep_record = {}
     for arm_name, subject in subjects.items():
+        sweep_record[arm_name] = {
+            "chains_computed": subject.sweep_detail["chains_computed"],
+            "replies_reused": subject.sweep_detail.get("replies_reused", 0),
+            "chain_check": subject.chain_check}
         log(f"[{arm_name}] sweep: {subject.sweep}, front chains computed {subject.sweep_detail['chains_computed']}, "
             f"replies reused {subject.sweep_detail.get('replies_reused', 0)}, chain check "
-            f"{'passed' if subject._chain_ok else ('off' if subject._chain_ok is False else 'not run')}")
+            f"{subject.chain_check}")
         detail = subject.prefix_detail
         log(f"[{arm_name}] prefix cache: {detail['replayed_batches']} batch(es) replayed from the lower "
             f"blocks, {detail['full_batches']} run in full"
@@ -474,7 +557,8 @@ def run(args, *, log=print):
     with _stage(log, "selftest"):
         selftest = A.selftest()
     with _stage(log, "behaviour removed stand-in"):
-        removed = _behaviour_removed(model, tok, parts, args, conv, log, sweep=sweep, reply_store=reply_store)
+        removed = _behaviour_removed(model, tok, parts, args, conv, log, sweep=sweep, reply_store=reply_store,
+                                     template_date=template_date)
 
     status, reason, tint = combine(arms, selftest)
     artefact = {
@@ -490,10 +574,16 @@ def run(args, *, log=print):
             "one_prompt_per_request": True,
         },
         "sampling": {"seed": args.seed, "n_measure": args.n_measure, "n_confirm": args.n_confirm,
-                     "batch": args.batch, "torch": torch.__version__},
+                     "batch": args.batch, "torch": torch.__version__,
+                     "template_dated": dated, "template_date": template_date,
+                     "template_date_source": date_source},
+        # Choices that change how long the run takes and not what it finds; a repeat may differ in these.
+        "run_settings": {"sweep": sweep, "arms_computed_in_this_run": sweep_record,
+                         "prefix_cache": plan["record"]},
         "status": status, "status_reason": reason, "tint_allowed": tint,
         "render": render_block(status, tint, arms, identity),
         "arms_agree": status != ARMS_DISAGREE,
+        "readout_fragile": {name: fragile_flag(result) for name, result in arms.items()},
         "arms": arms,
         "controls": {"selftest": selftest, "behaviour_removed_standin": removed},
         "limits": [*A.LIMITS, STANDIN_LIMIT, *model_specific_limits(arms)],
@@ -504,6 +594,9 @@ def run(args, *, log=print):
                             **_kernel_key(identity)},
     }
     write_json(out / "attribution.json", artefact)
+    for name, flag in artefact["readout_fragile"].items():
+        if flag:
+            log(f"warning: the {name} arm's readout is fragile: {fragile_summary(arms[name])}")
     log(f"status: {status}  tint_allowed: {tint}\n  {reason}\n  written to {out / 'attribution.json'}")
     return artefact
 
@@ -549,18 +642,32 @@ def _free_host_bytes():
     return resources.host_memory_budget()[0]
 
 
-def _spill_budget(args, cache_cap, log):
+def _spill_budget(args, cache_cap, log, *, projected_fit=None):
     """Bytes the spill tier may use: what was asked for, held to half the host memory free, less the main cap.
 
-    Zero when the flag is off, when the host memory can't be measured (no guessing), or when there is no
-    room. The tier checks the free memory again before every batch it spills, so this is the ceiling and not
-    a promise.
+    With a size given it is that size; with no flag it is `PREFIX_SPILL_GIB`, but only when `projected_fit`
+    (the share of batches the main cache alone is projected to hold) is under 1, because a spill that nothing
+    overflows into only costs time. Zero when the spill is off, when the host memory can't be measured (no
+    guessing), or when there is no room. The tier checks the free memory again before every batch it spills, so
+    this is the ceiling and not a promise.
     """
-    asked = int(args.prefix_cache_spill * 2 ** 30)
-    if asked <= 0 or cache_cap <= 0:
-        if asked > 0:
-            log("prefix cache spill: the main cache is off, so there is nothing to spill from; spill off")
+    mode = spill_mode(args)
+    if mode == SPILL_OFF:
+        log("prefix cache spill: off, as asked")
         return 0
+    if cache_cap <= 0:
+        log("prefix cache spill: the main cache is off, so there is nothing to spill from; spill off")
+        return 0
+    if mode == SPILL_AUTO:
+        if projected_fit is None or projected_fit >= 1.0:
+            log("prefix cache spill: off, because the projection says every batch fits the main cache "
+                "(--prefix-cache-spill forces it on)")
+            return 0
+        asked = int(PREFIX_SPILL_GIB * 2 ** 30)
+        log(f"prefix cache spill: on automatically, because only {projected_fit:.0%} of the batches are projected "
+            f"to fit the main cache (--no-prefix-cache-spill forces it off)")
+    else:
+        asked = int(args.prefix_cache_spill * 2 ** 30)
     free = _free_host_bytes()
     if free is None:
         log("prefix cache spill: host memory could not be measured on this machine, so the spill is off")
@@ -574,10 +681,16 @@ def _spill_budget(args, cache_cap, log):
     return got
 
 
-def _project(model, tok, parts, nb, conv, args, log, *, spill_bytes=0):
-    """Time a real pass and refuse before the long work if it will not fit the budget."""
+def _project(model, tok, parts, nb, conv, args, log, *, template_date=None):
+    """Time a real pass, decide the spill from what the cache can hold, and refuse before the long work if the
+    run will not fit the budget.
+
+    Returns `{"spill_bytes", "record"}`: the spill tier's ceiling for this run, and the choice as the artefact
+    records it (which mode, the projected share of batches that fit with the main cache alone and with the
+    spill, and the sizes).
+    """
     from . import attribution_hf as H
-    probe = H.HFSubject(model, tok, batch=args.batch, log=log)
+    probe = H.HFSubject(model, tok, batch=args.batch, log=log, template_date=template_date)
     sample = list(parts["measure"]["harmful"].prompts)[:64]
     import torch
     direction = torch.zeros(model.config.hidden_size)
@@ -599,6 +712,8 @@ def _project(model, tok, parts, nb, conv, args, log, *, spill_bytes=0):
     element = torch.empty((), dtype=next(model.parameters()).dtype).element_size()
     need = nb * tokens * width * element * prompts
     cap = int(args.prefix_cache_gib * 2 ** 30)
+    share_main = 1.0 if need <= 0 else min(1.0, cap / need)
+    spill_bytes = _spill_budget(args, cap, log, projected_fit=share_main)
     share = 1.0 if need <= 0 else min(1.0, (cap + spill_bytes) / need)
     passes = projected_passes(nb, conv, share)
     minutes = passes * prompts * per_prompt / 60.0
@@ -614,9 +729,14 @@ def _project(model, tok, parts, nb, conv, args, log, *, spill_bytes=0):
             f"projected {minutes:.0f} minutes of readout work is over the {args.budget_minutes:.0f} "
             f"minute budget. Anything over two GPU hours is a conversation with the operator "
             f"first; lower --n-measure or raise --budget-minutes knowingly.")
+    return {"spill_bytes": spill_bytes,
+            "record": {"main_cache_gib": args.prefix_cache_gib, "spill_mode": spill_mode(args),
+                       "spill": spill_bytes > 0, "spill_gib_allowed": spill_bytes / 2 ** 30,
+                       "projected_share_of_batches_in_main_cache": share_main,
+                       "projected_share_of_batches_in_cache_and_spill": share}}
 
 
-def _behaviour_removed(model, tok, parts, args, conv, log, *, sweep=None, reply_store=None):
+def _behaviour_removed(model, tok, parts, args, conv, log, *, sweep=None, reply_store=None, template_date=None):
     """Run the readout stage on the model with the direction already removed from every block.
 
     An instrument that has never been seen to return nothing has not been validated. With the
@@ -629,7 +749,8 @@ def _behaviour_removed(model, tok, parts, args, conv, log, *, sweep=None, reply_
     sweep = H.SWEEP_REFERENCE if sweep is None else sweep
     # The unedited stand-in base generates the same fit replies the arms did, so it takes them from the
     # store when the run has one; its edited copy below never does.
-    base = H.HFSubject(model, tok, batch=args.batch, log=log, sweep=sweep, reply_store=reply_store)
+    base = H.HFSubject(model, tok, batch=args.batch, log=log, sweep=sweep, reply_store=reply_store,
+                       template_date=template_date)
     base.prepare(parts)
     if base.refusal_ids is None:
         return {"ran": False, "why": base.readout_why_not}
@@ -637,7 +758,7 @@ def _behaviour_removed(model, tok, parts, args, conv, log, *, sweep=None, reply_
     srch = {s: base.residuals(list(parts["search"][s].prompts)) for s in ("harmful", "harmless")}
     direction, _, _ = A.fit_direction(res["harmful"], res["harmless"], srch["harmful"],
                                       srch["harmless"])
-    edited = H.HFSubject(model, tok, batch=args.batch, log=log, sweep=sweep)
+    edited = H.HFSubject(model, tok, batch=args.batch, log=log, sweep=sweep, template_date=template_date)
     edited.edit_standing(direction, range(edited.n_blocks))
     fast = dataclasses.replace(conv, shuffled_label_replicates=6, random_direction_replicates=6,
                                resamples=300)

@@ -29,7 +29,8 @@ import torch
 
 from . import attribution as A
 from . import metrics, modelmap
-from .firsttoken import last_token_logits, render_chat
+from .chattemplate import uses_date
+from .firsttoken import check_template_date, last_token_logits, render_chat
 
 #: Greedy reply length used to label a prompt as refused or not. Long enough that a refusal after
 #: a short preamble is seen, which `metrics.is_refusal` scans the whole reply for.
@@ -41,6 +42,11 @@ MIN_PER_CLASS = 5
 #: in the artefact. The sensitivity of the sets to it is reported as information and never used to
 #: choose it.
 MIN_TOKEN_COUNT = 2
+#: A readout is flagged fragile when leaving out this many fit replies, or fewer, would change which tokens
+#: are in either set (see `fragile_tokens`). Two, because the count threshold above is two: a token that only
+#: just joined a set, or that one contrary reply keeps out of one, is the shape that moved Llama 3.2 1B's
+#: agreement from 0.99 to 0.70. The flag is information; it never changes the readout or its verdict.
+FRAGILE_REPLIES = 2
 
 #: THE PREFIX CACHE. A condition whose lowest edited block is k changes nothing below k, so the
 #: blocks below it would compute exactly what they computed for the unedited pass. Their outputs
@@ -54,8 +60,8 @@ PREFIX_CACHE_BYTES = 2 * 1024 ** 3
 #: Logits further apart than this switch the cache off for that subject, and the run says so.
 PREFIX_CHECK_ATOL = 1e-3
 
-#: THE SWEEP. `reference` runs every condition the way it was first written. `fast` (opt in, with
-#: `--fast-sweep`) computes the front conditions, which ablate blocks 0 to k, as one chain: front k
+#: THE SWEEP. `reference` runs every condition the way it was first written (`--reference-sweep`). `fast`,
+#: the command's default, computes the front conditions, which ablate blocks 0 to k, as one chain: front k
 #: starts from what front k - 1 wrote at block k - 1 and runs from block k, so the blocks below each
 #: edit are never run twice. It also reuses greedy replies across the arms and the stand-in, but only
 #: for the same prompts in the same order from the same unedited model at the same batch size. Both
@@ -160,6 +166,18 @@ def choose_opener(replies, arm):
     return None
 
 
+def _side(refused, complied, arm):
+    """Which set a token with this many refusals and compliant replies joins: "refusal", "compliance" or None."""
+    if refused + complied < MIN_TOKEN_COUNT:
+        return None
+    if arm == ARM_DISJOINT:
+        pure_r, pure_c = complied == 0, refused == 0
+    else:
+        pure_r = refused / (refused + complied) >= PURITY_THRESHOLD
+        pure_c = complied / (refused + complied) >= PURITY_THRESHOLD
+    return "refusal" if pure_r else "compliance" if pure_c else None
+
+
 def token_sets(refused, complied, arm):
     """The refusal tokens, the compliance tokens and the count dropped, by the arm's exact rule."""
     if arm not in ARM_DECLARATIONS:
@@ -170,17 +188,47 @@ def token_sets(refused, complied, arm):
         r, c = refused.get(token, 0), complied.get(token, 0)
         if r + c < MIN_TOKEN_COUNT:
             continue
-        if arm == ARM_DISJOINT:
-            pure_r, pure_c = c == 0, r == 0
-        else:
-            pure_r, pure_c = r / (r + c) >= PURITY_THRESHOLD, c / (r + c) >= PURITY_THRESHOLD
-        if pure_r:
+        side = _side(r, c, arm)
+        if side == "refusal":
             ref.append(token)
-        elif pure_c:
+        elif side == "compliance":
             com.append(token)
         else:
             dropped += 1
     return ref, com, dropped
+
+
+def fragile_tokens(refused, complied, arm, *, replies=FRAGILE_REPLIES):
+    """Tokens whose place in the sets turns on `replies` fit replies or fewer, as `[(token, r, c, k, now, then)]`.
+
+    A set RESTS ON a reply when the set would be different without it. For each token this leaves out up to
+    `replies` of the fit replies that opened it (any mix of refusals and compliant ones, never more than it
+    has) and asks the arm's own rule again, through `_side`, so there is no second copy of the rule to
+    drift. `k` is the fewest replies that change it, and `now` and `then` are the set before and after
+    ("refusal", "compliance" or None for neither). A token that only just reached the count threshold, or
+    that a single contrary reply keeps out of a set, comes out with k of 1 or 2; a token that opens dozens of
+    replies in a clear majority does not. Leaving a reply out is the one change that is always possible: a
+    reply cannot be moved to open a different token without generating it again.
+    """
+    out = []
+    for token in sorted(set(refused) | set(complied)):
+        r, c = refused.get(token, 0), complied.get(token, 0)
+        now = _side(r, c, arm)
+        best = None
+        for k in range(1, replies + 1):
+            for drop_r in range(min(k, r) + 1):
+                drop_c = k - drop_r
+                if drop_c > c:
+                    continue
+                then = _side(r - drop_r, c - drop_c, arm)
+                if then != now:
+                    best = (k, then)
+                    break
+            if best:
+                break
+        if best:
+            out.append((token, r, c, best[0], now, best[1]))
+    return out
 
 
 class SharedReadouts:
@@ -380,7 +428,7 @@ class HFSubject:
 
     def __init__(self, model, tok, *, batch=16, arm=ARM_DISJOINT, log=print, label=None,
                  prefix_cache_bytes=None, sweep=SWEEP_REFERENCE, reply_store=None,
-                 prefix_spill_bytes=0, spill_guard=None):
+                 prefix_spill_bytes=0, spill_guard=None, template_date=None):
         if arm not in ARM_DECLARATIONS:
             raise A.AttributionError(f"{arm!r} is not a readout arm; the arms are "
                                      f"{sorted(ARM_DECLARATIONS)}.")
@@ -395,6 +443,16 @@ class HFSubject:
         self._chain_ok = None
         self.sweep_detail = {"chains_computed": 0, "checked_batches": 0}
         self.model, self.tok, self.batch, self.log, self.arm = model, tok, batch, log, arm
+        #: THE PINNED DATE (YYYY-MM-DD, or None for the machine's clock). Every prompt this subject renders,
+        #: for a readout, a reply, a residual or a check, goes through `_render`, so a run that crosses midnight
+        #: and a repeat on another day write the same prompts. None with a dated template is warned about.
+        if template_date is not None:
+            check_template_date(template_date)
+        self.template_date = template_date
+        if template_date is None and uses_date(tok):
+            log("warning: this model's chat template writes today's date into every prompt and no date was "
+                "pinned, so a run that crosses midnight, or a repeat on another day, will not match this one. "
+                "Pass --template-date with the date recorded in the artefact to repeat a run.")
         self.label = metrics.is_refusal if label is None else label
         if not callable(self.label):
             raise A.AttributionError(
@@ -440,7 +498,7 @@ class HFSubject:
     def _encode(self, prompts, opener=()):
         key = (tuple(prompts), tuple(opener))
         if key not in self._encoded:
-            text = [render_chat(self.tok, p) for p in prompts]
+            text = [self._render(p) for p in prompts]
             enc = self.tok(text, return_tensors="pt", padding=True, add_special_tokens=False)
             if opener:
                 # Appended after the last real token, which is the end of every row only when padding is
@@ -458,6 +516,14 @@ class HFSubject:
                         [enc["token_type_ids"], torch.zeros_like(extra, dtype=enc["token_type_ids"].dtype)], 1)
             self._encoded[key] = enc.to(self.model.device)
         return self._encoded[key]
+
+    @property
+    def chain_check(self):
+        """How the front chain's check went: passed, off (found wrong or unusable) or not run (never built here)."""
+        return "passed" if self._chain_ok else "off" if self._chain_ok is False else "not run"
+
+    def _render(self, prompt):
+        return render_chat(self.tok, prompt, date=self.template_date)
 
     def padded_tokens(self, prompts):
         """How many token positions these prompts take once rendered and padded together."""
@@ -502,7 +568,7 @@ class HFSubject:
         prompts = list(prompts)
         for p in prompts:
             if p not in self._lengths:
-                text = render_chat(self.tok, p)
+                text = self._render(p)
                 self._lengths[p] = len(self.tok(text, add_special_tokens=False)["input_ids"])
         order = sorted(range(len(prompts)), key=lambda i: self._lengths[prompts[i]])
         return order, [prompts[i] for i in order]
@@ -635,6 +701,7 @@ class HFSubject:
             "refusal_set_covers_fit_refusals": (sum(refused.get(t, 0) for t in ref)
                                                 / max(sum(refused.values()), 1)),
             "min_token_count": MIN_TOKEN_COUNT, "sensitivity_to_min_token_count": sensitivity,
+            **self._fragility(refused, complied),
             "refusal_openers_by_count": {self.tok.convert_ids_to_tokens([t])[0]: c
                                          for t, c in sorted(refused.items(), key=lambda x: -x[1])[:8]},
             "compliance_openers_by_count": {self.tok.convert_ids_to_tokens([t])[0]: c
@@ -653,6 +720,22 @@ class HFSubject:
                 "fit_replies_read": sum(refused.values()) + sum(complied.values()),
                 "sensitivity_measured_at": "the first position",
                 **OPENER_DECLARATION}}
+
+    def _fragility(self, refused, complied):
+        """The fragile readout flag, recorded beside the token sets it describes. Information only."""
+        tokens = fragile_tokens(refused, complied, self.arm)
+        names = self.tok.convert_ids_to_tokens([t[0] for t in tokens]) if tokens else []
+        return {
+            "fragile_readout": bool(tokens),
+            "fragile_readout_rule": (
+                f"set when leaving out {FRAGILE_REPLIES} fit replies or fewer would change which tokens are in "
+                "either set under this arm's own rule. It describes the sets and changes neither the readout nor "
+                "the verdict"),
+            "fragile_readout_tokens": [
+                {"token": name, "refusal_replies": r, "compliance_replies": c, "replies_to_change": k,
+                 "now": now, "without_them": then}
+                for name, (_, r, c, k, now, then) in zip(names, tokens, strict=True)][:8],
+            "fragile_readout_token_count": len(tokens)}
 
     @torch.no_grad()
     def replies(self, prompts, direction=None, blocks=()):

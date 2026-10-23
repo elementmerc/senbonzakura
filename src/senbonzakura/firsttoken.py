@@ -33,6 +33,10 @@ ours are not the same quantity even with identical arithmetic, and comparing the
 error this project withdrew four claims for, one layer further down than the last time it appeared.
 Both sides of the head-to-head go through THIS function.
 """
+import contextlib
+import datetime as _dt
+import re
+
 import torch
 import torch.nn.functional as F
 
@@ -42,7 +46,60 @@ import torch.nn.functional as F
 _NO_LOGITS_TO_KEEP: set[str] = set()
 
 
-def render_chat(tok, content):
+_DATE_FORM = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def check_template_date(text):
+    """`text` as a `datetime.date`, or a ValueError that says what a date looks like here.
+
+    Strictly YYYY-MM-DD, because a date that two machines read two ways is the defect this exists to end.
+    """
+    if not isinstance(text, str) or not _DATE_FORM.fullmatch(text):
+        raise ValueError(f"{text!r} is not a date; write it as YYYY-MM-DD, for example 2026-10-22")
+    try:
+        return _dt.date.fromisoformat(text)
+    except ValueError as e:
+        raise ValueError(f"{text!r} is not a real calendar date ({e})") from e
+
+
+@contextlib.contextmanager
+def pinned_template_date(text):
+    """Make every chat template that asks for the current date see `text` (YYYY-MM-DD), and nothing else change.
+
+    Llama 3's template writes "Today Date: ..." from `strftime_now`, which reads the machine's clock when
+    the prompt is rendered, so one run that crosses midnight, or two runs on different days, render
+    different prompts and get different numbers. Transformers builds that function from the `datetime`
+    name in its template module, looked up at call time, so swapping that name pins the clock for every
+    template, including the ones that never take a date argument. The pinned moment is noon, so a template
+    that also prints the hour reads the same on every run. Refuses, rather than quietly doing nothing, if
+    the installed transformers no longer has that name, because an unpinned render would look identical
+    until the date changed.
+    """
+    day = check_template_date(text)
+    try:
+        from transformers.utils import chat_template_utils as module
+    except ImportError as e:
+        raise RuntimeError("cannot pin the template date: transformers is not importable here") from e
+    if not hasattr(module, "datetime"):
+        raise RuntimeError("cannot pin the template date: this transformers release does not build "
+                           "`strftime_now` from a replaceable `datetime`, so a date could not be forced. "
+                           "Install a release this version of senbonzakura was tested with.")
+    noon = _dt.datetime(day.year, day.month, day.day, 12, 0, 0)  # noqa: DTZ001 - naive on purpose: a local clock
+
+    class _Pinned(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return noon if tz is None else noon.replace(tzinfo=tz)
+
+    original = module.datetime
+    module.datetime = _Pinned
+    try:
+        yield noon
+    finally:
+        module.datetime = original
+
+
+def render_chat(tok, content, date=None):
     """One user turn, rendered into a prompt, with thinking OFF where the model supports it.
 
     Shared rather than duplicated, and that is the whole point of it existing. This project had
@@ -58,11 +115,13 @@ def render_chat(tok, content):
     prompts, either its own template or one `--chat-template` supplied. A ValueError here would
     mean that guarantee broke, and inventing a prompt format to paper over it is what made a
     whole class of numbers incomparable.
+
+    `date` (YYYY-MM-DD, default none) pins the date a dated template writes; see `pinned_template_date`.
     """
-    return render_conversation(tok, [{"role": "user", "content": content}])
+    return render_conversation(tok, [{"role": "user", "content": content}], date=date)
 
 
-def render_conversation(tok, msgs):
+def render_conversation(tok, msgs, date=None):
     """A whole message list rendered into a prompt, under the same format as one turn.
 
     THE SAME TEMPLATE CALL, NOT A SECOND ONE, which is the entire reason this is here rather than
@@ -72,8 +131,16 @@ def render_conversation(tok, msgs):
     the same model answers nothing: the whole claim is the difference between them.
 
     `msgs` is a list of `{"role", "content"}` in order, alternating user and assistant, ending on
-    a user turn so that `add_generation_prompt=True` asks the model to answer it.
+    a user turn so that `add_generation_prompt=True` asks the model to answer it. `date` is as in
+    `render_chat`; without it the machine's clock decides what a dated template writes.
     """
+    if date is None:
+        return _apply(tok, msgs)
+    with pinned_template_date(date):
+        return _apply(tok, msgs)
+
+
+def _apply(tok, msgs):
     try:
         return tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
                                        enable_thinking=False)

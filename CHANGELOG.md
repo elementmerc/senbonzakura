@@ -18,6 +18,17 @@ surface it changed, and will carry a version heading when it ships.
   rather than accepting one and comparing against it
 
 ### Command line
+- `attribute` pins one date for the whole run when the model's chat template writes today's date (Llama 3's does), so a run
+  that crosses midnight, or a repeat on another day, no longer reads different prompts; the artefact records the date, and
+  `--template-date YYYY-MM-DD` repeats a run with it
+- `attribute` runs the faster sweep by default: the front blocks' forward passes and the greedy replies are shared where
+  the numbers are provably the same, and the first batch is checked against a full pass. `--reference-sweep` runs the
+  original way, `--fast-sweep` is still accepted and does nothing, and the artefact records which sweep ran
+- `attribute` spills the prefix cache into host memory by itself, and only when its projection says the batches won't all
+  fit the cache; it still never takes more than half the free memory. `--prefix-cache-spill` forces it on,
+  `--no-prefix-cache-spill` forces it off, and the artefact records the choice
+- `attribute` marks a readout as fragile (`readout_fragile`, with the tokens behind it) when leaving out two fit replies
+  or fewer would change which tokens are in either set, and says so in its output and its limits; the verdict is not changed
 - Every command that measures a model now loads the same formats and takes the same flags: plain safetensors, 4-bit and
   8-bit bitsandbytes (on the fly with `--load-in-4bit` or `--load-in-8bit`, or stored that way in the checkpoint), GPTQ,
   AWQ and GGUF (a file, a folder, or a hub id with `--gguf-file`); `attribute` had none of these and now has all of them,

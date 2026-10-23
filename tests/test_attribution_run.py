@@ -505,20 +505,21 @@ def _share(lines):
     return int(re.search(r"with (\d+)% of the batches", line).group(1))
 
 
-def test_the_spill_flag_is_off_by_default_and_takes_a_size_or_none():
+def test_the_spill_flag_is_automatic_by_default_and_takes_a_size_or_none():
     parse = R.build_parser().parse_args
-    assert parse(["m", "--track", "t", "--out", "o"]).prefix_cache_spill == 0.0
+    assert parse(["m", "--track", "t", "--out", "o"]).prefix_cache_spill is None
     assert parse(["m", "--track", "t", "--out", "o", "--prefix-cache-spill"]).prefix_cache_spill == R.PREFIX_SPILL_GIB
     assert parse(["m", "--track", "t", "--out", "o", "--prefix-cache-spill", "3"]).prefix_cache_spill == 3.0
 
 
 def test_the_artefact_is_identical_with_and_without_the_spill(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "_free_host_bytes", lambda: 64 * 2 ** 30)
-    plain, _ = _written(monkeypatch, tmp_path, "a", prefix_cache_gib=TINY_CACHE_GIB)
+    plain, _ = _written(monkeypatch, tmp_path, "a", prefix_cache_gib=TINY_CACHE_GIB, no_prefix_cache_spill=True)
     spilt, lines = _written(monkeypatch, tmp_path, "b", prefix_cache_gib=TINY_CACHE_GIB, prefix_cache_spill=1.0)
     served = [line for line in lines if "served from the main cache" in line]
     assert any(int(re.search(r"spill tier (\d+)", line).group(1)) > 0 for line in served), served
     plain.pop("created"), spilt.pop("created")
+    plain.pop("run_settings"), spilt.pop("run_settings")      # these record the choice, which is what differs
     assert json.dumps(spilt, sort_keys=True) == json.dumps(plain, sort_keys=True)
 
 
@@ -541,7 +542,7 @@ def test_the_spill_budget_is_held_to_half_the_free_memory_less_the_main_cache(mo
 
 def test_the_projection_counts_the_spilled_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "_free_host_bytes", lambda: 64 * 2 ** 30)
-    _, without = _written(monkeypatch, tmp_path, "a", prefix_cache_gib=TINY_CACHE_GIB)
+    _, without = _written(monkeypatch, tmp_path, "a", prefix_cache_gib=TINY_CACHE_GIB, no_prefix_cache_spill=True)
     _, within = _written(monkeypatch, tmp_path, "b", prefix_cache_gib=TINY_CACHE_GIB, prefix_cache_spill=1.0)
     assert _share(within) > _share(without)
     assert any("of spill" in x for x in within if x.startswith("projection:"))

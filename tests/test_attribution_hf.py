@@ -901,9 +901,10 @@ class _Sorted:
     _batches = H.HFSubject._batches
     _by_length = H.HFSubject._by_length
     _unsorted = staticmethod(H.HFSubject._unsorted)
+    _render = H.HFSubject._render
 
     def __init__(self, batch):
-        self.batch, self._lengths, self.chunks = batch, {}, []
+        self.batch, self._lengths, self.chunks, self.template_date = batch, {}, [], None
         self.tok = lambda text, add_special_tokens=False: {"input_ids": list(text)}
 
     def _chunk_logits(self, chunk, direction, blocks):
@@ -912,7 +913,7 @@ class _Sorted:
 
 
 def test_readouts_run_shortest_first_and_come_back_in_the_order_asked(monkeypatch):
-    monkeypatch.setattr(H, "render_chat", lambda tok, p: p)
+    monkeypatch.setattr(H, "render_chat", lambda tok, p, date=None: p)
     prompts = ["0:" + "x" * 9, "1:x", "2:" + "x" * 5, "3:xx", "4:" + "x" * 5, "5:x"]
     subject = _Sorted(batch=2)
     got = H.HFSubject._logits_at(subject, prompts, None, (), torch.tensor([0, 1]))
@@ -923,7 +924,7 @@ def test_readouts_run_shortest_first_and_come_back_in_the_order_asked(monkeypatc
 
 
 def test_length_order_is_the_same_for_the_same_prompts_so_the_caches_still_hit(monkeypatch):
-    monkeypatch.setattr(H, "render_chat", lambda tok, p: p)
+    monkeypatch.setattr(H, "render_chat", lambda tok, p, date=None: p)
     prompts = ["0:abc", "1:a", "2:ab"]
     subject = _Sorted(batch=2)
     assert subject._by_length(prompts) == subject._by_length(list(prompts))

@@ -231,6 +231,27 @@ def fragile_tokens(refused, complied, arm, *, replies=FRAGILE_REPLIES):
     return out
 
 
+def relabel_tokens(refused, complied, arm):
+    """Tokens one fit reply changing its label would move, as `[(token, r, c, relabel, now, after)]`.
+
+    The stricter reading beside `fragile_tokens`: a reply is not left out but called the other thing, so the
+    token's total stays the same and only its split moves. `relabel` is "refusal to compliant" or "compliant
+    to refusal", and `after` is the set the token would then be in. The place is asked through `_side`, the
+    same rule everything else uses. A token one relabel moves either way comes out once per way. This
+    catches what leaving out cannot: a token with eight compliant replies and no refusals survives losing
+    two, but one refusal among them takes it out of the disjoint arm's compliance set.
+    """
+    out = []
+    for token in sorted(set(refused) | set(complied)):
+        r, c = refused.get(token, 0), complied.get(token, 0)
+        now = _side(r, c, arm)
+        for label, ok, new_r, new_c in (("refusal to compliant", r >= 1, r - 1, c + 1),
+                                        ("compliant to refusal", c >= 1, r + 1, c - 1)):
+            if ok and _side(new_r, new_c, arm) != now:
+                out.append((token, r, c, label, now, _side(new_r, new_c, arm)))
+    return out
+
+
 class SharedReadouts:
     """Last position logits at a set of token ids, kept per condition and shared between arms.
 
@@ -735,7 +756,24 @@ class HFSubject:
                 {"token": name, "refusal_replies": r, "compliance_replies": c, "replies_to_change": k,
                  "now": now, "without_them": then}
                 for name, (_, r, c, k, now, then) in zip(names, tokens, strict=True)][:8],
-            "fragile_readout_token_count": len(tokens)}
+            "fragile_readout_token_count": len(tokens),
+            **self._strict_fragility(refused, complied)}
+
+    def _strict_fragility(self, refused, complied):
+        """The stricter reading, recorded only: would ONE fit reply changing its label move either set."""
+        moves = relabel_tokens(refused, complied, self.arm)
+        names = self.tok.convert_ids_to_tokens([m[0] for m in moves]) if moves else []
+        return {
+            "fragile_readout_strict": bool(moves),
+            "fragile_readout_strict_rule": (
+                "set when one fit reply changing its label (refusal to compliant, or compliant to refusal) would "
+                "change which tokens are in either set under this arm's own rule. Recorded for anyone who checks; "
+                "it raises no warning and no limit, and changes neither the readout nor the verdict"),
+            "fragile_readout_strict_tokens": [
+                {"token": name, "refusal_replies": r, "compliance_replies": c, "relabel": label,
+                 "now": now, "after": after}
+                for name, (_, r, c, label, now, after) in zip(names, moves, strict=True)][:8],
+            "fragile_readout_strict_token_count": len(moves)}
 
     @torch.no_grad()
     def replies(self, prompts, direction=None, blocks=()):
